@@ -21,6 +21,7 @@ from ui.tabs import (
     compose_summary_tab,
 )
 from ui.helpers import reflow_env_columns
+from ui import ids
 
 __all__ = [
     # Widgets

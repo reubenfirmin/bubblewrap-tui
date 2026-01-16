@@ -50,10 +50,19 @@ from ui import (
     compose_summary_tab,
     reflow_env_columns,
 )
+from ui.ids import css
+import ui.ids as ids
 
-# Set up logging to file
+# Set up logging to XDG state directory
+def _get_log_path() -> Path:
+    """Get the log file path using XDG Base Directory spec."""
+    xdg_state = os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))
+    log_dir = Path(xdg_state) / "bui"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / "bui.log"
+
 logging.basicConfig(
-    filename="/tmp/bui.log",
+    filename=str(_get_log_path()),
     level=logging.DEBUG,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
@@ -187,7 +196,7 @@ class BubblewrapTUI(
     def _set_status(self, message: str) -> None:
         """Set status bar message."""
         try:
-            status = self.query_one("#status-bar", Static)
+            status = self.query_one(css(ids.STATUS_BAR), Static)
             status.update(message)
         except NoMatches:
             pass
@@ -200,9 +209,9 @@ class BubblewrapTUI(
     def _update_preview(self) -> None:
         """Update the command preview."""
         try:
-            preview = self.query_one("#command-preview", Static)
+            preview = self.query_one(css(ids.COMMAND_PREVIEW), Static)
             preview.update(self._format_command())
-            explanation = self.query_one("#explanation", Static)
+            explanation = self.query_one(css(ids.EXPLANATION), Static)
             explanation.update(self.config.get_explanation())
         except NoMatches:
             pass
@@ -243,16 +252,16 @@ class BubblewrapTUI(
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         """Handle checkbox changes."""
         # Auto-enable DNS and SSL certs when network is toggled on
-        if event.checkbox.id == "opt-net" and event.value:
+        if event.checkbox.id == ids.OPT_NET and event.value:
             try:
-                self.query_one("#opt-resolv-conf", Checkbox).value = True
-                self.query_one("#opt-ssl-certs", Checkbox).value = True
+                self.query_one(css(ids.OPT_RESOLV_CONF), Checkbox).value = True
+                self.query_one(css(ids.OPT_SSL_CERTS), Checkbox).value = True
             except NoMatches:
                 pass
         # Show/hide UID/GID options when user namespace is toggled
-        if event.checkbox.id == "opt-unshare-user":
+        if event.checkbox.id == ids.OPT_UNSHARE_USER:
             try:
-                uid_gid = self.query_one("#uid-gid-options")
+                uid_gid = self.query_one(css(ids.UID_GID_OPTIONS))
                 if event.value:
                     uid_gid.remove_class("hidden")
                 else:
@@ -293,7 +302,7 @@ class BubblewrapTUI(
             # Hide header when no overlays left
             if not self.config.overlays:
                 try:
-                    self.query_one("#overlay-header").add_class("hidden")
+                    self.query_one(css(ids.OVERLAY_HEADER)).add_class("hidden")
                 except NoMatches:
                     pass
             self._update_preview()
@@ -345,11 +354,11 @@ class BubblewrapTUI(
         self._sync_ui_from_config()
         self._update_preview()
 
-    @on(Button.Pressed, "#save-profile-btn")
+    @on(Button.Pressed, css(ids.SAVE_PROFILE_BTN))
     def on_save_profile_pressed(self, event: Button.Pressed) -> None:
         """Save the current config as a profile."""
         try:
-            name_input = self.query_one("#profile-name-input", Input)
+            name_input = self.query_one(css(ids.PROFILE_NAME_INPUT), Input)
             name = name_input.value.strip()
             pm = self._get_profile_manager()
             pm.save_profile(name, self._sync_config_from_ui)
@@ -358,11 +367,11 @@ class BubblewrapTUI(
         except NoMatches:
             pass
 
-    @on(Button.Pressed, "#load-profile-btn")
+    @on(Button.Pressed, css(ids.LOAD_PROFILE_BTN))
     def on_load_profile_from_path_pressed(self, event: Button.Pressed) -> None:
         """Load a profile from a specified path."""
         try:
-            path_input = self.query_one("#load-profile-path", Input)
+            path_input = self.query_one(css(ids.LOAD_PROFILE_PATH), Input)
             path_str = path_input.value.strip()
             if not path_str:
                 self._set_status("Enter a profile path")

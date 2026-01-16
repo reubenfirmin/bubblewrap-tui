@@ -9,6 +9,9 @@ from textual.containers import VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import Button
 
+from ui.ids import css
+import ui.ids as ids
+
 if TYPE_CHECKING:
     from model import OverlayConfig
 
@@ -22,7 +25,7 @@ class OverlayEventsMixin:
     _set_status: Callable
     _remove_overlay: Callable
 
-    @on(Button.Pressed, "#add-overlay-btn")
+    @on(Button.Pressed, css(ids.ADD_OVERLAY_BTN))
     def on_add_overlay_pressed(self, event: Button.Pressed) -> None:
         """Add a new overlay."""
         self._add_overlay()
@@ -35,10 +38,10 @@ class OverlayEventsMixin:
         overlay = OverlayConfig(source="", dest="", mode="tmpfs")
         self.config.overlays.append(overlay)
         try:
-            overlays_list = self.query_one("#overlays-list", VerticalScroll)
+            overlays_list = self.query_one(css(ids.OVERLAYS_LIST), VerticalScroll)
             overlays_list.mount(OverlayItem(overlay, self._update_preview, self._remove_overlay))
             # Show header when we have overlays
-            self.query_one("#overlay-header").remove_class("hidden")
+            self.query_one(css(ids.OVERLAY_HEADER)).remove_class("hidden")
         except NoMatches:
             pass
         self._update_preview()

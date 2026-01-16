@@ -10,6 +10,9 @@ from textual.containers import VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input
 
+from ui.ids import css
+import ui.ids as ids
+
 if TYPE_CHECKING:
     from model import BoundDirectory
 
@@ -24,18 +27,18 @@ class DirectoryEventsMixin:
     _set_status: Callable
     _remove_bound_dir: Callable
 
-    @on(Button.Pressed, "#add-dir-btn")
+    @on(Button.Pressed, css(ids.ADD_DIR_BTN))
     def on_add_dir_pressed(self, event: Button.Pressed) -> None:
         """Add the selected directory."""
         self.action_add_directory()
 
-    @on(Button.Pressed, "#parent-dir-btn")
+    @on(Button.Pressed, css(ids.PARENT_DIR_BTN))
     def on_parent_dir_pressed(self, event: Button.Pressed) -> None:
         """Navigate to parent directory."""
         from ui import FilteredDirectoryTree
 
         try:
-            tree = self.query_one("#dir-tree", FilteredDirectoryTree)
+            tree = self.query_one(css(ids.DIR_TREE), FilteredDirectoryTree)
             current = tree.path
             parent = current.parent
             if parent != current:
@@ -43,12 +46,12 @@ class DirectoryEventsMixin:
         except NoMatches:
             pass
 
-    @on(Button.Pressed, "#add-path-btn")
+    @on(Button.Pressed, css(ids.ADD_PATH_BTN))
     def on_add_path_pressed(self, event: Button.Pressed) -> None:
         """Add a path from the input field."""
         self._add_path_from_input()
 
-    @on(Input.Submitted, "#path-input")
+    @on(Input.Submitted, css(ids.PATH_INPUT))
     def on_path_input_submitted(self, event: Input.Submitted) -> None:
         """Handle Enter in path input."""
         self._add_path_from_input()
@@ -59,7 +62,7 @@ class DirectoryEventsMixin:
         from ui import BoundDirItem
 
         try:
-            path_input = self.query_one("#path-input", Input)
+            path_input = self.query_one(css(ids.PATH_INPUT), Input)
             path_str = path_input.value.strip()
             if not path_str:
                 return
@@ -70,14 +73,16 @@ class DirectoryEventsMixin:
             if not path.is_dir():
                 self._set_status(f"Not a directory: {path}")
                 return
-            # Check if already added
+            # Resolve symlinks for accurate duplicate detection
+            resolved_path = path.resolve()
+            # Check if already added (comparing resolved paths to handle symlinks)
             for bd in self.config.bound_dirs:
-                if bd.path == path:
+                if bd.path.resolve() == resolved_path:
                     self._set_status(f"Already added: {path}")
                     return
             bound_dir = BoundDirectory(path=path, readonly=True)
             self.config.bound_dirs.append(bound_dir)
-            dirs_list = self.query_one("#bound-dirs-list", VerticalScroll)
+            dirs_list = self.query_one(css(ids.BOUND_DIRS_LIST), VerticalScroll)
             dirs_list.mount(BoundDirItem(bound_dir, self._update_preview, self._remove_bound_dir))
             path_input.value = ""
             self._update_preview()
@@ -91,7 +96,7 @@ class DirectoryEventsMixin:
         from ui import BoundDirItem, FilteredDirectoryTree
 
         try:
-            tree = self.query_one("#dir-tree", FilteredDirectoryTree)
+            tree = self.query_one(css(ids.DIR_TREE), FilteredDirectoryTree)
             if tree.cursor_node and tree.cursor_node.data:
                 path = (
                     tree.cursor_node.data.path
@@ -99,16 +104,18 @@ class DirectoryEventsMixin:
                     else tree.cursor_node.data
                 )
                 if isinstance(path, Path) and path.is_dir():
-                    # Check if already added
+                    # Resolve symlinks for accurate duplicate detection
+                    resolved_path = path.resolve()
+                    # Check if already added (comparing resolved paths to handle symlinks)
                     for bd in self.config.bound_dirs:
-                        if bd.path == path:
+                        if bd.path.resolve() == resolved_path:
                             self._set_status(f"Already added: {path}")
                             return
 
                     bound_dir = BoundDirectory(path=path, readonly=True)
                     self.config.bound_dirs.append(bound_dir)
 
-                    dirs_list = self.query_one("#bound-dirs-list", VerticalScroll)
+                    dirs_list = self.query_one(css(ids.BOUND_DIRS_LIST), VerticalScroll)
                     dirs_list.mount(
                         BoundDirItem(bound_dir, self._update_preview, self._remove_bound_dir)
                     )

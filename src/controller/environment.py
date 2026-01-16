@@ -9,6 +9,9 @@ from textual import on
 from textual.css.query import NoMatches
 from textual.widgets import Button, Checkbox
 
+from ui.ids import css
+import ui.ids as ids
+
 
 class EnvironmentEventsMixin:
     """Mixin for environment-related event handlers."""
@@ -21,13 +24,13 @@ class EnvironmentEventsMixin:
     _set_status: Callable
     _reflow_env_columns: Callable
 
-    @on(Button.Pressed, "#toggle-clear-btn")
+    @on(Button.Pressed, css(ids.TOGGLE_CLEAR_BTN))
     def on_toggle_clear_pressed(self, event: Button.Pressed) -> None:
         """Toggle between clear and restore environment."""
         from ui import EnvVarItem
 
         try:
-            btn = self.query_one("#toggle-clear-btn", Button)
+            btn = self.query_one(css(ids.TOGGLE_CLEAR_BTN), Button)
             if not self.config.environment.clear_env:
                 # Clear environment
                 self.config.environment.clear_env = True
@@ -35,7 +38,7 @@ class EnvironmentEventsMixin:
                     self.config.environment.custom_env_vars.keys()
                 )
                 # Hide system env grid, keep custom vars
-                self.query_one("#env-grid-scroll").add_class("hidden")
+                self.query_one(css(ids.ENV_GRID_SCROLL)).add_class("hidden")
                 btn.label = "Restore System Env"
                 btn.variant = "primary"
                 self._update_preview()
@@ -48,7 +51,7 @@ class EnvironmentEventsMixin:
                 )
                 self.config.environment.unset_env_vars.clear()
                 # Show env grid
-                self.query_one("#env-grid-scroll").remove_class("hidden")
+                self.query_one(css(ids.ENV_GRID_SCROLL)).remove_class("hidden")
                 # Check all env var checkboxes
                 for item in self.query(EnvVarItem):
                     checkbox = item.query_one(".env-keep-toggle", Checkbox)
@@ -60,7 +63,7 @@ class EnvironmentEventsMixin:
         except NoMatches:
             pass
 
-    @on(Button.Pressed, "#add-env-btn")
+    @on(Button.Pressed, css(ids.ADD_ENV_BTN))
     def on_add_env_pressed(self, event: Button.Pressed) -> None:
         """Open dialog to add environment variables."""
         from ui import AddEnvDialog
@@ -77,7 +80,7 @@ class EnvironmentEventsMixin:
         # Only show env grid if not in cleared state, or if we have custom vars to show
         if self.config.environment.custom_env_vars:
             try:
-                self.query_one("#env-grid-scroll").remove_class("hidden")
+                self.query_one(css(ids.ENV_GRID_SCROLL)).remove_class("hidden")
             except NoMatches:
                 pass
         self._reflow_env_columns()

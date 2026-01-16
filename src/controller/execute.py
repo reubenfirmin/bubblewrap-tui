@@ -7,6 +7,9 @@ from typing import Callable
 from textual import on
 from textual.widgets import Button
 
+from ui.ids import css
+import ui.ids as ids
+
 
 class ExecuteEventsMixin:
     """Mixin for execute/cancel event handlers."""
@@ -14,12 +17,12 @@ class ExecuteEventsMixin:
     _execute_command: bool
     exit: Callable
 
-    @on(Button.Pressed, "#execute-btn")
+    @on(Button.Pressed, css(ids.EXECUTE_BTN))
     def on_execute_pressed(self, event: Button.Pressed) -> None:
         """Execute the command."""
         self.action_execute()
 
-    @on(Button.Pressed, "#cancel-btn")
+    @on(Button.Pressed, css(ids.CANCEL_BTN))
     def on_cancel_pressed(self, event: Button.Pressed) -> None:
         """Cancel and exit."""
         self.action_cancel()

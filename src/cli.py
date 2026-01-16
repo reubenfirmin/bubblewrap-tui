@@ -1,6 +1,7 @@
 """Command-line interface for bui."""
 
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -17,6 +18,8 @@ _update_available: str | None = None
 
 def load_profile(profile_path: str, command: list[str]) -> SandboxConfig:
     """Load a profile from a JSON file."""
+    from profiles import ProfileValidationError
+
     path = Path(profile_path).expanduser().resolve()
     if not path.exists():
         print(f"Error: Profile not found: {path}", file=sys.stderr)
@@ -24,19 +27,31 @@ def load_profile(profile_path: str, command: list[str]) -> SandboxConfig:
 
     try:
         profile = Profile(path)
-        return profile.load(command)
+        config, warnings = profile.load(command)
+        # Print any warnings
+        for warning in warnings:
+            print(f"Warning: {warning}", file=sys.stderr)
+        return config
+    except ProfileValidationError as e:
+        print(f"Profile validation error: {e}", file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
         print(f"Error loading profile: {e}", file=sys.stderr)
         sys.exit(1)
 
 
 def needs_shell_wrap(command: list[str]) -> bool:
-    """Check if command needs to be wrapped in a shell."""
-    if len(command) != 1:
-        return False
-    cmd = command[0]
+    """Check if command needs to be wrapped in a shell.
+
+    Checks all arguments for shell metacharacters, not just single-arg commands.
+    This handles cases like: /bin/bash -c "cmd | cmd"
+    """
     shell_chars = ["|", "&&", "||", ";", ">", "<", "$(", "`"]
-    return any(c in cmd for c in shell_chars)
+    # Check all arguments for shell metacharacters
+    for arg in command:
+        if any(c in arg for c in shell_chars):
+            return True
+    return False
 
 
 def show_help() -> None:
@@ -99,7 +114,8 @@ def parse_args() -> tuple[list[str], str | None]:
         command = args
 
     if needs_shell_wrap(command):
-        return ["/bin/bash", "-c", command[0]], profile_path
+        # Join all args with proper quoting and wrap in shell
+        return ["/bin/bash", "-c", shlex.join(command)], profile_path
     return command, profile_path
 
 

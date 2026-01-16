@@ -10,6 +10,9 @@ from textual.containers import VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import Button, Checkbox, Input
 
+from ui.ids import css
+import ui.ids as ids
+
 if TYPE_CHECKING:
     from textual.app import App
 
@@ -33,44 +36,50 @@ class FieldMapping:
 # These map widget IDs to config paths for automatic sync
 FIELD_MAPPINGS: list[FieldMapping] = [
     # Filesystem options
-    FieldMapping("opt-proc", "filesystem.mount_proc", Checkbox),
-    FieldMapping("opt-tmp", "filesystem.mount_tmp", Checkbox),
-    FieldMapping("opt-tmpfs-size", "filesystem.tmpfs_size", Input, lambda v: v.strip()),
-    FieldMapping("opt-usr", "filesystem.bind_usr", Checkbox),
-    FieldMapping("opt-bin", "filesystem.bind_bin", Checkbox),
-    FieldMapping("opt-lib", "filesystem.bind_lib", Checkbox),
-    FieldMapping("opt-lib64", "filesystem.bind_lib64", Checkbox),
-    FieldMapping("opt-sbin", "filesystem.bind_sbin", Checkbox),
-    FieldMapping("opt-etc", "filesystem.bind_etc", Checkbox),
+    FieldMapping(ids.OPT_PROC, "filesystem.mount_proc", Checkbox),
+    FieldMapping(ids.OPT_TMP, "filesystem.mount_tmp", Checkbox),
+    FieldMapping(ids.OPT_TMPFS_SIZE, "filesystem.tmpfs_size", Input, lambda v: v.strip()),
+    FieldMapping(ids.OPT_USR, "filesystem.bind_usr", Checkbox),
+    FieldMapping(ids.OPT_BIN, "filesystem.bind_bin", Checkbox),
+    FieldMapping(ids.OPT_LIB, "filesystem.bind_lib", Checkbox),
+    FieldMapping(ids.OPT_LIB64, "filesystem.bind_lib64", Checkbox),
+    FieldMapping(ids.OPT_SBIN, "filesystem.bind_sbin", Checkbox),
+    FieldMapping(ids.OPT_ETC, "filesystem.bind_etc", Checkbox),
 
     # Network options
-    FieldMapping("opt-net", "network.share_net", Checkbox),
-    FieldMapping("opt-resolv-conf", "network.bind_resolv_conf", Checkbox),
-    FieldMapping("opt-ssl-certs", "network.bind_ssl_certs", Checkbox),
+    FieldMapping(ids.OPT_NET, "network.share_net", Checkbox),
+    FieldMapping(ids.OPT_RESOLV_CONF, "network.bind_resolv_conf", Checkbox),
+    FieldMapping(ids.OPT_SSL_CERTS, "network.bind_ssl_certs", Checkbox),
 
     # Desktop integration
-    FieldMapping("opt-dbus", "desktop.allow_dbus", Checkbox),
-    FieldMapping("opt-display", "desktop.allow_display", Checkbox),
-    FieldMapping("opt-user-config", "desktop.bind_user_config", Checkbox),
+    FieldMapping(ids.OPT_DBUS, "desktop.allow_dbus", Checkbox),
+    FieldMapping(ids.OPT_DISPLAY, "desktop.allow_display", Checkbox),
+    FieldMapping(ids.OPT_USER_CONFIG, "desktop.bind_user_config", Checkbox),
 
     # Namespaces
-    FieldMapping("opt-unshare-user", "namespace.unshare_user", Checkbox),
-    FieldMapping("opt-unshare-pid", "namespace.unshare_pid", Checkbox),
-    FieldMapping("opt-unshare-ipc", "namespace.unshare_ipc", Checkbox),
-    FieldMapping("opt-unshare-uts", "namespace.unshare_uts", Checkbox),
-    FieldMapping("opt-unshare-cgroup", "namespace.unshare_cgroup", Checkbox),
-    FieldMapping("opt-disable-userns", "namespace.disable_userns", Checkbox),
+    FieldMapping(ids.OPT_UNSHARE_USER, "namespace.unshare_user", Checkbox),
+    FieldMapping(ids.OPT_UNSHARE_PID, "namespace.unshare_pid", Checkbox),
+    FieldMapping(ids.OPT_UNSHARE_IPC, "namespace.unshare_ipc", Checkbox),
+    FieldMapping(ids.OPT_UNSHARE_UTS, "namespace.unshare_uts", Checkbox),
+    FieldMapping(ids.OPT_UNSHARE_CGROUP, "namespace.unshare_cgroup", Checkbox),
+    FieldMapping(ids.OPT_DISABLE_USERNS, "namespace.disable_userns", Checkbox),
 
     # Process options
-    FieldMapping("opt-die-with-parent", "process.die_with_parent", Checkbox),
-    FieldMapping("opt-new-session", "process.new_session", Checkbox),
-    FieldMapping("opt-as-pid-1", "process.as_pid_1", Checkbox),
-    FieldMapping("opt-chdir", "process.chdir", Input),
-    FieldMapping("opt-hostname", "environment.custom_hostname", Input),
+    FieldMapping(ids.OPT_DIE_WITH_PARENT, "process.die_with_parent", Checkbox),
+    FieldMapping(ids.OPT_NEW_SESSION, "process.new_session", Checkbox),
+    FieldMapping(ids.OPT_AS_PID_1, "process.as_pid_1", Checkbox),
+    FieldMapping(ids.OPT_CHDIR, "process.chdir", Input),
+    FieldMapping(ids.OPT_HOSTNAME, "environment.custom_hostname", Input),
 
-    # UID/GID (int conversion)
-    FieldMapping("opt-uid", "process.uid", Input, lambda v: int(v) if v.strip().isdigit() else None),
-    FieldMapping("opt-gid", "process.gid", Input, lambda v: int(v) if v.strip().isdigit() else None),
+    # UID/GID (int conversion with range validation 0-65535)
+    FieldMapping(
+        ids.OPT_UID, "process.uid", Input,
+        lambda v: int(v) if v.strip().isdigit() and 0 <= int(v) <= 65535 else None
+    ),
+    FieldMapping(
+        ids.OPT_GID, "process.gid", Input,
+        lambda v: int(v) if v.strip().isdigit() and 0 <= int(v) <= 65535 else None
+    ),
 ]
 
 
@@ -132,7 +141,7 @@ class ConfigSyncManager:
 
                 _set_nested_attr(self.config, mapping.config_path, value)
             except (ValueError, AttributeError) as e:
-                log.debug(f"Error syncing {mapping.widget_id}: {e}")
+                log.debug(f"Error syncing {mapping.widget_id}: {e))
 
     def sync_ui_from_config(self) -> None:
         """Read config and update all UI widgets."""
@@ -152,7 +161,7 @@ class ConfigSyncManager:
                 else:  # Input
                     widget.value = str(value) if value is not None else ""
             except (ValueError, AttributeError) as e:
-                log.debug(f"Error syncing UI {mapping.widget_id}: {e}")
+                log.debug(f"Error syncing UI {mapping.widget_id}: {e))
 
     def clear_cache(self) -> None:
         """Clear the widget cache (call when widgets are remounted)."""
@@ -172,7 +181,7 @@ class ConfigSyncManager:
             on_remove: Callback for removal
         """
         try:
-            dirs_list = self.app.query_one("#bound-dirs-list", VerticalScroll)
+            dirs_list = self.app.query_one(css(ids.BOUND_DIRS_LIST), VerticalScroll)
             for item in list(dirs_list.query(bound_dir_item_class)):
                 item.remove()
             for bd in self.config.bound_dirs:
@@ -194,13 +203,13 @@ class ConfigSyncManager:
             on_remove: Callback for removal
         """
         try:
-            overlays_list = self.app.query_one("#overlays-list", VerticalScroll)
+            overlays_list = self.app.query_one(css(ids.OVERLAYS_LIST), VerticalScroll)
             for item in list(overlays_list.query(overlay_item_class)):
                 item.remove()
             for ov in self.config.overlays:
                 overlays_list.mount(overlay_item_class(ov, on_update, on_remove))
             # Show/hide overlay header
-            header = self.app.query_one("#overlay-header")
+            header = self.app.query_one(css(ids.OVERLAY_HEADER))
             if self.config.overlays:
                 header.remove_class("hidden")
             else:
@@ -211,8 +220,8 @@ class ConfigSyncManager:
     def sync_env_button_state(self) -> None:
         """Sync the clear/restore environment button state from config."""
         try:
-            btn = self.app.query_one("#toggle-clear-btn", Button)
-            grid = self.app.query_one("#env-grid-scroll")
+            btn = self.app.query_one(css(ids.TOGGLE_CLEAR_BTN), Button)
+            grid = self.app.query_one(css(ids.ENV_GRID_SCROLL))
             if self.config.environment.clear_env:
                 grid.add_class("hidden")
                 btn.label = "Restore System Env"
@@ -227,7 +236,7 @@ class ConfigSyncManager:
     def sync_uid_gid_visibility(self) -> None:
         """Show/hide UID/GID options based on user namespace setting."""
         try:
-            uid_gid = self.app.query_one("#uid-gid-options")
+            uid_gid = self.app.query_one(css(ids.UID_GID_OPTIONS))
             if self.config.namespace.unshare_user:
                 uid_gid.remove_class("hidden")
             else:

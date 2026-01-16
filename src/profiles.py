@@ -10,6 +10,57 @@ from typing import TYPE_CHECKING, Any, Callable, get_args, get_origin, get_type_
 from model import BoundDirectory, OverlayConfig, SandboxConfig
 from model.ui_field import ConfigBase, Field, UIField
 
+
+class ProfileValidationError(Exception):
+    """Raised when profile validation fails."""
+
+    pass
+
+
+def validate_config(config: SandboxConfig) -> list[str]:
+    """Validate a SandboxConfig and return list of warnings.
+
+    Raises ProfileValidationError for critical issues.
+    Returns list of non-critical warnings.
+    """
+    warnings = []
+
+    # Validate UID/GID range (0-65535)
+    if config.process.uid is not None:
+        if not (0 <= config.process.uid <= 65535):
+            raise ProfileValidationError(
+                f"Invalid UID: {config.process.uid} (must be 0-65535)"
+            )
+
+    if config.process.gid is not None:
+        if not (0 <= config.process.gid <= 65535):
+            raise ProfileValidationError(
+                f"Invalid GID: {config.process.gid} (must be 0-65535)"
+            )
+
+    # Validate dev_mode is a known value
+    valid_dev_modes = {"none", "minimal", "full"}
+    if config.filesystem.dev_mode not in valid_dev_modes:
+        warnings.append(
+            f"Unknown dev_mode '{config.filesystem.dev_mode}', defaulting to 'minimal'"
+        )
+        config.filesystem.dev_mode = "minimal"
+
+    # Validate overlay configs
+    for i, overlay in enumerate(config.overlays):
+        if overlay.mode not in ("tmpfs", "persistent"):
+            warnings.append(f"Overlay {i}: unknown mode '{overlay.mode}', using 'tmpfs'")
+            overlay.mode = "tmpfs"
+        if overlay.mode == "persistent" and not overlay.write_dir:
+            warnings.append(f"Overlay {i}: persistent mode requires write_dir")
+
+    # Warn about non-existent bound directories (don't fail - they might be created later)
+    for bd in config.bound_dirs:
+        if not bd.path.exists():
+            warnings.append(f"Bound directory does not exist: {bd.path}")
+
+    return warnings
+
 if TYPE_CHECKING:
     from textual.app import App
 
@@ -195,10 +246,19 @@ class Profile:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(data, indent=2))
 
-    def load(self, command: list[str]) -> SandboxConfig:
-        """Load profile and create config with given command."""
+    def load(self, command: list[str]) -> tuple[SandboxConfig, list[str]]:
+        """Load profile and create config with given command.
+
+        Returns:
+            Tuple of (config, warnings) where warnings is a list of non-critical issues.
+
+        Raises:
+            ProfileValidationError: For critical validation failures.
+        """
         data = json.loads(self.path.read_text())
-        return deserialize(SandboxConfig, data, command=command)
+        config = deserialize(SandboxConfig, data, command=command)
+        warnings = validate_config(config)
+        return config, warnings
 
     def delete(self) -> None:
         """Delete the profile file."""
@@ -250,8 +310,11 @@ class ProfileManager:
         from textual.containers import VerticalScroll
         from textual.css.query import NoMatches
 
+        from ui.ids import css
+        import ui.ids as ids
+
         try:
-            profiles_list = self.app.query_one("#profiles-list", VerticalScroll)
+            profiles_list = self.app.query_one(css(ids.PROFILES_LIST), VerticalScroll)
             # Clear existing items
             for item in list(profiles_list.query(profile_item_class)):
                 item.remove()
@@ -268,10 +331,16 @@ class ProfileManager:
         try:
             config = self._get_config()
             profile = Profile(profile_path)
-            new_config = profile.load(config.command)
+            new_config, warnings = profile.load(config.command)
             self._set_config(new_config)
             self._on_config_loaded()
-            self._on_status(f"Loaded profile: {profile.name}")
+            # Show warnings if any, otherwise success message
+            if warnings:
+                self._on_status(f"Loaded {profile.name} ({len(warnings)} warning(s))")
+            else:
+                self._on_status(f"Loaded profile: {profile.name}")
+        except ProfileValidationError as e:
+            self._on_status(f"Profile invalid: {e}")
         except Exception as e:
             self._on_status(f"Error loading profile: {e}")
 
