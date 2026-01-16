@@ -4,15 +4,10 @@ A terminal user interface for configuring and launching [bubblewrap](https://git
 
 Instead of memorizing dozens of `bwrap` flags, visually configure your sandbox and see the generated command before execution.
 
-## Features
+## Status
 
-- **Directory Binding** - Browse and select directories to bind into the sandbox (read-only or read-write)
-- **Environment Variables** - Keep, remove, or add custom environment variables. Import from `.env` files
-- **System Paths** - Toggle common system paths (/usr, /bin, /lib, etc.)
-- **Isolation Options** - Configure namespaces (user, PID, IPC, UTS, cgroup)
-- **Network Control** - Enable or block network access
-- **Live Preview** - See the generated `bwrap` command as you configure
-- **Summary Tab** - Human-readable explanation of what your sandbox will do
+- This is both alpha quality and lightly tested. That said it doesn't do anything except generate (and run, on demand) a bwrap command, so is mostly harmless. 
+- PRs and bug reports are welcomed. Feature requests will be considered. :) 
 
 ## Requirements
 
@@ -23,16 +18,13 @@ Instead of memorizing dozens of `bwrap` flags, visually configure your sandbox a
 
 ### Install uv
 
-```bash
-# macOS/Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
+See [uv installation docs](https://docs.astral.sh/uv/getting-started/installation/) for your platform.
 
 ### Get bui
 
 ```bash
-# Clone or download the script
-curl -O https://raw.githubusercontent.com/YOUR_USERNAME/bubblewrap-tui/main/bui
+# Download the script
+curl -O https://raw.githubusercontent.com/reubenfirmin/bubblewrap-tui/main/bui
 chmod +x bui
 
 # Run directly - uv handles Python and dependencies automatically

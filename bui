@@ -175,6 +175,33 @@ class BoundDirectory:
 
 
 @dataclass
+class OverlayConfig:
+    """An overlay filesystem configuration."""
+    source: str  # Real directory to overlay
+    dest: str  # Mount point in sandbox
+    mode: str = "tmpfs"  # "tmpfs" or "persistent"
+    write_dir: str = ""  # For persistent mode - where changes are stored
+
+    def get_work_dir(self) -> str:
+        """Auto-generate work dir from write dir."""
+        if self.write_dir:
+            return str(Path(self.write_dir).parent / ".overlay-work")
+        return ""
+
+    def to_args(self) -> list[str]:
+        """Convert to bwrap arguments."""
+        if not self.source or not self.dest:
+            return []
+        args = ["--overlay-src", self.source]
+        if self.mode == "tmpfs":
+            args.extend(["--tmp-overlay", self.dest])
+        elif self.mode == "persistent" and self.write_dir:
+            work_dir = self.get_work_dir()
+            args.extend(["--overlay", self.write_dir, work_dir, self.dest])
+        return args
+
+
+@dataclass
 class SandboxConfig:
     """Configuration for the sandbox."""
     command: list[str] = field(default_factory=list)
@@ -217,21 +244,16 @@ class SandboxConfig:
     as_pid_1: bool = False
     chdir: str = ""
 
-    # User/group mapping
+    # User/group mapping (used when unshare_user is True)
     uid: int = os.getuid()
     gid: int = os.getgid()
-    use_uid_gid: bool = False
 
     # Advanced
     disable_userns: bool = False
     tmpfs_size: str = ""  # e.g., "100M", "1G"
 
-    # Overlay
-    overlay_src: str = ""  # Source dir for overlay (read-only base)
-    overlay_mode: str = "none"  # "none", "tmpfs", "persistent"
-    overlay_rw: str = ""  # Writable dir for persistent mode
-    overlay_work: str = ""  # Work dir (same filesystem as overlay_rw)
-    overlay_dest: str = ""  # Mount point in sandbox
+    # Overlays
+    overlays: list[OverlayConfig] = field(default_factory=list)
 
     # Capabilities (to drop)
     drop_caps: set[str] = field(default_factory=set)
@@ -379,8 +401,8 @@ class SandboxConfig:
         if self.chdir:
             args.extend(["--chdir", self.chdir])
 
-        # User/group mapping
-        if self.use_uid_gid:
+        # User/group mapping (when using user namespace)
+        if self.unshare_user:
             args.extend(["--uid", str(self.uid)])
             args.extend(["--gid", str(self.gid)])
 
@@ -388,13 +410,9 @@ class SandboxConfig:
         if self.disable_userns:
             args.append("--disable-userns")
 
-        # Overlay filesystem
-        if self.overlay_src and self.overlay_dest and self.overlay_mode != "none":
-            args.extend(["--overlay-src", self.overlay_src])
-            if self.overlay_mode == "tmpfs":
-                args.extend(["--tmp-overlay", self.overlay_dest])
-            elif self.overlay_mode == "persistent" and self.overlay_rw and self.overlay_work:
-                args.extend(["--overlay", self.overlay_rw, self.overlay_work, self.overlay_dest])
+        # Overlay filesystems
+        for overlay in self.overlays:
+            args.extend(overlay.to_args())
 
         # Capabilities
         for cap in self.drop_caps:
@@ -478,12 +496,14 @@ class SandboxConfig:
         if vfs:
             lines.append(f"• Virtual filesystems: {', '.join(vfs)}")
 
-        # Overlay
-        if self.overlay_src and self.overlay_dest and self.overlay_mode != "none":
-            if self.overlay_mode == "tmpfs":
-                lines.append(f"• Overlay: {self.overlay_src} at {self.overlay_dest} (writes to ephemeral tmpfs)")
-            elif self.overlay_mode == "persistent":
-                lines.append(f"• Overlay: {self.overlay_src} at {self.overlay_dest} (writes to {self.overlay_rw})")
+        # Overlays
+        if self.overlays:
+            lines.append(f"• Overlays ({len(self.overlays)}):")
+            for ov in self.overlays:
+                if ov.mode == "tmpfs":
+                    lines.append(f"    - {ov.source} → {ov.dest} (tmpfs, discarded on exit)")
+                else:
+                    lines.append(f"    - {ov.source} → {ov.dest} (persistent to {ov.write_dir})")
 
         # Environment
         if self.clear_env:
@@ -537,7 +557,7 @@ class SandboxConfig:
             lines.append(f"• Process: {', '.join(process)}")
 
         # User/group mapping
-        if self.use_uid_gid:
+        if self.unshare_user:
             lines.append(f"• User mapping: UID {self.uid}, GID {self.gid}")
 
         # Advanced
@@ -580,6 +600,75 @@ class BoundDirItem(Container):
         self._on_update()
 
     @on(Button.Pressed, ".remove-btn")
+    def on_remove_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._on_remove(self)
+
+
+class OverlayItem(Container):
+    """A row representing an overlay configuration."""
+
+    def __init__(self, overlay: OverlayConfig, on_update: callable, on_remove: callable) -> None:
+        super().__init__()
+        self.overlay = overlay
+        self._on_update = on_update
+        self._on_remove = on_remove
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(classes="overlay-row"):
+            yield Button("tmpfs" if self.overlay.mode == "tmpfs" else "persist",
+                        classes="overlay-mode-btn",
+                        variant="default" if self.overlay.mode == "tmpfs" else "warning")
+            yield Input(value=self.overlay.source, placeholder="Source dir", classes="overlay-src-input")
+            yield Static("→", classes="overlay-arrow")
+            yield Input(value=self.overlay.dest, placeholder="Mount point", classes="overlay-dest-input")
+            is_tmpfs = self.overlay.mode == "tmpfs"
+            yield Input(
+                value="" if is_tmpfs else self.overlay.write_dir,
+                placeholder="n/a (tmpfs)" if is_tmpfs else "Write dir",
+                classes="overlay-write-input",
+                disabled=is_tmpfs
+            )
+            yield Button("x", classes="overlay-remove-btn", variant="error")
+
+    @on(Button.Pressed, ".overlay-mode-btn")
+    def on_mode_toggle(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.overlay.mode = "persistent" if self.overlay.mode == "tmpfs" else "tmpfs"
+        btn = event.button
+        btn.label = "tmpfs" if self.overlay.mode == "tmpfs" else "persist"
+        btn.variant = "default" if self.overlay.mode == "tmpfs" else "warning"
+        # Enable/disable write dir input
+        write_input = self.query_one(".overlay-write-input", Input)
+        is_tmpfs = self.overlay.mode == "tmpfs"
+        write_input.disabled = is_tmpfs
+        write_input.placeholder = "n/a (tmpfs)" if is_tmpfs else "Write dir"
+        if is_tmpfs:
+            write_input.value = ""
+        self._on_update()
+
+    @on(Input.Changed, ".overlay-src-input")
+    def on_src_changed(self, event: Input.Changed) -> None:
+        old_source = self.overlay.source
+        self.overlay.source = event.value
+        # Auto-sync dest if it matches source (user hasn't customized it)
+        dest_input = self.query_one(".overlay-dest-input", Input)
+        if not dest_input.value or dest_input.value == old_source:
+            dest_input.value = event.value
+            self.overlay.dest = event.value
+        self._on_update()
+
+    @on(Input.Changed, ".overlay-dest-input")
+    def on_dest_changed(self, event: Input.Changed) -> None:
+        self.overlay.dest = event.value
+        self._on_update()
+
+    @on(Input.Changed, ".overlay-write-input")
+    def on_write_changed(self, event: Input.Changed) -> None:
+        self.overlay.write_dir = event.value
+        self._on_update()
+
+    @on(Button.Pressed, ".overlay-remove-btn")
     def on_remove_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self._on_remove(self)
@@ -851,37 +940,6 @@ class DevModeCard(Container):
         self._on_change(self._mode)
 
 
-class OverlayModeCard(Container):
-    """A card for selecting overlay mode: none, tmpfs, persistent."""
-
-    OVERLAY_MODES = {
-        "none": ("No Overlay", "Disabled"),
-        "tmpfs": ("Tmpfs Overlay", "Changes lost on exit"),
-        "persistent": ("Persistent", "Changes saved to disk"),
-    }
-    MODE_ORDER = ["none", "tmpfs", "persistent"]
-
-    def __init__(self, on_change: callable) -> None:
-        super().__init__()
-        self._on_change = on_change
-        self._mode = "none"
-
-    def compose(self) -> ComposeResult:
-        label, desc = self.OVERLAY_MODES[self._mode]
-        yield Button(label, id="overlay-mode-btn")
-        yield Static(desc, id="overlay-mode-desc", classes="option-explanation")
-
-    @on(Button.Pressed, "#overlay-mode-btn")
-    def on_mode_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        idx = self.MODE_ORDER.index(self._mode)
-        self._mode = self.MODE_ORDER[(idx + 1) % len(self.MODE_ORDER)]
-        label, desc = self.OVERLAY_MODES[self._mode]
-        self.query_one("#overlay-mode-btn", Button).label = label
-        self.query_one("#overlay-mode-desc", Static).update(desc)
-        self._on_change(self._mode)
-
-
 class OptionCard(Container):
     """A checkbox with label on row 1, explanation on row 2."""
 
@@ -1013,6 +1071,98 @@ class BubblewrapTUI(App):
         min-width: 5;
     }
 
+    /* Overlay Items */
+    OverlayItem {
+        height: auto;
+        width: 100%;
+        margin-bottom: 1;
+    }
+
+    .overlay-row {
+        width: 100%;
+        height: auto;
+        align: left middle;
+    }
+
+    .overlay-mode-btn {
+        width: 10;
+        min-width: 10;
+    }
+
+    .overlay-src-input {
+        width: 1fr;
+    }
+
+    .overlay-arrow {
+        width: 3;
+        text-align: center;
+        content-align: center middle;
+        height: 3;
+    }
+
+    .overlay-dest-input {
+        width: 1fr;
+    }
+
+    .overlay-write-input {
+        width: 1fr;
+    }
+
+    .overlay-remove-btn {
+        width: 5;
+        min-width: 5;
+    }
+
+    /* Overlays Tab */
+    #overlays-tab-content {
+        padding: 1;
+    }
+
+    #overlay-hint {
+        margin-bottom: 0;
+    }
+
+    #overlay-header {
+        height: auto;
+        width: 100%;
+        margin: 1 0;
+        color: $text-muted;
+    }
+
+    .overlay-header-mode {
+        width: 10;
+        min-width: 10;
+    }
+
+    .overlay-header-src {
+        width: 1fr;
+    }
+
+    .overlay-header-arrow {
+        width: 3;
+    }
+
+    .overlay-header-dest {
+        width: 1fr;
+    }
+
+    .overlay-header-write {
+        width: 1fr;
+    }
+
+    .overlay-header-remove {
+        width: 5;
+    }
+
+    #add-overlay-btn {
+        margin-top: 1;
+        margin-bottom: 1;
+    }
+
+    #overlays-list {
+        height: 1fr;
+    }
+
     /* Environment Tab */
     #env-tab-content {
         padding: 1;
@@ -1065,8 +1215,13 @@ class BubblewrapTUI(App):
         padding-left: 4;
     }
 
-    #env-grid-scroll.hidden {
+    #env-grid-scroll.hidden, .hidden {
         display: none;
+    }
+
+    #uid-gid-options {
+        padding-left: 4;
+        margin-bottom: 1;
     }
 
     /* File Systems & Sandbox Tabs */
@@ -1102,13 +1257,13 @@ class BubblewrapTUI(App):
         width: auto;
     }
 
-    DevModeCard, OverlayModeCard {
+    DevModeCard {
         height: auto;
         padding: 0;
         margin: 0;
     }
 
-    DevModeCard Button, OverlayModeCard Button {
+    DevModeCard Button {
         width: auto;
         min-width: 15;
     }
@@ -1141,6 +1296,12 @@ class BubblewrapTUI(App):
     /* Summary Tab */
     #summary-tab-content {
         padding: 1;
+    }
+
+    #summary-header {
+        text-align: center;
+        text-style: bold;
+        margin-bottom: 1;
     }
 
     #summary-tab-content .section-label {
@@ -1296,6 +1457,7 @@ class BubblewrapTUI(App):
                                 yield OptionCard("/tmp", "Ephemeral temp storage", "opt-tmp", True)
                                 yield Label("Tmpfs size:")
                                 yield Input(placeholder="default (half of RAM)", id="opt-tmpfs-size")
+                        with Vertical(classes="options-column"):
                             with Container(classes="options-section"):
                                 yield Label("System Paths (read-only)", classes="section-label")
                                 yield OptionCard("/usr", "Programs and libraries", "opt-usr", True)
@@ -1304,32 +1466,53 @@ class BubblewrapTUI(App):
                                 yield OptionCard("/lib64", "64-bit libraries", "opt-lib64", Path("/lib64").exists())
                                 yield OptionCard("/sbin", "System binaries", "opt-sbin", True)
                                 yield OptionCard("/etc", "Config files - RISKY!", "opt-etc", False)
-                        with Vertical(classes="options-column"):
-                            with Container(classes="options-section"):
-                                yield Label("Overlay Filesystem", classes="section-label")
-                                yield Static("Layer a writable surface over a read-only directory. "
-                                           "The sandbox sees the combined view, but the original files stay untouched.",
-                                           classes="option-explanation")
-                                yield OverlayModeCard(self._on_overlay_mode_change)
-                                yield Static("Source: directory to overlay (will appear read-only)", classes="option-explanation")
-                                yield Input(placeholder="/path/to/source", id="opt-overlay-src")
-                                yield Static("Mount point: where it appears inside the sandbox", classes="option-explanation")
-                                yield Input(placeholder="/path/in/sandbox", id="opt-overlay-dest")
-                                yield Static("For persistent mode - where to store changes:", classes="option-explanation")
-                                yield Input(placeholder="Write dir: stores modified files", id="opt-overlay-rw")
-                                yield Input(placeholder="Work dir: temp space (same filesystem)", id="opt-overlay-work")
+
+            with TabPane("Overlays", id="overlays-tab"):
+                with Vertical(id="overlays-tab-content"):
+                    yield Static(
+                        "Overlays make directories appear writable without changing originals.\n\n"
+                        "  tmpfs      Changes discarded on exit\n"
+                        "  persistent Changes saved to write dir\n\n"
+                        "Example: source=/usr, mount=/usr, mode=tmpfs\n"
+                        "         Sandbox can 'install' packages, real /usr untouched.",
+                        id="overlay-hint")
+                    yield Button("+ Add Overlay", id="add-overlay-btn", variant="success")
+                    with Horizontal(id="overlay-header", classes="hidden"):
+                        yield Static("Mode", classes="overlay-header-mode")
+                        yield Static("Source (real directory)", classes="overlay-header-src")
+                        yield Static("", classes="overlay-header-arrow")
+                        yield Static("Mount point (in sandbox)", classes="overlay-header-dest")
+                        yield Static("Write dir (persistent only)", classes="overlay-header-write")
+                        yield Static("", classes="overlay-header-remove")
+                    yield VerticalScroll(id="overlays-list")
 
             with TabPane("Sandbox", id="sandbox-tab"):
                 with VerticalScroll(id="sandbox-tab-content"):
                     with Horizontal(id="options-grid"):
                         with Vertical(classes="options-column"):
                             with Container(classes="options-section"):
-                                yield Label("Namespaces", classes="section-label")
-                                yield OptionCard("User/group IDs", "Appear as different user inside", "opt-unshare-user", False)
-                                yield OptionCard("Process list", "Hide host processes", "opt-unshare-pid", False)
-                                yield OptionCard("Shared memory", "Isolated message queues", "opt-unshare-ipc", False)
-                                yield OptionCard("Hostname", "Own hostname inside", "opt-unshare-uts", False)
-                                yield OptionCard("Cgroups", "Isolated resource limits", "opt-unshare-cgroup", False)
+                                yield Label("Isolation", classes="section-label")
+                                yield OptionCard("User namespace", "Appear as different user inside", "opt-unshare-user", False)
+                                with Container(id="uid-gid-options", classes="hidden"):
+                                    yield Label("UID:")
+                                    yield Input(value=str(os.getuid()), id="opt-uid")
+                                    yield Label("GID:")
+                                    yield Input(value=str(os.getgid()), id="opt-gid")
+                                yield OptionCard("PID namespace", "Hide host processes", "opt-unshare-pid", False)
+                                yield OptionCard("IPC namespace", "Isolated shared memory", "opt-unshare-ipc", False)
+                                yield OptionCard("UTS namespace", "Own hostname inside", "opt-unshare-uts", False)
+                                yield OptionCard("Cgroup namespace", "Isolated resource limits", "opt-unshare-cgroup", False)
+                                yield OptionCard("Disable nested sandboxing", "Prevent user namespaces inside", "opt-disable-userns", False)
+                            with Container(classes="options-section"):
+                                yield Label("Process", classes="section-label")
+                                yield OptionCard("Kill with parent", "Dies when terminal closes", "opt-die-with-parent", True)
+                                yield OptionCard("New session", "Prevents terminal escape attacks, but disables job control", "opt-new-session", True)
+                                yield OptionCard("Run as PID 1", "Command runs as init process in PID namespace", "opt-as-pid-1", False)
+                                yield Label("Working dir:")
+                                yield Input(value=str(Path.cwd()), id="opt-chdir")
+                                yield Label("Custom hostname:")
+                                yield Input(placeholder="sandbox", id="opt-hostname")
+                        with Vertical(classes="options-column"):
                             with Container(classes="options-section"):
                                 yield Label("Network", classes="section-label")
                                 yield OptionCard("Allow network", "Enable host network access", "opt-net", False)
@@ -1352,27 +1535,10 @@ class BubblewrapTUI(App):
                                     display_desc = "No display detected"
                                 yield OptionCard("Display server", display_desc, "opt-display", False)
                                 yield OptionCard("User config", "~/.config for default apps, themes", "opt-user-config", False)
-                        with Vertical(classes="options-column"):
-                            with Container(classes="options-section"):
-                                yield Label("Process", classes="section-label")
-                                yield OptionCard("Kill with parent", "Dies when terminal closes", "opt-die-with-parent", True)
-                                yield OptionCard("New session", "Prevents terminal escape attacks, but disables job control", "opt-new-session", True)
-                                yield OptionCard("Run as PID 1", "Command runs as init process in PID namespace", "opt-as-pid-1", False)
-                                yield Label("Working dir:")
-                                yield Input(value=str(Path.cwd()), id="opt-chdir")
-                                yield Label("Custom hostname:")
-                                yield Input(placeholder="sandbox", id="opt-hostname")
-                            with Container(classes="options-section"):
-                                yield Label("Advanced", classes="section-label")
-                                yield OptionCard("Custom UID/GID", "Set specific user/group IDs inside sandbox", "opt-uid-gid", False)
-                                yield Label("UID:")
-                                yield Input(value=str(os.getuid()), id="opt-uid")
-                                yield Label("GID:")
-                                yield Input(value=str(os.getgid()), id="opt-gid")
-                                yield OptionCard("Disable user namespaces", "Prevent nested sandboxing", "opt-disable-userns", False)
 
             with TabPane("Summary", id="summary-tab"):
                 with Vertical(id="summary-tab-content"):
+                    yield Static(f"Bubblewrap TUI\nVersion {BUI_VERSION}", id="summary-header")
                     yield Label("Command Preview", classes="section-label")
                     yield Static(self._format_command(), id="command-preview")
                     yield Label("Summary", classes="section-label")
@@ -1395,10 +1561,26 @@ class BubblewrapTUI(App):
         self.config.dev_mode = mode
         self._update_preview()
 
-    def _on_overlay_mode_change(self, mode: str) -> None:
-        """Handle overlay mode change."""
-        self.config.overlay_mode = mode
+    def _add_overlay(self) -> None:
+        """Add a new overlay configuration."""
+        overlay = OverlayConfig(source="", dest="", mode="tmpfs")
+        self.config.overlays.append(overlay)
+        overlays_list = self.query_one("#overlays-list", VerticalScroll)
+        overlays_list.mount(OverlayItem(overlay, self._update_preview, self._remove_overlay))
+        # Show header when we have overlays
+        self.query_one("#overlay-header").remove_class("hidden")
         self._update_preview()
+
+    def _remove_overlay(self, item: OverlayItem) -> None:
+        """Remove an overlay from the list."""
+        if item.overlay in self.config.overlays:
+            self.config.overlays.remove(item.overlay)
+            item.remove()
+            # Hide header when no overlays left
+            if not self.config.overlays:
+                self.query_one("#overlay-header").add_class("hidden")
+            self._update_preview()
+            self._set_status("Overlay removed")
 
     def _remove_bound_dir(self, item: BoundDirItem) -> None:
         """Remove a bound directory from the list."""
@@ -1466,8 +1648,7 @@ class BubblewrapTUI(App):
             self.config.chdir = self.query_one("#opt-chdir", Input).value
             self.config.custom_hostname = self.query_one("#opt-hostname", Input).value
 
-            # Advanced
-            self.config.use_uid_gid = self.query_one("#opt-uid-gid", Checkbox).value
+            # UID/GID (shown when user namespace is enabled)
             try:
                 self.config.uid = int(self.query_one("#opt-uid", Input).value)
             except ValueError:
@@ -1478,12 +1659,6 @@ class BubblewrapTUI(App):
                 pass
             self.config.disable_userns = self.query_one("#opt-disable-userns", Checkbox).value
             self.config.tmpfs_size = self.query_one("#opt-tmpfs-size", Input).value.strip()
-
-            # Overlay (mode is handled by callback)
-            self.config.overlay_src = self.query_one("#opt-overlay-src", Input).value.strip()
-            self.config.overlay_dest = self.query_one("#opt-overlay-dest", Input).value.strip()
-            self.config.overlay_rw = self.query_one("#opt-overlay-rw", Input).value.strip()
-            self.config.overlay_work = self.query_one("#opt-overlay-work", Input).value.strip()
 
             # System binds
             self.config.bind_usr = self.query_one("#opt-usr", Checkbox).value
@@ -1505,6 +1680,16 @@ class BubblewrapTUI(App):
                 self.query_one("#opt-ssl-certs", Checkbox).value = True
             except Exception:
                 pass
+        # Show/hide UID/GID options when user namespace is toggled
+        if event.checkbox.id == "opt-unshare-user":
+            try:
+                uid_gid = self.query_one("#uid-gid-options")
+                if event.value:
+                    uid_gid.remove_class("hidden")
+                else:
+                    uid_gid.add_class("hidden")
+            except Exception:
+                pass
         self._sync_config_from_ui()
         self._update_preview()
 
@@ -1513,6 +1698,11 @@ class BubblewrapTUI(App):
         """Handle input changes."""
         self._sync_config_from_ui()
         self._update_preview()
+
+    @on(Button.Pressed, "#add-overlay-btn")
+    def on_add_overlay_pressed(self, event: Button.Pressed) -> None:
+        """Add a new overlay."""
+        self._add_overlay()
 
     @on(Button.Pressed, "#add-dir-btn")
     def on_add_dir_pressed(self, event: Button.Pressed) -> None:
@@ -1689,14 +1879,109 @@ class BubblewrapTUI(App):
         self.exit()
 
 
+BUI_VERSION = "0.2"
+BUI_GITHUB_RAW = "https://raw.githubusercontent.com/reubenfirmin/bubblewrap-tui/main/bui"
+
+
+def get_install_path() -> Path:
+    """Get the installation path."""
+    return Path.home() / ".local" / "bin" / "bui"
+
+
+def is_local_bin_on_path() -> bool:
+    """Check if ~/.local/bin is on PATH."""
+    local_bin = str(Path.home() / ".local" / "bin")
+    return local_bin in os.environ.get("PATH", "").split(os.pathsep)
+
+
+def do_install(source_path: Path | None = None) -> None:
+    """Install bui to ~/.local/bin."""
+    local_bin = Path.home() / ".local" / "bin"
+    install_path = local_bin / "bui"
+
+    if not is_local_bin_on_path():
+        print("~/.local/bin is not on your PATH.")
+        print("\nTo add it, add this line to your shell rc file (~/.bashrc, ~/.zshrc, etc.):")
+        print('  export PATH="$HOME/.local/bin:$PATH"')
+        print("\nThen restart your shell or run: source ~/.bashrc")
+        sys.exit(1)
+
+    # Create directory if needed
+    local_bin.mkdir(parents=True, exist_ok=True)
+
+    # Copy the script
+    if source_path is None:
+        source_path = Path(__file__).resolve()
+
+    shutil.copy2(source_path, install_path)
+    install_path.chmod(0o755)
+
+    print(f"Installed bui v{BUI_VERSION} to {install_path}")
+
+
+def do_update() -> None:
+    """Download latest bui from GitHub and install."""
+    import urllib.request
+    import tempfile
+
+    print(f"Downloading latest bui from GitHub...")
+
+    try:
+        with urllib.request.urlopen(BUI_GITHUB_RAW) as response:
+            content = response.read()
+    except Exception as e:
+        print(f"Error downloading: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Write to temp file
+    with tempfile.NamedTemporaryFile(mode='wb', suffix='.py', delete=False) as f:
+        f.write(content)
+        temp_path = Path(f.name)
+
+    try:
+        temp_path.chmod(0o755)
+        do_install(temp_path)
+    finally:
+        temp_path.unlink()
+
+
+def needs_shell_wrap(command: list[str]) -> bool:
+    """Check if command needs to be wrapped in a shell."""
+    if len(command) != 1:
+        return False
+    cmd = command[0]
+    shell_chars = ['|', '&&', '||', ';', '>', '<', '$(', '`']
+    return any(c in cmd for c in shell_chars)
+
+
+def show_help() -> None:
+    """Print help message and exit."""
+    print(__doc__)
+    print(f"Version: {BUI_VERSION}")
+    print("\nUsage:")
+    print("  bui -- <command> [args...]   Configure and run a sandboxed command")
+    print("  bui --install                Install bui to ~/.local/bin")
+    print("  bui --update                 Download latest version and install")
+    print("\nExamples:")
+    print("  bui -- /bin/bash")
+    print("  bui -- python script.py arg1 arg2")
+    print('  bui -- "curl foo.sh | bash"    (shell commands auto-detected)')
+    sys.exit(0)
+
+
 def parse_args() -> list[str]:
     """Parse command line arguments."""
     args = sys.argv[1:]
 
-    if "--help" in args or "-h" in args:
-        print(__doc__)
-        print("\nExample: bui -- /bin/bash")
-        print("         bui -- python script.py arg1 arg2")
+    if not args or "--help" in args or "-h" in args:
+        show_help()
+
+    if "--install" in args:
+        do_install()
+        sys.exit(0)
+
+    if "--update" in args:
+        do_update()
         sys.exit(0)
 
     try:
@@ -1706,13 +1991,12 @@ def parse_args() -> list[str]:
             print("Error: No command specified after '--'", file=sys.stderr)
             print("Usage: bui -- <command> [args...]", file=sys.stderr)
             sys.exit(1)
-        return command
     except ValueError:
-        if args:
-            return args
-        print("Error: No command specified", file=sys.stderr)
-        print("Usage: bui -- <command> [args...]", file=sys.stderr)
-        sys.exit(1)
+        command = args
+
+    if needs_shell_wrap(command):
+        return ["/bin/bash", "-c", command[0]]
+    return command
 
 
 def main() -> None:
