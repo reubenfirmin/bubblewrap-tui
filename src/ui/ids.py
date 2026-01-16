@@ -17,6 +17,10 @@ def css(widget_id: str) -> str:
 HEADER_CONTAINER = "header-container"
 HEADER_TITLE = "header-title"
 MAIN_CONTENT = "main-content"
+MAIN_SWITCHER = "main-switcher"
+CONFIG_TABS = "config-tabs"
+SUMMARY_VIEW = "summary-view"
+PROFILES_VIEW = "profiles-view"
 FOOTER_BUTTONS = "footer-buttons"
 STATUS_BAR = "status-bar"
 
@@ -72,6 +76,8 @@ PROFILE_NAME_INPUT = "profile-name-input"
 LOAD_PROFILE_PATH = "load-profile-path"
 
 # Action buttons
+PROFILES_BTN = "profiles-btn"
+SUMMARY_BTN = "summary-btn"
 EXECUTE_BTN = "execute-btn"
 CANCEL_BTN = "cancel-btn"
 
