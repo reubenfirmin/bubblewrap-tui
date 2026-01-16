@@ -386,6 +386,61 @@ class BubblewrapTUI(
             pass
 
     # =========================================================================
+    # Mixin Handler Forwarding
+    # =========================================================================
+    # Textual's @on decorator only registers handlers defined on the class itself,
+    # not on mixins. These forwarding handlers ensure events are routed to mixins.
+
+    # Directory handlers (from DirectoryEventsMixin)
+    @on(Button.Pressed, css(ids.ADD_DIR_BTN))
+    def _on_add_dir_btn(self, event: Button.Pressed) -> None:
+        """Forward to mixin handler."""
+        self.on_add_dir_pressed(event)
+
+    @on(Button.Pressed, css(ids.PARENT_DIR_BTN))
+    def _on_parent_dir_btn(self, event: Button.Pressed) -> None:
+        """Forward to mixin handler."""
+        self.on_parent_dir_pressed(event)
+
+    @on(Button.Pressed, css(ids.ADD_PATH_BTN))
+    def _on_add_path_btn(self, event: Button.Pressed) -> None:
+        """Forward to mixin handler."""
+        self.on_add_path_pressed(event)
+
+    @on(Input.Submitted, css(ids.PATH_INPUT))
+    def _on_path_input_submit(self, event: Input.Submitted) -> None:
+        """Forward to mixin handler."""
+        self.on_path_input_submitted(event)
+
+    # Environment handlers (from EnvironmentEventsMixin)
+    @on(Button.Pressed, css(ids.TOGGLE_CLEAR_BTN))
+    def _on_toggle_clear_btn(self, event: Button.Pressed) -> None:
+        """Forward to mixin handler."""
+        self.on_toggle_clear_pressed(event)
+
+    @on(Button.Pressed, css(ids.ADD_ENV_BTN))
+    def _on_add_env_btn(self, event: Button.Pressed) -> None:
+        """Forward to mixin handler."""
+        self.on_add_env_pressed(event)
+
+    # Overlay handlers (from OverlayEventsMixin)
+    @on(Button.Pressed, css(ids.ADD_OVERLAY_BTN))
+    def _on_add_overlay_btn(self, event: Button.Pressed) -> None:
+        """Forward to mixin handler."""
+        self.on_add_overlay_pressed(event)
+
+    # Execute handlers (from ExecuteEventsMixin)
+    @on(Button.Pressed, css(ids.EXECUTE_BTN))
+    def _on_execute_btn(self, event: Button.Pressed) -> None:
+        """Forward to mixin handler."""
+        self.on_execute_pressed(event)
+
+    @on(Button.Pressed, css(ids.CANCEL_BTN))
+    def _on_cancel_btn(self, event: Button.Pressed) -> None:
+        """Forward to mixin handler."""
+        self.on_cancel_pressed(event)
+
+    # =========================================================================
     # Lifecycle
     # =========================================================================
 

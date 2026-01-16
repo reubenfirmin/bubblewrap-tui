@@ -141,7 +141,7 @@ class ConfigSyncManager:
 
                 _set_nested_attr(self.config, mapping.config_path, value)
             except (ValueError, AttributeError) as e:
-                log.debug(f"Error syncing {mapping.widget_id}: {e))
+                log.debug(f"Error syncing {mapping.widget_id}: {e}")
 
     def sync_ui_from_config(self) -> None:
         """Read config and update all UI widgets."""
@@ -161,7 +161,7 @@ class ConfigSyncManager:
                 else:  # Input
                     widget.value = str(value) if value is not None else ""
             except (ValueError, AttributeError) as e:
-                log.debug(f"Error syncing UI {mapping.widget_id}: {e))
+                log.debug(f"Error syncing UI {mapping.widget_id}: {e}")
 
     def clear_cache(self) -> None:
         """Clear the widget cache (call when widgets are remounted)."""

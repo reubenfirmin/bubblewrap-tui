@@ -44,6 +44,20 @@ bui -- python script.py
 bui -- "curl foo.sh | bash"
 ```
 
+## Development
+
+### Running Tests
+
+```bash
+uv run --with pytest --with pytest-cov --with textual pytest tests/ -v
+```
+
+With coverage report:
+
+```bash
+uv run --with pytest --with pytest-cov --with textual pytest tests/ --cov=src --cov-report=term-missing
+```
+
 ## License
 
 MIT

@@ -40,7 +40,8 @@ MODULE_ORDER = [
     "model/sandbox_config.py",        # Depends on other model classes
     "bwrap.py",                       # Depends on detection, model (serialization/summary)
     "profiles.py",                    # Depends on model (JSON serialization)
-    "controller/sync.py",             # UI ↔ Config sync (no ui deps)
+    "ui/ids.py",                      # No dependencies - widget ID constants (needed early for ids.X refs)
+    "controller/sync.py",             # UI ↔ Config sync (uses ids.X)
     "ui/widgets.py",                  # Depends on model (uses BoundDirectory, etc.)
     "ui/helpers.py",                  # Depends on ui.widgets
     "ui/tabs/directories.py",         # Depends on ui.widgets
@@ -68,7 +69,7 @@ LOCAL_MODULES = {
     "model.sandbox_config",
     "controller", "controller.sync", "controller.directories", "controller.overlays",
     "controller.environment", "controller.execute",
-    "ui", "ui.widgets", "ui.helpers",
+    "ui", "ui.ids", "ui.widgets", "ui.helpers",
     "ui.tabs", "ui.tabs.directories", "ui.tabs.environment", "ui.tabs.filesystem",
     "ui.tabs.overlays", "ui.tabs.sandbox", "ui.tabs.summary", "ui.tabs.profiles",
 }
@@ -121,8 +122,13 @@ def extract_imports(content: str) -> tuple[set[str], str]:
                 continue
 
             # Single line import - filter out local module imports
-            is_local = any(stripped.startswith(f'from {mod} ') or stripped == f'import {mod}'
-                          for mod in LOCAL_MODULES)
+            # Handle: 'from mod import X', 'import mod', 'import mod as alias'
+            is_local = any(
+                stripped.startswith(f'from {mod} ') or
+                stripped == f'import {mod}' or
+                stripped.startswith(f'import {mod} ')  # handles 'import X as Y'
+                for mod in LOCAL_MODULES
+            )
             if not is_local:
                 imports.add(line)
         else:
@@ -132,6 +138,33 @@ def extract_imports(content: str) -> tuple[set[str], str]:
         i += 1
 
     return imports, '\n'.join(non_import_lines)
+
+
+def strip_deferred_imports(code: str, local_modules: set[str]) -> str:
+    """Remove deferred imports (inside functions) of local modules.
+
+    These imports exist to avoid circular dependencies at module level,
+    but in the concatenated output, all code is already available.
+    """
+    lines = code.split('\n')
+    result = []
+    for line in lines:
+        stripped = line.strip()
+        # Check if this is an indented import of a local module
+        if line and line[0].isspace():
+            is_local_import = any(
+                stripped.startswith(f'from {mod} import') or
+                stripped == f'import {mod}' or
+                stripped.startswith(f'import {mod} ')
+                for mod in local_modules
+            )
+            if is_local_import:
+                # Replace with pass to maintain valid syntax after if/else/etc
+                indent = len(line) - len(line.lstrip())
+                result.append(' ' * indent + 'pass  # (deferred import removed)')
+                continue
+        result.append(line)
+    return '\n'.join(result)
 
 
 def normalize_import(imp: str) -> tuple[str, set[str]]:
@@ -273,9 +306,23 @@ def build():
         imports, code = extract_imports(content)
         all_imports.update(imports)
 
+        # Strip deferred imports of local modules (they're already concatenated)
+        code = strip_deferred_imports(code, LOCAL_MODULES)
+
         # Add module separator comment
         all_code.append(f"\n# === {module_name} ===\n")
         all_code.append(code.strip())
+
+        # After ui/ids.py, add a namespace shim so 'ids.CONSTANT' works
+        if module_name == "ui/ids.py":
+            all_code.append('''
+
+# Namespace shim for 'import ui.ids as ids' pattern
+class _IdsNamespace:
+    def __getattr__(self, name):
+        return globals()[name]
+ids = _IdsNamespace()
+''')
 
     # Combine everything
     output = HEADER
