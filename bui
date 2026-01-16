@@ -1,0 +1,1739 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["textual>=0.89.0"]
+# ///
+"""
+Bubblewrap TUI - A visual interface for configuring bubblewrap sandboxes.
+
+Usage: bui -- <command> [args...]
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import shlex
+import shutil
+import sys
+
+# Set up logging to file
+logging.basicConfig(
+    filename="/tmp/bui.log",
+    level=logging.DEBUG,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+log = logging.getLogger(__name__)
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import ClassVar
+
+from textual import on
+from textual.app import App, ComposeResult
+from textual.screen import ModalScreen
+from textual.binding import Binding
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.reactive import reactive
+from textual.widgets import (
+    Button,
+    Checkbox,
+    DirectoryTree,
+    Footer,
+    Input,
+    Label,
+    Static,
+    TabbedContent,
+    TabPane,
+)
+
+
+def find_ssl_cert_paths() -> list[str]:
+    """Dynamically find SSL certificate paths on this system."""
+    candidates = [
+        "/etc/ssl/certs",
+        "/etc/ssl/cert.pem",
+        "/etc/pki/tls/certs",
+        "/etc/pki/ca-trust/extracted",
+        "/etc/ca-certificates",
+        "/usr/share/ca-certificates",
+        "/usr/local/share/ca-certificates",
+    ]
+    paths = []
+    for candidate in candidates:
+        p = Path(candidate)
+        if p.exists():
+            # Resolve symlinks to get the real path
+            resolved = p.resolve()
+            if str(resolved) not in paths:
+                paths.append(str(resolved))
+            # Also include the original if it's a symlink (for apps that expect it)
+            if p.is_symlink() and str(p) not in paths:
+                paths.append(str(p))
+    return paths
+
+
+def detect_display_server() -> dict[str, list[str]]:
+    """Detect what display server is running and return paths to bind."""
+    result = {"type": None, "paths": [], "env_vars": []}
+    uid = os.getuid()
+
+    # Check Wayland first (preferred on modern systems)
+    wayland_display = os.environ.get("WAYLAND_DISPLAY")
+    if wayland_display:
+        result["type"] = "wayland"
+        result["env_vars"].append("WAYLAND_DISPLAY")
+        # Wayland socket is in XDG_RUNTIME_DIR
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{uid}")
+        socket_path = Path(runtime_dir) / wayland_display
+        if socket_path.exists():
+            result["paths"].append(str(socket_path))
+        # Some apps also need these Wayland-related env vars
+        for var in ["XDG_RUNTIME_DIR", "XDG_SESSION_TYPE"]:
+            if var in os.environ and var not in result["env_vars"]:
+                result["env_vars"].append(var)
+
+    # Check X11
+    display = os.environ.get("DISPLAY")
+    if display:
+        if result["type"]:
+            result["type"] = "both"
+        else:
+            result["type"] = "x11"
+        result["env_vars"].append("DISPLAY")
+        # X11 sockets
+        x11_dir = Path("/tmp/.X11-unix")
+        if x11_dir.exists():
+            result["paths"].append(str(x11_dir))
+        # Xauthority for authentication
+        xauth = os.environ.get("XAUTHORITY", str(Path.home() / ".Xauthority"))
+        if Path(xauth).exists():
+            result["paths"].append(xauth)
+            result["env_vars"].append("XAUTHORITY")
+
+    return result
+
+
+def detect_dbus_session() -> list[str]:
+    """Detect D-Bus session bus paths."""
+    paths = []
+    uid = os.getuid()
+
+    # Standard session bus socket location
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{uid}")
+    bus_path = Path(runtime_dir) / "bus"
+    if bus_path.exists():
+        paths.append(str(bus_path))
+
+    # Also check DBUS_SESSION_BUS_ADDRESS for non-standard setups
+    dbus_addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
+    if dbus_addr.startswith("unix:path="):
+        socket_path = dbus_addr.split("=")[1].split(",")[0]
+        if Path(socket_path).exists() and socket_path not in paths:
+            paths.append(socket_path)
+
+    return paths
+
+
+def find_dns_paths() -> list[str]:
+    """Dynamically find DNS configuration paths on this system."""
+    paths = []
+    resolv = Path("/etc/resolv.conf")
+    if resolv.exists():
+        # Get the real path (might be symlink to /run/systemd/resolve/stub-resolv.conf etc)
+        resolved = resolv.resolve()
+        paths.append(str(resolved))
+        # Also bind the symlink itself if different
+        if resolv.is_symlink():
+            paths.append("/etc/resolv.conf")
+        # On systemd, we might also need the parent dir for related files
+        if "systemd" in str(resolved):
+            parent = resolved.parent
+            if parent.exists() and str(parent) not in paths:
+                paths.append(str(parent))
+    # Also check nsswitch.conf for name resolution config
+    nsswitch = Path("/etc/nsswitch.conf")
+    if nsswitch.exists():
+        paths.append(str(nsswitch))
+    return paths
+
+
+@dataclass
+class BoundDirectory:
+    """A directory bound into the sandbox."""
+    path: Path
+    readonly: bool = True
+
+    def __str__(self) -> str:
+        mode = "ro" if self.readonly else "rw"
+        return f"{self.path} ({mode})"
+
+    def to_args(self) -> list[str]:
+        """Convert to bwrap arguments."""
+        flag = "--ro-bind" if self.readonly else "--bind"
+        path_str = str(self.path)
+        return [flag, path_str, path_str]
+
+
+@dataclass
+class SandboxConfig:
+    """Configuration for the sandbox."""
+    command: list[str] = field(default_factory=list)
+    bound_dirs: list[BoundDirectory] = field(default_factory=list)
+
+    # Special filesystems
+    dev_mode: str = "minimal"  # "none", "minimal", "full"
+    mount_proc: bool = True
+    mount_tmp: bool = True
+
+    # Network
+    share_net: bool = False
+    bind_resolv_conf: bool = False
+    bind_ssl_certs: bool = False
+
+    # Desktop integration
+    allow_dbus: bool = False
+    allow_display: bool = False
+    bind_user_config: bool = False  # ~/.config for default apps, themes, etc.
+
+    # Environment
+    clear_env: bool = False
+    keep_env_vars: set[str] = field(default_factory=set)
+    unset_env_vars: set[str] = field(default_factory=set)
+    custom_env_vars: dict[str, str] = field(default_factory=dict)
+
+    # Hostname
+    custom_hostname: str = ""
+
+    # Namespaces
+    unshare_user: bool = False
+    unshare_pid: bool = False
+    unshare_ipc: bool = False
+    unshare_uts: bool = False
+    unshare_cgroup: bool = False
+
+    # Process
+    die_with_parent: bool = True
+    new_session: bool = True
+    as_pid_1: bool = False
+    chdir: str = ""
+
+    # User/group mapping
+    uid: int = os.getuid()
+    gid: int = os.getgid()
+    use_uid_gid: bool = False
+
+    # Advanced
+    disable_userns: bool = False
+    tmpfs_size: str = ""  # e.g., "100M", "1G"
+
+    # Overlay
+    overlay_src: str = ""  # Source dir for overlay (read-only base)
+    overlay_mode: str = "none"  # "none", "tmpfs", "persistent"
+    overlay_rw: str = ""  # Writable dir for persistent mode
+    overlay_work: str = ""  # Work dir (same filesystem as overlay_rw)
+    overlay_dest: str = ""  # Mount point in sandbox
+
+    # Capabilities (to drop)
+    drop_caps: set[str] = field(default_factory=set)
+
+    # System binds (read-only)
+    bind_usr: bool = True
+    bind_bin: bool = True
+    bind_lib: bool = True
+    bind_lib64: bool = True
+    bind_sbin: bool = True
+    bind_etc: bool = False
+
+    SYSTEM_PATHS: ClassVar[dict[str, str]] = {
+        "bind_usr": "/usr",
+        "bind_bin": "/bin",
+        "bind_lib": "/lib",
+        "bind_lib64": "/lib64",
+        "bind_sbin": "/sbin",
+        "bind_etc": "/etc",
+    }
+
+    # Common capabilities that can be dropped, with descriptions
+    # Descriptions are written as restrictions (what sandbox cannot do when dropped)
+    ALL_CAPS: ClassVar[dict[str, str]] = {
+        "CAP_CHOWN": "change file ownership",
+        "CAP_DAC_OVERRIDE": "bypass file read/write/execute permission checks",
+        "CAP_DAC_READ_SEARCH": "bypass file read permission and directory search",
+        "CAP_FOWNER": "bypass permission checks requiring file owner match",
+        "CAP_FSETID": "keep set-user-ID/set-group-ID bits when modifying files",
+        "CAP_KILL": "send signals to processes owned by other users",
+        "CAP_SETGID": "change process group ID",
+        "CAP_SETUID": "change process user ID",
+        "CAP_SETPCAP": "modify process capabilities",
+        "CAP_LINUX_IMMUTABLE": "set immutable file attributes",
+        "CAP_NET_BIND_SERVICE": "bind to privileged ports (below 1024)",
+        "CAP_NET_BROADCAST": "send broadcast/multicast packets",
+        "CAP_NET_ADMIN": "configure network interfaces and routing",
+        "CAP_NET_RAW": "use raw network sockets (e.g., ping)",
+        "CAP_IPC_LOCK": "lock memory pages",
+        "CAP_IPC_OWNER": "bypass IPC permission checks",
+        "CAP_SYS_MODULE": "load/unload kernel modules",
+        "CAP_SYS_RAWIO": "access raw I/O ports",
+        "CAP_SYS_CHROOT": "use chroot()",
+        "CAP_SYS_PTRACE": "trace/debug other processes",
+        "CAP_SYS_PACCT": "configure process accounting",
+        "CAP_SYS_ADMIN": "perform privileged system operations (mount, namespace, etc.)",
+        "CAP_SYS_BOOT": "reboot the system",
+        "CAP_SYS_NICE": "raise process priority or change other processes' priority",
+        "CAP_SYS_RESOURCE": "override resource limits",
+        "CAP_SYS_TIME": "change the system clock",
+        "CAP_SYS_TTY_CONFIG": "configure TTY devices",
+        "CAP_MKNOD": "create device special files",
+        "CAP_LEASE": "create file leases",
+        "CAP_AUDIT_WRITE": "write to the kernel audit log",
+        "CAP_AUDIT_CONTROL": "configure the audit subsystem",
+        "CAP_SETFCAP": "set file capabilities",
+    }
+
+    def build_command(self) -> list[str]:
+        """Build the complete bwrap command."""
+        args = ["bwrap"]
+
+        # System binds (read-only)
+        for attr, path in self.SYSTEM_PATHS.items():
+            if getattr(self, attr) and Path(path).exists():
+                args.extend(["--ro-bind", path, path])
+
+        # Special filesystems
+        if self.dev_mode == "minimal":
+            args.extend(["--dev", "/dev"])
+        elif self.dev_mode == "full":
+            args.extend(["--bind", "/dev", "/dev"])
+        if self.mount_proc:
+            args.extend(["--proc", "/proc"])
+        if self.mount_tmp:
+            if self.tmpfs_size:
+                args.extend(["--size", self.tmpfs_size, "--tmpfs", "/tmp"])
+            else:
+                args.extend(["--tmpfs", "/tmp"])
+
+        # Network
+        if self.share_net:
+            args.append("--share-net")
+        if self.bind_resolv_conf:
+            for dns_path in find_dns_paths():
+                args.extend(["--ro-bind", dns_path, dns_path])
+        if self.bind_ssl_certs:
+            for cert_path in find_ssl_cert_paths():
+                args.extend(["--ro-bind", cert_path, cert_path])
+
+        # Desktop integration
+        if self.allow_dbus:
+            for dbus_path in detect_dbus_session():
+                args.extend(["--bind", dbus_path, dbus_path])
+        if self.allow_display:
+            display_info = detect_display_server()
+            for display_path in display_info["paths"]:
+                args.extend(["--ro-bind", display_path, display_path])
+        if self.bind_user_config:
+            config_dir = Path.home() / ".config"
+            if config_dir.exists():
+                args.extend(["--ro-bind", str(config_dir), str(config_dir)])
+
+        # Environment
+        if self.clear_env:
+            args.append("--clearenv")
+            # Re-set kept vars
+            for var in self.keep_env_vars:
+                if var in os.environ:
+                    args.extend(["--setenv", var, os.environ[var]])
+        else:
+            # Unset specific vars
+            for var in self.unset_env_vars:
+                args.extend(["--unsetenv", var])
+        # Custom env vars
+        for name, value in self.custom_env_vars.items():
+            args.extend(["--setenv", name, value])
+
+        # Hostname
+        if self.custom_hostname:
+            args.extend(["--hostname", self.custom_hostname])
+
+        # Namespaces
+        if self.unshare_user:
+            args.append("--unshare-user")
+        if self.unshare_pid:
+            args.append("--unshare-pid")
+        if self.unshare_ipc:
+            args.append("--unshare-ipc")
+        if self.unshare_uts:
+            args.append("--unshare-uts")
+        if self.unshare_cgroup:
+            args.append("--unshare-cgroup")
+
+        # Process options
+        if self.die_with_parent:
+            args.append("--die-with-parent")
+        if self.new_session:
+            args.append("--new-session")
+        if self.as_pid_1:
+            # --as-pid-1 requires --unshare-pid
+            if not self.unshare_pid:
+                args.append("--unshare-pid")
+            args.append("--as-pid-1")
+        if self.chdir:
+            args.extend(["--chdir", self.chdir])
+
+        # User/group mapping
+        if self.use_uid_gid:
+            args.extend(["--uid", str(self.uid)])
+            args.extend(["--gid", str(self.gid)])
+
+        # Advanced options
+        if self.disable_userns:
+            args.append("--disable-userns")
+
+        # Overlay filesystem
+        if self.overlay_src and self.overlay_dest and self.overlay_mode != "none":
+            args.extend(["--overlay-src", self.overlay_src])
+            if self.overlay_mode == "tmpfs":
+                args.extend(["--tmp-overlay", self.overlay_dest])
+            elif self.overlay_mode == "persistent" and self.overlay_rw and self.overlay_work:
+                args.extend(["--overlay", self.overlay_rw, self.overlay_work, self.overlay_dest])
+
+        # Capabilities
+        for cap in self.drop_caps:
+            args.extend(["--cap-drop", cap])
+
+        # User-bound directories
+        for bound_dir in self.bound_dirs:
+            args.extend(bound_dir.to_args())
+
+        # Command separator and command
+        args.append("--")
+        args.extend(self.command)
+
+        return args
+
+    def get_explanation(self) -> str:
+        """Generate a human-readable explanation of the sandbox."""
+        lines = []
+
+        # Command
+        lines.append(f"• Running: {' '.join(self.command)}")
+
+        # Network
+        if self.share_net:
+            extras = []
+            if self.bind_resolv_conf:
+                extras.append("DNS")
+            if self.bind_ssl_certs:
+                extras.append("SSL certs")
+            if extras:
+                lines.append(f"• Network: ALLOWED ({', '.join(extras)} included)")
+            else:
+                lines.append("• Network: ALLOWED (no DNS/SSL - may not work)")
+        else:
+            lines.append("• Network: BLOCKED (no network access)")
+
+        # Desktop integration
+        desktop = []
+        if self.allow_dbus:
+            desktop.append("D-Bus")
+        if self.allow_display:
+            display_info = detect_display_server()
+            if display_info["type"]:
+                desktop.append(display_info["type"].upper())
+        if self.bind_user_config:
+            desktop.append("~/.config")
+        if desktop:
+            lines.append(f"• Desktop: {', '.join(desktop)}")
+
+        # Filesystem - system paths
+        bound_sys = []
+        for attr, path in self.SYSTEM_PATHS.items():
+            if getattr(self, attr):
+                bound_sys.append(path)
+        if bound_sys:
+            lines.append(f"• System paths (read-only): {', '.join(bound_sys)}")
+
+        # Filesystem - user dirs
+        if self.bound_dirs:
+            ro_dirs = [str(d.path) for d in self.bound_dirs if d.readonly]
+            rw_dirs = [str(d.path) for d in self.bound_dirs if not d.readonly]
+            if ro_dirs:
+                lines.append(f"• User directories (read-only): {', '.join(ro_dirs)}")
+            if rw_dirs:
+                lines.append(f"• User directories (read-write): {', '.join(rw_dirs)}")
+
+        # Virtual filesystems
+        vfs = []
+        if self.dev_mode == "minimal":
+            vfs.append("/dev (minimal)")
+        elif self.dev_mode == "full":
+            vfs.append("/dev (full host access)")
+        if self.mount_proc:
+            vfs.append("/proc")
+        if self.mount_tmp:
+            tmp_desc = "/tmp (ephemeral"
+            if self.tmpfs_size:
+                tmp_desc += f", max {self.tmpfs_size}"
+            tmp_desc += ")"
+            vfs.append(tmp_desc)
+        if vfs:
+            lines.append(f"• Virtual filesystems: {', '.join(vfs)}")
+
+        # Overlay
+        if self.overlay_src and self.overlay_dest and self.overlay_mode != "none":
+            if self.overlay_mode == "tmpfs":
+                lines.append(f"• Overlay: {self.overlay_src} at {self.overlay_dest} (writes to ephemeral tmpfs)")
+            elif self.overlay_mode == "persistent":
+                lines.append(f"• Overlay: {self.overlay_src} at {self.overlay_dest} (writes to {self.overlay_rw})")
+
+        # Environment
+        if self.clear_env:
+            lines.append(f"• Environment: CLEARED, keeping {len(self.keep_env_vars)} vars")
+        elif self.unset_env_vars:
+            lines.append(f"• Environment: inherited minus {len(self.unset_env_vars)} removed vars")
+        else:
+            lines.append("• Environment: fully inherited from parent")
+
+        if self.custom_env_vars:
+            lines.append(f"• Custom env vars: {', '.join(self.custom_env_vars.keys())}")
+
+        # Isolation
+        isolation = []
+        if self.unshare_user:
+            isolation.append("user namespace (appears as different user inside)")
+        if self.unshare_pid or self.as_pid_1:
+            note = " (required by as-pid-1)" if self.as_pid_1 and not self.unshare_pid else ""
+            isolation.append(f"PID namespace (can't see host processes){note}")
+        if self.unshare_ipc:
+            isolation.append("IPC namespace (isolated shared memory)")
+        if self.unshare_uts:
+            isolation.append("UTS namespace (own hostname)")
+        if self.unshare_cgroup:
+            isolation.append("cgroup namespace (isolated resource limits)")
+        if isolation:
+            lines.append("• Isolation namespaces:")
+            for ns in isolation:
+                lines.append(f"    - {ns}")
+
+        # Capabilities
+        if self.drop_caps:
+            lines.append(f"• Sandbox CANNOT:")
+            for cap in sorted(self.drop_caps):
+                desc = self.ALL_CAPS.get(cap, "unknown")
+                lines.append(f"    ✗ {desc.capitalize()}")
+
+        # Process behavior
+        process = []
+        if self.die_with_parent:
+            process.append("dies with parent")
+        if self.new_session:
+            process.append("new session")
+        if self.as_pid_1:
+            process.append("runs as PID 1 (init)")
+        if self.chdir:
+            process.append(f"workdir: {self.chdir}")
+        if self.custom_hostname:
+            process.append(f"hostname: {self.custom_hostname}")
+        if process:
+            lines.append(f"• Process: {', '.join(process)}")
+
+        # User/group mapping
+        if self.use_uid_gid:
+            lines.append(f"• User mapping: UID {self.uid}, GID {self.gid}")
+
+        # Advanced
+        if self.disable_userns:
+            lines.append("• User namespaces: DISABLED (prevents nested sandboxing)")
+
+        return "\n".join(lines)
+
+
+class FilteredDirectoryTree(DirectoryTree):
+    """A directory tree that only shows directories."""
+
+    def filter_paths(self, paths: list[Path]) -> list[Path]:
+        return [p for p in paths if p.is_dir()]
+
+
+class BoundDirItem(Container):
+    """A row representing a bound directory."""
+
+    def __init__(self, bound_dir: BoundDirectory, on_update: callable, on_remove: callable) -> None:
+        super().__init__()
+        self.bound_dir = bound_dir
+        self._on_update = on_update
+        self._on_remove = on_remove
+
+    def compose(self) -> ComposeResult:
+        mode = "ro" if self.bound_dir.readonly else "rw"
+        variant = "default" if self.bound_dir.readonly else "warning"
+        yield Button(mode, classes="mode-btn", variant=variant)
+        yield Label(str(self.bound_dir.path), classes="bound-path")
+        yield Button("x", classes="remove-btn", variant="error")
+
+    @on(Button.Pressed, ".mode-btn")
+    def on_mode_toggle(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.bound_dir.readonly = not self.bound_dir.readonly
+        btn = self.query_one(".mode-btn", Button)
+        btn.label = "ro" if self.bound_dir.readonly else "rw"
+        btn.variant = "default" if self.bound_dir.readonly else "warning"
+        self._on_update()
+
+    @on(Button.Pressed, ".remove-btn")
+    def on_remove_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._on_remove(self)
+
+
+class EnvVarItem(Container):
+    """A card for an environment variable."""
+
+    def __init__(self, name: str, value: str, on_toggle: callable) -> None:
+        super().__init__()
+        self.var_name = name
+        self.var_value = value
+        self._on_toggle = on_toggle
+
+    def compose(self) -> ComposeResult:
+        yield Checkbox(self.var_name, value=True, classes="env-keep-toggle")
+        display_val = self.var_value[:30] + "..." if len(self.var_value) > 30 else self.var_value
+        yield Static(display_val, classes="env-value")
+
+    @on(Checkbox.Changed)
+    def on_keep_toggle(self, event: Checkbox.Changed) -> None:
+        self._on_toggle(self.var_name, event.value)
+
+
+class EnvVarRow(Container):
+    """A row for entering a name/value pair."""
+
+    def compose(self) -> ComposeResult:
+        yield Input(placeholder="NAME", classes="env-name-input")
+        yield Input(placeholder="value", classes="env-value-input")
+        yield Button("x", classes="remove-row-btn", variant="error")
+
+
+class AddEnvDialog(ModalScreen[list[tuple[str, str]]]):
+    """Modal dialog for adding environment variables."""
+
+    CSS = """
+    AddEnvDialog {
+        align: center middle;
+    }
+
+    #add-env-dialog {
+        width: 80;
+        height: 50;
+        background: $surface;
+        border: solid $primary;
+        padding: 1;
+    }
+
+    #add-env-dialog > Label {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #env-dialog-tabs {
+        height: 1fr;
+    }
+
+    #dialog-buttons {
+        height: auto;
+        dock: bottom;
+        align: right middle;
+        padding: 1 0;
+    }
+
+    #dialog-buttons Button {
+        margin-left: 1;
+    }
+
+    #env-rows-container {
+        height: 1fr;
+        padding: 1 3 1 1;
+    }
+
+    EnvVarRow {
+        layout: horizontal;
+        height: auto;
+        width: 100%;
+        margin-bottom: 1;
+    }
+
+    EnvVarRow .env-name-input {
+        width: 1fr;
+    }
+
+    EnvVarRow .env-value-input {
+        width: 2fr;
+    }
+
+    EnvVarRow .remove-row-btn {
+        width: 3;
+        min-width: 3;
+        height: 1;
+        min-height: 1;
+        padding: 0;
+        margin: 0;
+    }
+
+    .hint-text {
+        color: $text-muted;
+        height: auto;
+        margin: 1 0;
+    }
+
+    #dotenv-container {
+        padding: 1;
+        height: 1fr;
+    }
+
+    #dotenv-tree {
+        height: 20;
+        margin-bottom: 1;
+    }
+
+    #dotenv-preview {
+        height: auto;
+        padding: 1;
+        color: $text-muted;
+    }
+
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+    ]
+
+    def on_mount(self) -> None:
+        """Add initial row when dialog mounts."""
+        container = self.query_one("#env-rows-container", VerticalScroll)
+        container.mount(EnvVarRow())
+
+    def compose(self) -> ComposeResult:
+        with Container(id="add-env-dialog"):
+            yield Label("Add Environment Variables")
+            with TabbedContent(id="env-dialog-tabs"):
+                with TabPane("Add Variables", id="add-vars-tab"):
+                    yield Static("Enter = add row, Tab/Shift+Tab = navigate", classes="hint-text")
+                    yield VerticalScroll(id="env-rows-container")
+                with TabPane("Import .env", id="import-tab"):
+                    with Vertical(id="dotenv-container"):
+                        yield Button("..", id="dotenv-parent-btn")
+                        yield DirectoryTree(Path.cwd(), id="dotenv-tree")
+                        yield Static("Select a .env file above", id="dotenv-preview")
+            with Horizontal(id="dialog-buttons"):
+                yield Button("Cancel", id="cancel-btn", variant="default")
+                yield Button("Add", id="add-btn", variant="success")
+
+    def _get_env_pairs(self) -> list[tuple[str, str]]:
+        """Get all non-empty name/value pairs from the rows."""
+        pairs = []
+        for row in self.query(EnvVarRow):
+            name_input = row.query_one(".env-name-input", Input)
+            value_input = row.query_one(".env-value-input", Input)
+            name = name_input.value.strip()
+            value = value_input.value.strip()
+            # Only add if name is non-empty
+            if name:
+                pairs.append((name, value))
+        return pairs
+
+    @on(Input.Submitted)
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle Enter key in input fields."""
+        self._add_new_row()
+        # Focus the new row's name input
+        rows = list(self.query(EnvVarRow))
+        if rows:
+            rows[-1].query_one(".env-name-input", Input).focus()
+
+    def _add_new_row(self) -> None:
+        """Add a new env var row."""
+        container = self.query_one("#env-rows-container", VerticalScroll)
+        container.mount(EnvVarRow())
+
+    @on(Button.Pressed, ".remove-row-btn")
+    def on_remove_row(self, event: Button.Pressed) -> None:
+        event.stop()
+        row = event.button.parent
+        if row and len(self.query(EnvVarRow)) > 1:
+            row.remove()
+
+    @on(Button.Pressed, "#dotenv-parent-btn")
+    def on_dotenv_parent(self, event: Button.Pressed) -> None:
+        tree = self.query_one("#dotenv-tree", DirectoryTree)
+        current = tree.path
+        parent = current.parent
+        if parent != current:
+            tree.path = parent
+
+    @on(DirectoryTree.FileSelected, "#dotenv-tree")
+    def on_dotenv_selected(self, event: DirectoryTree.FileSelected) -> None:
+        preview = self.query_one("#dotenv-preview", Static)
+        path = event.path
+
+        try:
+            lines = []
+            with open(path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        lines.append(line)
+
+            if lines:
+                # Add rows for each env var
+                container = self.query_one("#env-rows-container", VerticalScroll)
+                for line in lines:
+                    name, _, value = line.partition("=")
+                    name = name.strip()
+                    value = value.strip().strip('"').strip("'")
+                    row = EnvVarRow()
+                    container.mount(row)
+                    # Set values after mount
+                    row.query_one(".env-name-input", Input).value = name
+                    row.query_one(".env-value-input", Input).value = value
+
+                preview.update(f"Loaded {len(lines)} variables from {path.name}. Switch to 'Add Variables' tab to review.")
+            else:
+                preview.update(f"No valid environment variables found in {path.name}.")
+        except Exception as e:
+            preview.update(f"Error reading file: {e}")
+
+    @on(Button.Pressed, "#add-btn")
+    def on_add(self, event: Button.Pressed) -> None:
+        pairs = self._get_env_pairs()
+        self.dismiss(pairs)
+
+    @on(Button.Pressed, "#cancel-btn")
+    def on_cancel(self, event: Button.Pressed) -> None:
+        self.dismiss([])
+
+    def action_cancel(self) -> None:
+        self.dismiss([])
+
+
+class DevModeCard(Container):
+    """A card for selecting /dev mode: none, minimal, full."""
+
+    DEV_MODES = {
+        "none": ("No /dev", "No device access"),
+        "minimal": ("/dev minimal", "null, zero, random, urandom, tty"),
+        "full": ("/dev full", "Full host /dev access - use with caution"),
+    }
+    MODE_ORDER = ["none", "minimal", "full"]
+
+    def __init__(self, on_change: callable) -> None:
+        super().__init__()
+        self._on_change = on_change
+        self._mode = "minimal"
+
+    def compose(self) -> ComposeResult:
+        label, desc = self.DEV_MODES[self._mode]
+        yield Button(label, id="dev-mode-btn")
+        yield Static(desc, id="dev-mode-desc", classes="option-explanation")
+
+    def set_mode(self, mode: str) -> None:
+        self._mode = mode
+        label, desc = self.DEV_MODES[mode]
+        self.query_one("#dev-mode-btn", Button).label = label
+        self.query_one("#dev-mode-desc", Static).update(desc)
+
+    @on(Button.Pressed, "#dev-mode-btn")
+    def on_mode_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        idx = self.MODE_ORDER.index(self._mode)
+        self._mode = self.MODE_ORDER[(idx + 1) % len(self.MODE_ORDER)]
+        label, desc = self.DEV_MODES[self._mode]
+        self.query_one("#dev-mode-btn", Button).label = label
+        self.query_one("#dev-mode-desc", Static).update(desc)
+        self._on_change(self._mode)
+
+
+class OverlayModeCard(Container):
+    """A card for selecting overlay mode: none, tmpfs, persistent."""
+
+    OVERLAY_MODES = {
+        "none": ("No Overlay", "Disabled"),
+        "tmpfs": ("Tmpfs Overlay", "Changes lost on exit"),
+        "persistent": ("Persistent", "Changes saved to disk"),
+    }
+    MODE_ORDER = ["none", "tmpfs", "persistent"]
+
+    def __init__(self, on_change: callable) -> None:
+        super().__init__()
+        self._on_change = on_change
+        self._mode = "none"
+
+    def compose(self) -> ComposeResult:
+        label, desc = self.OVERLAY_MODES[self._mode]
+        yield Button(label, id="overlay-mode-btn")
+        yield Static(desc, id="overlay-mode-desc", classes="option-explanation")
+
+    @on(Button.Pressed, "#overlay-mode-btn")
+    def on_mode_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        idx = self.MODE_ORDER.index(self._mode)
+        self._mode = self.MODE_ORDER[(idx + 1) % len(self.MODE_ORDER)]
+        label, desc = self.OVERLAY_MODES[self._mode]
+        self.query_one("#overlay-mode-btn", Button).label = label
+        self.query_one("#overlay-mode-desc", Static).update(desc)
+        self._on_change(self._mode)
+
+
+class OptionCard(Container):
+    """A checkbox with label on row 1, explanation on row 2."""
+
+    def __init__(self, label: str, explanation: str, checkbox_id: str, default: bool = False) -> None:
+        super().__init__()
+        self.label = label
+        self.explanation = explanation
+        self.checkbox_id = checkbox_id
+        self.default = default
+
+    def compose(self) -> ComposeResult:
+        yield Checkbox(self.label, value=self.default, id=self.checkbox_id)
+        yield Static(self.explanation, classes="option-explanation")
+
+
+class BubblewrapTUI(App):
+    """TUI for configuring bubblewrap sandboxes."""
+
+    TITLE = "Bubblewrap TUI"
+    ENABLE_COMMAND_PALETTE = False
+    CSS = """
+    Screen {
+        layout: grid;
+        grid-size: 1 3;
+        grid-rows: auto 1fr auto;
+    }
+
+    #header-container {
+        height: auto;
+        padding: 1;
+        background: $primary;
+        text-align: center;
+    }
+
+    #header-title {
+        text-style: bold;
+    }
+
+    #main-content {
+        height: 100%;
+    }
+
+    TabbedContent {
+        height: 100%;
+    }
+
+    /* Directories Tab */
+    #dirs-tab-content {
+        width: 100%;
+    }
+
+    #dir-browser-container {
+        width: 1fr;
+        height: 100%;
+        border: solid $primary;
+        padding: 0 1;
+    }
+
+    #dir-browser-container > Label {
+        text-style: bold;
+        padding: 1 0;
+    }
+
+    #dir-nav-buttons {
+        height: auto;
+        width: 100%;
+        margin-bottom: 1;
+    }
+
+    #dir-nav-buttons Button {
+        width: 1fr;
+    }
+
+    FilteredDirectoryTree {
+        height: 1fr;
+    }
+
+    #path-input-row {
+        height: auto;
+        width: 100%;
+        margin-top: 1;
+    }
+
+    #path-input {
+        width: 1fr;
+    }
+
+    #add-path-btn {
+        width: 5;
+    }
+
+    #bound-dirs-container {
+        width: 1fr;
+        height: 100%;
+        border: solid $secondary;
+        padding: 0 1;
+    }
+
+    #bound-dirs-container > Label {
+        text-style: bold;
+        padding: 1 0;
+    }
+
+    #bound-dirs-list {
+        height: 1fr;
+    }
+
+    BoundDirItem {
+        layout: horizontal;
+        height: 3;
+        width: 100%;
+        align: left middle;
+    }
+
+    BoundDirItem .mode-btn {
+        width: 6;
+        min-width: 6;
+    }
+
+    BoundDirItem .bound-path {
+        width: 1fr;
+        height: 3;
+        content-align: left middle;
+        padding: 0 1;
+    }
+
+    BoundDirItem .remove-btn {
+        width: 5;
+        min-width: 5;
+    }
+
+    /* Environment Tab */
+    #env-tab-content {
+        padding: 1;
+    }
+
+    #env-buttons-row {
+        height: auto;
+        width: 100%;
+        margin-bottom: 1;
+    }
+
+    #env-buttons-row Button {
+        width: auto;
+        min-width: 12;
+        margin-right: 1;
+    }
+
+    #env-grid-scroll {
+        height: 1fr;
+    }
+
+    #env-hint {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    #env-grid {
+        width: 100%;
+        height: auto;
+    }
+
+    .env-column {
+        width: 1fr;
+        height: auto;
+        padding: 0 1;
+    }
+
+    EnvVarItem {
+        height: auto;
+        width: 100%;
+        margin-bottom: 1;
+    }
+
+    EnvVarItem .env-keep-toggle {
+        width: 100%;
+    }
+
+    EnvVarItem .env-value {
+        color: $text-muted;
+        padding-left: 4;
+    }
+
+    #env-grid-scroll.hidden {
+        display: none;
+    }
+
+    /* File Systems & Sandbox Tabs */
+    #filesystems-tab-content, #sandbox-tab-content {
+        padding: 0;
+        height: 1fr;
+    }
+
+    #options-grid {
+        width: 100%;
+        height: auto;
+        min-height: 100%;
+    }
+
+    .options-column {
+        width: 1fr;
+        height: auto;
+        padding: 0 1;
+    }
+
+    .options-section {
+        border: solid $surface-lighten-2;
+        padding: 0 1 1 1;
+        margin-bottom: 1;
+        height: auto;
+    }
+
+    .section-label {
+        text-style: bold;
+        background: $primary;
+        padding: 0 1;
+        margin: 0 -1 1 -1;
+        width: auto;
+    }
+
+    DevModeCard, OverlayModeCard {
+        height: auto;
+        padding: 0;
+        margin: 0;
+    }
+
+    DevModeCard Button, OverlayModeCard Button {
+        width: auto;
+        min-width: 15;
+    }
+
+    OptionCard {
+        height: auto;
+        padding: 0;
+        margin: 0;
+    }
+
+    OptionCard Checkbox {
+        height: auto;
+        padding: 0;
+    }
+
+    .option-explanation {
+        color: $text-muted;
+        padding: 0 0 0 4;
+        margin-bottom: 1;
+    }
+
+    .options-section Input {
+        margin: 0 0 1 0;
+    }
+
+    .options-section > Label {
+        margin-top: 1;
+    }
+
+    /* Summary Tab */
+    #summary-tab-content {
+        padding: 1;
+    }
+
+    #summary-tab-content .section-label {
+        margin-bottom: 1;
+    }
+
+    #command-preview {
+        background: $surface;
+        padding: 1;
+        margin-bottom: 2;
+    }
+
+    #explanation {
+        padding: 1;
+    }
+
+    #footer-buttons {
+        height: 3;
+        padding: 0 1;
+    }
+
+    #status-bar {
+        width: 1fr;
+        height: 100%;
+        content-align: left middle;
+        color: $text-muted;
+        padding: 0 1;
+    }
+
+    #footer-buttons Button {
+        margin: 0 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("enter", "execute", "Execute", show=True),
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("a", "add_directory", "Add Dir", show=True),
+    ]
+
+    config: reactive[SandboxConfig] = reactive(SandboxConfig, recompose=False)
+
+    def __init__(self, command: list[str]) -> None:
+        super().__init__()
+        self.config = SandboxConfig(command=command)
+        # Bind current directory read-only by default
+        cwd = Path.cwd().resolve()
+        self.config.bound_dirs.append(BoundDirectory(path=cwd, readonly=True))
+        # Auto-detect command executable and bind its directory
+        self._auto_bind_command_dir(command)
+        # All env vars kept by default
+        self.config.keep_env_vars = set(os.environ.keys())
+        self._execute_command = False
+
+    def _auto_bind_command_dir(self, command: list[str]) -> None:
+        """Auto-detect and bind the directory containing the command executable."""
+        if not command:
+            return
+        cmd = command[0]
+        # Try to resolve the command to an absolute path
+        resolved = None
+        if os.path.isabs(cmd):
+            # Absolute path provided
+            if os.path.isfile(cmd) and os.access(cmd, os.X_OK):
+                resolved = cmd
+        else:
+            # Search PATH using shutil.which
+            resolved = shutil.which(cmd)
+
+        if resolved:
+            resolved_path = Path(resolved).resolve()
+            cmd_dir = resolved_path.parent
+            # Check if already bound (or parent is bound)
+            already_bound = False
+            for bd in self.config.bound_dirs:
+                try:
+                    resolved_path.relative_to(bd.path)
+                    already_bound = True
+                    break
+                except ValueError:
+                    pass
+            # Also check system paths
+            for attr, sys_path in self.config.SYSTEM_PATHS.items():
+                if getattr(self.config, attr):
+                    try:
+                        resolved_path.relative_to(sys_path)
+                        already_bound = True
+                        break
+                    except ValueError:
+                        pass
+            if not already_bound:
+                self.config.bound_dirs.append(BoundDirectory(path=cmd_dir, readonly=True))
+            # Update command to use resolved path
+            self.config.command[0] = str(resolved_path)
+
+    def compose(self) -> ComposeResult:
+        log.info("compose() called")
+        log.info(f"bound_dirs: {self.config.bound_dirs}")
+        log.info(f"env vars count: {len(os.environ)}")
+
+        yield Container(
+            Label(f"bui - {' '.join(self.config.command)}", id="header-title"),
+            id="header-container",
+        )
+
+        # Build directory items
+        dir_items = []
+        for bd in self.config.bound_dirs:
+            log.info(f"Creating BoundDirItem for {bd.path}")
+            dir_items.append(BoundDirItem(bd, self._update_preview, self._remove_bound_dir))
+        log.info(f"Created {len(dir_items)} dir items")
+
+        with TabbedContent(id="main-content"):
+            with TabPane("Directories", id="dirs-tab"):
+                with Horizontal(id="dirs-tab-content"):
+                    with Vertical(id="dir-browser-container"):
+                        yield Label("Browser")
+                        with Horizontal(id="dir-nav-buttons"):
+                            yield Button("..", id="parent-dir-btn")
+                            yield Button("Add Selected (a)", id="add-dir-btn", variant="primary")
+                        yield FilteredDirectoryTree(Path.cwd(), id="dir-tree")
+                        with Horizontal(id="path-input-row"):
+                            yield Input(placeholder="/path/to/add", id="path-input")
+                            yield Button("+", id="add-path-btn", variant="success")
+                    with Vertical(id="bound-dirs-container"):
+                        yield Label("Bound Directories (click ro/rw to toggle)")
+                        yield VerticalScroll(*dir_items, id="bound-dirs-list")
+
+            with TabPane("Environment", id="env-tab"):
+                with Vertical(id="env-tab-content"):
+                    with Horizontal(id="env-buttons-row"):
+                        yield Button("+ Add Variables", id="add-env-btn", variant="success")
+                        yield Button("Clear System Env", id="toggle-clear-btn", variant="error")
+                    with VerticalScroll(id="env-grid-scroll"):
+                        yield Static("Sandbox will inherit all checked environment variables. Use Clear All to start with an empty environment.", id="env-hint")
+                        with Horizontal(id="env-grid"):
+                            # Split env vars into 3 columns
+                            env_items = sorted(os.environ.items())
+                            third = max(1, len(env_items) // 3)
+                            for col_items in [env_items[:third], env_items[third:third*2], env_items[third*2:]]:
+                                with Vertical(classes="env-column"):
+                                    for name, value in col_items:
+                                        yield EnvVarItem(name, value, self._toggle_env_var)
+
+            with TabPane("File Systems", id="filesystems-tab"):
+                with VerticalScroll(id="filesystems-tab-content"):
+                    with Horizontal(id="options-grid"):
+                        with Vertical(classes="options-column"):
+                            with Container(classes="options-section"):
+                                yield Label("Virtual Filesystems", classes="section-label")
+                                yield DevModeCard(self._on_dev_mode_change)
+                                yield OptionCard("/proc", "Process info filesystem", "opt-proc", True)
+                                yield OptionCard("/tmp", "Ephemeral temp storage", "opt-tmp", True)
+                                yield Label("Tmpfs size:")
+                                yield Input(placeholder="default (half of RAM)", id="opt-tmpfs-size")
+                            with Container(classes="options-section"):
+                                yield Label("System Paths (read-only)", classes="section-label")
+                                yield OptionCard("/usr", "Programs and libraries", "opt-usr", True)
+                                yield OptionCard("/bin", "Essential binaries", "opt-bin", True)
+                                yield OptionCard("/lib", "Shared libraries", "opt-lib", True)
+                                yield OptionCard("/lib64", "64-bit libraries", "opt-lib64", Path("/lib64").exists())
+                                yield OptionCard("/sbin", "System binaries", "opt-sbin", True)
+                                yield OptionCard("/etc", "Config files - RISKY!", "opt-etc", False)
+                        with Vertical(classes="options-column"):
+                            with Container(classes="options-section"):
+                                yield Label("Overlay Filesystem", classes="section-label")
+                                yield Static("Layer a writable surface over a read-only directory. "
+                                           "The sandbox sees the combined view, but the original files stay untouched.",
+                                           classes="option-explanation")
+                                yield OverlayModeCard(self._on_overlay_mode_change)
+                                yield Static("Source: directory to overlay (will appear read-only)", classes="option-explanation")
+                                yield Input(placeholder="/path/to/source", id="opt-overlay-src")
+                                yield Static("Mount point: where it appears inside the sandbox", classes="option-explanation")
+                                yield Input(placeholder="/path/in/sandbox", id="opt-overlay-dest")
+                                yield Static("For persistent mode - where to store changes:", classes="option-explanation")
+                                yield Input(placeholder="Write dir: stores modified files", id="opt-overlay-rw")
+                                yield Input(placeholder="Work dir: temp space (same filesystem)", id="opt-overlay-work")
+
+            with TabPane("Sandbox", id="sandbox-tab"):
+                with VerticalScroll(id="sandbox-tab-content"):
+                    with Horizontal(id="options-grid"):
+                        with Vertical(classes="options-column"):
+                            with Container(classes="options-section"):
+                                yield Label("Namespaces", classes="section-label")
+                                yield OptionCard("User/group IDs", "Appear as different user inside", "opt-unshare-user", False)
+                                yield OptionCard("Process list", "Hide host processes", "opt-unshare-pid", False)
+                                yield OptionCard("Shared memory", "Isolated message queues", "opt-unshare-ipc", False)
+                                yield OptionCard("Hostname", "Own hostname inside", "opt-unshare-uts", False)
+                                yield OptionCard("Cgroups", "Isolated resource limits", "opt-unshare-cgroup", False)
+                            with Container(classes="options-section"):
+                                yield Label("Network", classes="section-label")
+                                yield OptionCard("Allow network", "Enable host network access", "opt-net", False)
+                                yield OptionCard("DNS config", "/etc/resolv.conf for hostname resolution", "opt-resolv-conf", False)
+                                yield OptionCard("SSL certificates", "/etc/ssl/certs for HTTPS", "opt-ssl-certs", False)
+                            with Container(classes="options-section"):
+                                yield Label("Desktop Integration", classes="section-label")
+                                # Detect what's available
+                                display_info = detect_display_server()
+                                dbus_paths = detect_dbus_session()
+                                dbus_desc = "Open browser, notifications, etc." if dbus_paths else "Not detected"
+                                yield OptionCard("D-Bus session", dbus_desc, "opt-dbus", False)
+                                if display_info["type"] == "wayland":
+                                    display_desc = "Wayland display access"
+                                elif display_info["type"] == "x11":
+                                    display_desc = "X11 display access"
+                                elif display_info["type"] == "both":
+                                    display_desc = "X11 + Wayland display access"
+                                else:
+                                    display_desc = "No display detected"
+                                yield OptionCard("Display server", display_desc, "opt-display", False)
+                                yield OptionCard("User config", "~/.config for default apps, themes", "opt-user-config", False)
+                        with Vertical(classes="options-column"):
+                            with Container(classes="options-section"):
+                                yield Label("Process", classes="section-label")
+                                yield OptionCard("Kill with parent", "Dies when terminal closes", "opt-die-with-parent", True)
+                                yield OptionCard("New session", "Prevents terminal escape attacks, but disables job control", "opt-new-session", True)
+                                yield OptionCard("Run as PID 1", "Command runs as init process in PID namespace", "opt-as-pid-1", False)
+                                yield Label("Working dir:")
+                                yield Input(value=str(Path.cwd()), id="opt-chdir")
+                                yield Label("Custom hostname:")
+                                yield Input(placeholder="sandbox", id="opt-hostname")
+                            with Container(classes="options-section"):
+                                yield Label("Advanced", classes="section-label")
+                                yield OptionCard("Custom UID/GID", "Set specific user/group IDs inside sandbox", "opt-uid-gid", False)
+                                yield Label("UID:")
+                                yield Input(value=str(os.getuid()), id="opt-uid")
+                                yield Label("GID:")
+                                yield Input(value=str(os.getgid()), id="opt-gid")
+                                yield OptionCard("Disable user namespaces", "Prevent nested sandboxing", "opt-disable-userns", False)
+
+            with TabPane("Summary", id="summary-tab"):
+                with Vertical(id="summary-tab-content"):
+                    yield Label("Command Preview", classes="section-label")
+                    yield Static(self._format_command(), id="command-preview")
+                    yield Label("Summary", classes="section-label")
+                    yield Static(self.config.get_explanation(), id="explanation")
+
+        yield Horizontal(
+            Static("", id="status-bar"),
+            Button("Execute [Enter]", id="execute-btn", variant="success"),
+            Button("Cancel [Esc]", id="cancel-btn", variant="error"),
+            id="footer-buttons",
+        )
+
+    def _set_status(self, message: str) -> None:
+        """Set status bar message."""
+        status = self.query_one("#status-bar", Static)
+        status.update(message)
+
+    def _on_dev_mode_change(self, mode: str) -> None:
+        """Handle /dev mode change."""
+        self.config.dev_mode = mode
+        self._update_preview()
+
+    def _on_overlay_mode_change(self, mode: str) -> None:
+        """Handle overlay mode change."""
+        self.config.overlay_mode = mode
+        self._update_preview()
+
+    def _remove_bound_dir(self, item: BoundDirItem) -> None:
+        """Remove a bound directory from the list."""
+        if item.bound_dir in self.config.bound_dirs:
+            self.config.bound_dirs.remove(item.bound_dir)
+            item.remove()
+            self._update_preview()
+            self._set_status(f"Removed: {item.bound_dir.path}")
+
+    def _toggle_env_var(self, name: str, keep: bool) -> None:
+        """Toggle whether to keep an environment variable."""
+        is_custom = name in self.config.custom_env_vars
+        if keep:
+            self.config.keep_env_vars.add(name)
+            self.config.unset_env_vars.discard(name)
+        else:
+            self.config.keep_env_vars.discard(name)
+            if is_custom:
+                # Remove custom var entirely instead of unsetting
+                del self.config.custom_env_vars[name]
+            else:
+                self.config.unset_env_vars.add(name)
+        self._update_preview()
+
+    def _format_command(self) -> str:
+        """Format the command for display - compact single line."""
+        args = self.config.build_command()
+        return shlex.join(args)
+
+    def _update_preview(self) -> None:
+        """Update the command preview."""
+        preview = self.query_one("#command-preview", Static)
+        preview.update(self._format_command())
+        explanation = self.query_one("#explanation", Static)
+        explanation.update(self.config.get_explanation())
+
+    def _sync_config_from_ui(self) -> None:
+        """Sync the config from UI state."""
+        try:
+            # Filesystems (dev_mode is handled by callback)
+            self.config.mount_proc = self.query_one("#opt-proc", Checkbox).value
+            self.config.mount_tmp = self.query_one("#opt-tmp", Checkbox).value
+
+            # Network
+            self.config.share_net = self.query_one("#opt-net", Checkbox).value
+            self.config.bind_resolv_conf = self.query_one("#opt-resolv-conf", Checkbox).value
+            self.config.bind_ssl_certs = self.query_one("#opt-ssl-certs", Checkbox).value
+
+            # Desktop integration
+            self.config.allow_dbus = self.query_one("#opt-dbus", Checkbox).value
+            self.config.allow_display = self.query_one("#opt-display", Checkbox).value
+            self.config.bind_user_config = self.query_one("#opt-user-config", Checkbox).value
+
+            # Namespaces
+            self.config.unshare_user = self.query_one("#opt-unshare-user", Checkbox).value
+            self.config.unshare_pid = self.query_one("#opt-unshare-pid", Checkbox).value
+            self.config.unshare_ipc = self.query_one("#opt-unshare-ipc", Checkbox).value
+            self.config.unshare_uts = self.query_one("#opt-unshare-uts", Checkbox).value
+            self.config.unshare_cgroup = self.query_one("#opt-unshare-cgroup", Checkbox).value
+
+            # Process
+            self.config.die_with_parent = self.query_one("#opt-die-with-parent", Checkbox).value
+            self.config.new_session = self.query_one("#opt-new-session", Checkbox).value
+            self.config.as_pid_1 = self.query_one("#opt-as-pid-1", Checkbox).value
+            self.config.chdir = self.query_one("#opt-chdir", Input).value
+            self.config.custom_hostname = self.query_one("#opt-hostname", Input).value
+
+            # Advanced
+            self.config.use_uid_gid = self.query_one("#opt-uid-gid", Checkbox).value
+            try:
+                self.config.uid = int(self.query_one("#opt-uid", Input).value)
+            except ValueError:
+                pass
+            try:
+                self.config.gid = int(self.query_one("#opt-gid", Input).value)
+            except ValueError:
+                pass
+            self.config.disable_userns = self.query_one("#opt-disable-userns", Checkbox).value
+            self.config.tmpfs_size = self.query_one("#opt-tmpfs-size", Input).value.strip()
+
+            # Overlay (mode is handled by callback)
+            self.config.overlay_src = self.query_one("#opt-overlay-src", Input).value.strip()
+            self.config.overlay_dest = self.query_one("#opt-overlay-dest", Input).value.strip()
+            self.config.overlay_rw = self.query_one("#opt-overlay-rw", Input).value.strip()
+            self.config.overlay_work = self.query_one("#opt-overlay-work", Input).value.strip()
+
+            # System binds
+            self.config.bind_usr = self.query_one("#opt-usr", Checkbox).value
+            self.config.bind_bin = self.query_one("#opt-bin", Checkbox).value
+            self.config.bind_lib = self.query_one("#opt-lib", Checkbox).value
+            self.config.bind_lib64 = self.query_one("#opt-lib64", Checkbox).value
+            self.config.bind_sbin = self.query_one("#opt-sbin", Checkbox).value
+            self.config.bind_etc = self.query_one("#opt-etc", Checkbox).value
+        except Exception:
+            pass  # Widgets not ready yet
+
+    @on(Checkbox.Changed)
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        """Handle checkbox changes."""
+        # Auto-enable DNS and SSL certs when network is toggled on
+        if event.checkbox.id == "opt-net" and event.value:
+            try:
+                self.query_one("#opt-resolv-conf", Checkbox).value = True
+                self.query_one("#opt-ssl-certs", Checkbox).value = True
+            except Exception:
+                pass
+        self._sync_config_from_ui()
+        self._update_preview()
+
+    @on(Input.Changed)
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Handle input changes."""
+        self._sync_config_from_ui()
+        self._update_preview()
+
+    @on(Button.Pressed, "#add-dir-btn")
+    def on_add_dir_pressed(self, event: Button.Pressed) -> None:
+        """Add the selected directory."""
+        self.action_add_directory()
+
+    @on(Button.Pressed, "#parent-dir-btn")
+    def on_parent_dir_pressed(self, event: Button.Pressed) -> None:
+        """Navigate to parent directory."""
+        tree = self.query_one("#dir-tree", FilteredDirectoryTree)
+        current = tree.path
+        parent = current.parent
+        if parent != current:
+            tree.path = parent
+
+    @on(Button.Pressed, "#add-path-btn")
+    def on_add_path_pressed(self, event: Button.Pressed) -> None:
+        """Add a path from the input field."""
+        self._add_path_from_input()
+
+    @on(Input.Submitted, "#path-input")
+    def on_path_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle Enter in path input."""
+        self._add_path_from_input()
+
+    def _add_path_from_input(self) -> None:
+        """Add a path from the input field."""
+        path_input = self.query_one("#path-input", Input)
+        path_str = path_input.value.strip()
+        if not path_str:
+            return
+        path = Path(path_str).expanduser().resolve()
+        if not path.exists():
+            self._set_status(f"Path does not exist: {path}")
+            return
+        if not path.is_dir():
+            self._set_status(f"Not a directory: {path}")
+            return
+        # Check if already added
+        for bd in self.config.bound_dirs:
+            if bd.path == path:
+                self._set_status(f"Already added: {path}")
+                return
+        bound_dir = BoundDirectory(path=path, readonly=True)
+        self.config.bound_dirs.append(bound_dir)
+        dirs_list = self.query_one("#bound-dirs-list", VerticalScroll)
+        dirs_list.mount(BoundDirItem(bound_dir, self._update_preview, self._remove_bound_dir))
+        path_input.value = ""
+        self._update_preview()
+        self._set_status(f"Added: {path}")
+
+    @on(Button.Pressed, "#toggle-clear-btn")
+    def on_toggle_clear_pressed(self, event: Button.Pressed) -> None:
+        """Toggle between clear and restore environment."""
+        btn = self.query_one("#toggle-clear-btn", Button)
+        if not self.config.clear_env:
+            # Clear environment
+            self.config.clear_env = True
+            self.config.keep_env_vars = set(self.config.custom_env_vars.keys())
+            # Hide system env grid, keep custom vars
+            self.query_one("#env-grid-scroll").add_class("hidden")
+            btn.label = "Restore System Env"
+            btn.variant = "primary"
+            self._update_preview()
+            self._set_status("System environment cleared")
+        else:
+            # Restore environment
+            self.config.clear_env = False
+            self.config.keep_env_vars = set(os.environ.keys()) | set(self.config.custom_env_vars.keys())
+            self.config.unset_env_vars.clear()
+            # Show env grid
+            self.query_one("#env-grid-scroll").remove_class("hidden")
+            # Check all env var checkboxes
+            for item in self.query(EnvVarItem):
+                checkbox = item.query_one(".env-keep-toggle", Checkbox)
+                checkbox.value = True
+            btn.label = "Clear System Env"
+            btn.variant = "error"
+            self._update_preview()
+            self._set_status("System environment restored")
+
+    @on(Button.Pressed, "#add-env-btn")
+    def on_add_env_pressed(self, event: Button.Pressed) -> None:
+        """Open dialog to add environment variables."""
+        self.push_screen(AddEnvDialog(), self._handle_add_env_result)
+
+    def _handle_add_env_result(self, pairs: list[tuple[str, str]]) -> None:
+        """Handle result from add env dialog."""
+        if not pairs:
+            return
+        for name, value in pairs:
+            self.config.custom_env_vars[name] = value
+            self.config.keep_env_vars.add(name)
+        # Only show env grid if not in cleared state, or if we have custom vars to show
+        if self.config.custom_env_vars:
+            self.query_one("#env-grid-scroll").remove_class("hidden")
+        self._reflow_env_columns()
+        self._update_preview()
+        self._set_status(f"Added {len(pairs)} variable(s)")
+
+    def _reflow_env_columns(self) -> None:
+        """Reflow environment variable items across columns."""
+        # Remove all existing items
+        for item in self.query(EnvVarItem):
+            item.remove()
+
+        # Build list based on clear_env state
+        if self.config.clear_env:
+            # Only show custom vars when system env is cleared
+            all_vars = [(n, v) for n, v in self.config.custom_env_vars.items()]
+        else:
+            # Show custom vars first, then sorted system vars
+            all_vars = [(n, v) for n, v in self.config.custom_env_vars.items()]
+            all_vars += sorted(os.environ.items())
+
+        # Get column containers
+        columns = list(self.query(".env-column"))
+        if not columns or not all_vars:
+            return
+
+        # Distribute across columns
+        third = max(1, len(all_vars) // 3)
+        col_items = [all_vars[:third], all_vars[third:third*2], all_vars[third*2:]]
+
+        for col_idx, col in enumerate(columns):
+            if col_idx < len(col_items):
+                for name, value in col_items[col_idx]:
+                    is_kept = name in self.config.keep_env_vars
+                    item = EnvVarItem(name, value, self._toggle_env_var)
+                    col.mount(item)
+                    # Set checkbox state after mount
+                    checkbox = item.query_one(".env-keep-toggle", Checkbox)
+                    checkbox.value = is_kept
+
+    @on(Button.Pressed, "#execute-btn")
+    def on_execute_pressed(self, event: Button.Pressed) -> None:
+        """Execute the command."""
+        self.action_execute()
+
+    @on(Button.Pressed, "#cancel-btn")
+    def on_cancel_pressed(self, event: Button.Pressed) -> None:
+        """Cancel and exit."""
+        self.action_cancel()
+
+    def action_add_directory(self) -> None:
+        """Add the currently selected directory to the bound list."""
+        tree = self.query_one("#dir-tree", FilteredDirectoryTree)
+        if tree.cursor_node and tree.cursor_node.data:
+            path = tree.cursor_node.data.path if hasattr(tree.cursor_node.data, 'path') else tree.cursor_node.data
+            if isinstance(path, Path) and path.is_dir():
+                # Check if already added
+                for bd in self.config.bound_dirs:
+                    if bd.path == path:
+                        self._set_status(f"Already added: {path}")
+                        return
+
+                bound_dir = BoundDirectory(path=path, readonly=True)
+                self.config.bound_dirs.append(bound_dir)
+
+                dirs_list = self.query_one("#bound-dirs-list", VerticalScroll)
+                dirs_list.mount(BoundDirItem(bound_dir, self._update_preview, self._remove_bound_dir))
+
+                self._update_preview()
+                self._set_status(f"Added: {path}")
+
+    def action_execute(self) -> None:
+        """Execute the configured command."""
+        self._execute_command = True
+        self.exit()
+
+    def action_cancel(self) -> None:
+        """Cancel and exit without executing."""
+        self._execute_command = False
+        self.exit()
+
+
+def parse_args() -> list[str]:
+    """Parse command line arguments."""
+    args = sys.argv[1:]
+
+    if "--help" in args or "-h" in args:
+        print(__doc__)
+        print("\nExample: bui -- /bin/bash")
+        print("         bui -- python script.py arg1 arg2")
+        sys.exit(0)
+
+    try:
+        sep_idx = args.index("--")
+        command = args[sep_idx + 1:]
+        if not command:
+            print("Error: No command specified after '--'", file=sys.stderr)
+            print("Usage: bui -- <command> [args...]", file=sys.stderr)
+            sys.exit(1)
+        return command
+    except ValueError:
+        if args:
+            return args
+        print("Error: No command specified", file=sys.stderr)
+        print("Usage: bui -- <command> [args...]", file=sys.stderr)
+        sys.exit(1)
+
+
+def main() -> None:
+    """Main entry point."""
+    command = parse_args()
+
+    app = BubblewrapTUI(command)
+    app.run()
+
+    if app._execute_command:
+        cmd = app.config.build_command()
+        print("\n" + "=" * 60)
+        print("Executing:")
+        print(" ".join(cmd))
+        print("=" * 60 + "\n")
+
+        os.execvp("bwrap", cmd)
+    else:
+        print("Cancelled.")
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
