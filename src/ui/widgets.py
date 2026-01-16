@@ -18,7 +18,10 @@ from textual.widgets import (
     TabPane,
 )
 
-from config import BoundDirectory, OverlayConfig
+from model import BoundDirectory, OverlayConfig
+from model.ui_field import UIField
+from ui.ids import css
+import ui.ids as ids
 
 
 class FilteredDirectoryTree(DirectoryTree):
@@ -251,7 +254,7 @@ class AddEnvDialog(ModalScreen[list[tuple[str, str]]]):
 
     def on_mount(self) -> None:
         """Add initial row when dialog mounts."""
-        container = self.query_one("#env-rows-container", VerticalScroll)
+        container = self.query_one(css(ids.ENV_ROWS_CONTAINER), VerticalScroll)
         container.mount(EnvVarRow())
 
     def compose(self) -> ComposeResult:
@@ -294,7 +297,7 @@ class AddEnvDialog(ModalScreen[list[tuple[str, str]]]):
 
     def _add_new_row(self) -> None:
         """Add a new env var row."""
-        container = self.query_one("#env-rows-container", VerticalScroll)
+        container = self.query_one(css(ids.ENV_ROWS_CONTAINER), VerticalScroll)
         container.mount(EnvVarRow())
 
     @on(Button.Pressed, ".remove-row-btn")
@@ -304,17 +307,17 @@ class AddEnvDialog(ModalScreen[list[tuple[str, str]]]):
         if row and len(self.query(EnvVarRow)) > 1:
             row.remove()
 
-    @on(Button.Pressed, "#dotenv-parent-btn")
+    @on(Button.Pressed, css(ids.DOTENV_PARENT_BTN))
     def on_dotenv_parent(self, event: Button.Pressed) -> None:
-        tree = self.query_one("#dotenv-tree", DirectoryTree)
+        tree = self.query_one(css(ids.DOTENV_TREE), DirectoryTree)
         current = tree.path
         parent = current.parent
         if parent != current:
             tree.path = parent
 
-    @on(DirectoryTree.FileSelected, "#dotenv-tree")
+    @on(DirectoryTree.FileSelected, css(ids.DOTENV_TREE))
     def on_dotenv_selected(self, event: DirectoryTree.FileSelected) -> None:
-        preview = self.query_one("#dotenv-preview", Static)
+        preview = self.query_one(css(ids.DOTENV_PREVIEW), Static)
         path = event.path
 
         try:
@@ -327,7 +330,7 @@ class AddEnvDialog(ModalScreen[list[tuple[str, str]]]):
 
             if lines:
                 # Add rows for each env var
-                container = self.query_one("#env-rows-container", VerticalScroll)
+                container = self.query_one(css(ids.ENV_ROWS_CONTAINER), VerticalScroll)
                 for line in lines:
                     name, _, value = line.partition("=")
                     name = name.strip()
@@ -344,12 +347,12 @@ class AddEnvDialog(ModalScreen[list[tuple[str, str]]]):
         except Exception as e:
             preview.update(f"Error reading file: {e}")
 
-    @on(Button.Pressed, "#add-btn")
+    @on(Button.Pressed, css(ids.ADD_BTN))
     def on_add(self, event: Button.Pressed) -> None:
         pairs = self._get_env_pairs()
         self.dismiss(pairs)
 
-    @on(Button.Pressed, "#cancel-btn")
+    @on(Button.Pressed, css(ids.CANCEL_BTN))
     def on_cancel(self, event: Button.Pressed) -> None:
         self.dismiss([])
 
@@ -380,30 +383,61 @@ class DevModeCard(Container):
     def set_mode(self, mode: str) -> None:
         self._mode = mode
         label, desc = self.DEV_MODES[mode]
-        self.query_one("#dev-mode-btn", Button).label = label
-        self.query_one("#dev-mode-desc", Static).update(desc)
+        self.query_one(css(ids.DEV_MODE_BTN), Button).label = label
+        self.query_one(css(ids.DEV_MODE_DESC), Static).update(desc)
 
-    @on(Button.Pressed, "#dev-mode-btn")
+    @on(Button.Pressed, css(ids.DEV_MODE_BTN))
     def on_mode_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         idx = self.MODE_ORDER.index(self._mode)
         self._mode = self.MODE_ORDER[(idx + 1) % len(self.MODE_ORDER)]
         label, desc = self.DEV_MODES[self._mode]
-        self.query_one("#dev-mode-btn", Button).label = label
-        self.query_one("#dev-mode-desc", Static).update(desc)
+        self.query_one(css(ids.DEV_MODE_BTN), Button).label = label
+        self.query_one(css(ids.DEV_MODE_DESC), Static).update(desc)
         self._on_change(self._mode)
 
 
 class OptionCard(Container):
     """A checkbox with label on row 1, explanation on row 2."""
 
-    def __init__(self, label: str, explanation: str, checkbox_id: str, default: bool = False) -> None:
+    def __init__(self, field: UIField, default: bool | None = None, explanation: str | None = None) -> None:
+        """Create an OptionCard from a UIField.
+
+        Args:
+            field: The UIField descriptor containing metadata
+            default: Override the field's default (e.g., for /lib64 existence check)
+            explanation: Override the field's explanation (e.g., for display detection)
+        """
         super().__init__()
-        self.label = label
-        self.explanation = explanation
-        self.checkbox_id = checkbox_id
-        self.default = default
+        self.field = field
+        self._default = default if default is not None else field.default
+        self._explanation = explanation or field.explanation
 
     def compose(self) -> ComposeResult:
-        yield Checkbox(self.label, value=self.default, id=self.checkbox_id)
-        yield Static(self.explanation, classes="option-explanation")
+        yield Checkbox(self.field.label, value=self._default, id=self.field.checkbox_id)
+        yield Static(self._explanation, classes="option-explanation")
+
+
+class ProfileItem(Container):
+    """A clickable profile entry in the profiles list."""
+
+    def __init__(self, profile_path: Path, on_load: callable, on_delete: callable) -> None:
+        super().__init__()
+        self.profile_path = profile_path
+        self._on_load = on_load
+        self._on_delete = on_delete
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(classes="profile-row"):
+            yield Button(self.profile_path.stem, classes="profile-name-btn", variant="primary")
+            yield Button("x", classes="profile-delete-btn", variant="error")
+
+    @on(Button.Pressed, ".profile-name-btn")
+    def on_load_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._on_load(self.profile_path)
+
+    @on(Button.Pressed, ".profile-delete-btn")
+    def on_delete_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._on_delete(self)
