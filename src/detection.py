@@ -37,42 +37,86 @@ def find_ssl_cert_paths() -> list[str]:
 
 
 def detect_display_server() -> dict[str, list[str]]:
-    """Detect what display server is running and return paths to bind."""
+    """Detect what display server is running and return paths to bind.
+
+    Returns a dict with:
+        - type: "wayland", "x11", "both", or None
+        - paths: list of filesystem paths to bind
+        - env_vars: list of environment variable names to preserve
+
+    Detection is based on both environment variables AND socket existence,
+    avoiding false positives when env vars are set but display server isn't running.
+    """
     result = {"type": None, "paths": [], "env_vars": []}
     uid = os.getuid()
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{uid}")
 
-    # Check Wayland first (preferred on modern systems)
+    wayland_detected = False
+    x11_detected = False
+
+    # Check Wayland (preferred on modern systems)
     wayland_display = os.environ.get("WAYLAND_DISPLAY")
     if wayland_display:
-        result["type"] = "wayland"
-        result["env_vars"].append("WAYLAND_DISPLAY")
-        # Wayland socket is in XDG_RUNTIME_DIR
-        runtime_dir = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{uid}")
+        # Verify socket actually exists before declaring Wayland active
         socket_path = Path(runtime_dir) / wayland_display
         if socket_path.exists():
+            wayland_detected = True
             result["paths"].append(str(socket_path))
-        # Some apps also need these Wayland-related env vars
-        for var in ["XDG_RUNTIME_DIR", "XDG_SESSION_TYPE"]:
-            if var in os.environ and var not in result["env_vars"]:
-                result["env_vars"].append(var)
+            result["env_vars"].append("WAYLAND_DISPLAY")
+
+            # Some compositors create additional sockets (e.g., wayland-1.lock)
+            lock_path = Path(runtime_dir) / f"{wayland_display}.lock"
+            if lock_path.exists():
+                result["paths"].append(str(lock_path))
+
+            # Wayland apps need XDG_RUNTIME_DIR for the socket
+            if "XDG_RUNTIME_DIR" not in result["env_vars"]:
+                result["env_vars"].append("XDG_RUNTIME_DIR")
+
+            # Session type helps apps choose correct backend
+            if "XDG_SESSION_TYPE" in os.environ:
+                result["env_vars"].append("XDG_SESSION_TYPE")
+
+            # Some Wayland apps check XDG_CURRENT_DESKTOP for theming/integration
+            if "XDG_CURRENT_DESKTOP" in os.environ:
+                result["env_vars"].append("XDG_CURRENT_DESKTOP")
 
     # Check X11
     display = os.environ.get("DISPLAY")
     if display:
-        if result["type"]:
-            result["type"] = "both"
-        else:
-            result["type"] = "x11"
-        result["env_vars"].append("DISPLAY")
-        # X11 sockets
         x11_dir = Path("/tmp/.X11-unix")
-        if x11_dir.exists():
-            result["paths"].append(str(x11_dir))
-        # Xauthority for authentication
-        xauth = os.environ.get("XAUTHORITY", str(Path.home() / ".Xauthority"))
-        if Path(xauth).exists():
-            result["paths"].append(xauth)
-            result["env_vars"].append("XAUTHORITY")
+        # Extract display number (e.g., ":0" -> "X0", ":1.0" -> "X1")
+        display_num = display.lstrip(":").split(".")[0]
+        x11_socket = x11_dir / f"X{display_num}" if display_num.isdigit() else None
+
+        # Verify X11 socket exists
+        socket_exists = x11_socket and x11_socket.exists() if x11_socket else x11_dir.exists()
+        if socket_exists:
+            x11_detected = True
+            result["env_vars"].append("DISPLAY")
+
+            # Bind the X11 socket directory
+            if x11_dir.exists():
+                result["paths"].append(str(x11_dir))
+
+            # Xauthority for authentication (required for most X11 connections)
+            xauth = os.environ.get("XAUTHORITY")
+            if xauth and Path(xauth).exists():
+                result["paths"].append(xauth)
+                result["env_vars"].append("XAUTHORITY")
+            else:
+                # Check default location
+                default_xauth = Path.home() / ".Xauthority"
+                if default_xauth.exists():
+                    result["paths"].append(str(default_xauth))
+
+    # Determine display type
+    if wayland_detected and x11_detected:
+        result["type"] = "both"  # XWayland or mixed environment
+    elif wayland_detected:
+        result["type"] = "wayland"
+    elif x11_detected:
+        result["type"] = "x11"
 
     return result
 

@@ -1,4 +1,111 @@
-"""UIField descriptor for config classes with UI and bwrap metadata."""
+"""UIField descriptor for config classes with UI and bwrap metadata.
+
+This module implements Python's descriptor protocol to create fields that:
+1. Store configuration values (like regular instance attributes)
+2. Carry UI metadata (widget IDs, labels, explanations)
+3. Know how to generate bwrap command-line arguments
+
+The Descriptor Pattern
+----------------------
+Python descriptors are objects that define __get__, __set__, and optionally
+__delete__ methods. When a descriptor is assigned to a class attribute, Python
+intercepts attribute access and delegates to these methods.
+
+This pattern solves a key problem: we need configuration fields that are both
+data containers AND metadata containers. A naive approach would require
+separate dictionaries mapping field names to metadata, leading to maintenance
+headaches and potential mismatches.
+
+Architecture Overview
+---------------------
+                    ┌─────────────────┐
+                    │  ConfigBase     │  Base class providing __init__,
+                    │                 │  to_bwrap_args(), get_*_fields()
+                    └────────┬────────┘
+                             │
+         ┌───────────────────┼───────────────────┐
+         │                   │                   │
+         ▼                   ▼                   ▼
+┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+│ FilesystemConfig│ │ NamespaceConfig │ │ NetworkConfig   │
+│                 │ │                 │ │                 │
+│ mount_proc=...  │ │ unshare_user=...│ │ share_net=...   │
+│ mount_tmp=...   │ │ unshare_pid=... │ │ bind_resolv=... │
+└─────────────────┘ └─────────────────┘ └─────────────────┘
+        │                   │                   │
+        └───────────────────┴───────────────────┘
+                            │
+                  Uses UIField/Field descriptors
+
+UIField vs Field
+----------------
+- UIField: For config options that have a corresponding UI widget (checkbox/input)
+  Contains: type, default, checkbox_id, label, explanation, bwrap_flag/bwrap_args
+
+- Field: For data-only fields (no UI representation but still serialized)
+  Contains: type, default/default_factory, bwrap_args
+
+Usage Examples
+--------------
+Defining a config class with UIField:
+
+    class NamespaceConfig(ConfigBase):
+        unshare_user = UIField(
+            type_=bool,
+            default=True,
+            checkbox_id="opt-unshare-user",
+            label="User namespace",
+            explanation="Isolate user/group IDs",
+            bwrap_flag="--unshare-user",
+        )
+
+Using the config:
+
+    config = NamespaceConfig()
+    config.unshare_user = True        # Set value
+    print(config.unshare_user)        # Get value: True
+
+    # Access metadata (via class, not instance)
+    field = NamespaceConfig.unshare_user
+    print(field.checkbox_id)          # "opt-unshare-user"
+    print(field.explanation)          # "Isolate user/group IDs"
+
+    # Generate bwrap args
+    args = config.to_bwrap_args()     # ["--unshare-user"]
+
+Complex bwrap args with a callable:
+
+    chdir = UIField(
+        type_=str,
+        default="",
+        checkbox_id="opt-chdir",
+        label="Working directory",
+        explanation="Set working directory inside sandbox",
+        bwrap_args=lambda v: ["--chdir", v] if v else [],
+    )
+
+Using Field for data-only (mutable default with factory):
+
+    class EnvironmentConfig(ConfigBase):
+        keep_env_vars = Field(
+            type_=set,
+            default_factory=set,  # Creates new set per instance
+        )
+
+Integration Points
+------------------
+1. ConfigSyncManager (controller/sync.py): Uses checkbox_id to find widgets,
+   syncs values bidirectionally between UI and config.
+
+2. Profile serialization (profiles.py): Iterates _ui_fields and _data_fields
+   to serialize/deserialize configs to JSON.
+
+3. Command building (model/__init__.py): Calls to_bwrap_args() on each
+   config section to build the final bwrap command.
+
+4. UI composition (ui/compose.py): Uses UIField metadata to create OptionCard
+   widgets with correct labels, IDs, and explanations.
+"""
 
 from pathlib import Path
 from typing import Any, Callable
