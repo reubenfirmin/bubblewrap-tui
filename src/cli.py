@@ -7,8 +7,8 @@ from pathlib import Path
 
 from app import BubblewrapTUI
 
-BUI_VERSION = "0.3"
-BUI_GITHUB_RAW = "https://raw.githubusercontent.com/reubenfirmin/bubblewrap-tui/main/bui"
+BUI_VERSION = "0.3.2"
+BUI_RELEASE_URL = "https://github.com/reubenfirmin/bubblewrap-tui/releases/latest/download/bui"
 
 
 def get_install_path() -> Path:
@@ -55,7 +55,7 @@ def do_update() -> None:
     print("Downloading latest bui from GitHub...")
 
     try:
-        with urllib.request.urlopen(BUI_GITHUB_RAW) as response:
+        with urllib.request.urlopen(BUI_RELEASE_URL) as response:
             content = response.read()
     except Exception as e:
         print(f"Error downloading: {e}", file=sys.stderr)
