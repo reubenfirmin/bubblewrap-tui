@@ -23,25 +23,25 @@ See [uv installation docs](https://docs.astral.sh/uv/getting-started/installatio
 ### Get bui
 
 ```bash
-# Download the script
-curl -O https://raw.githubusercontent.com/reubenfirmin/bubblewrap-tui/main/bui
+# Download from releases
+curl -LO https://github.com/reubenfirmin/bubblewrap-tui/releases/latest/download/bui
 chmod +x bui
 
-# Run directly - uv handles Python and dependencies automatically
-./bui -- your-command
+# Optionally install to PATH
+./bui --install
 ```
 
 ## Usage
 
 ```bash
 # Basic usage - sandbox a shell
-./bui -- /bin/bash
+bui -- /bin/bash
 
 # Sandbox a specific command
-./bui -- python script.py
+bui -- python script.py
 
-# Sandbox with arguments
-./bui -- node server.js --port 3000
+# Shell commands (pipes and redirects auto-handled)
+bui -- "curl foo.sh | bash"
 ```
 
 ## License
