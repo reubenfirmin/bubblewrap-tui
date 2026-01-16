@@ -25,15 +25,53 @@ Usage: bui -- <command> [args...]
 
 # Order matters - modules must be concatenated in dependency order
 MODULE_ORDER = [
-    "detection.py",  # No dependencies
-    "config.py",     # Depends on detection (uses find_* functions)
-    "widgets.py",    # Depends on config (uses OverlayConfig, etc.)
-    "app.py",        # Depends on widgets, config, styles
-    "cli.py",        # Depends on app
+    "detection.py",                   # No dependencies (system detection)
+    "environment.py",                 # No dependencies (env var utilities)
+    "installer.py",                   # No dependencies (install/update)
+    "model/ui_field.py",              # No dependencies - UIField, Field, ConfigBase
+    "model/bound_directory.py",       # No dependencies
+    "model/overlay_config.py",        # No dependencies
+    "model/environment_config.py",    # Depends on ui_field
+    "model/filesystem_config.py",     # Depends on ui_field
+    "model/network_config.py",        # Depends on ui_field
+    "model/desktop_config.py",        # Depends on ui_field
+    "model/namespace_config.py",      # Depends on ui_field
+    "model/process_config.py",        # Depends on ui_field (uses os)
+    "model/sandbox_config.py",        # Depends on other model classes
+    "bwrap.py",                       # Depends on detection, model (serialization/summary)
+    "profiles.py",                    # Depends on model (JSON serialization)
+    "controller/sync.py",             # UI ↔ Config sync (no ui deps)
+    "ui/widgets.py",                  # Depends on model (uses BoundDirectory, etc.)
+    "ui/helpers.py",                  # Depends on ui.widgets
+    "ui/tabs/directories.py",         # Depends on ui.widgets
+    "ui/tabs/environment.py",         # Depends on ui.widgets
+    "ui/tabs/filesystem.py",          # Depends on ui.widgets, model, detection
+    "ui/tabs/overlays.py",            # No widget dependencies
+    "ui/tabs/sandbox.py",             # Depends on ui.widgets, model, detection
+    "ui/tabs/summary.py",             # No dependencies
+    "ui/tabs/profiles.py",            # No dependencies
+    "controller/execute.py",          # Event handler - no ui deps
+    "controller/directories.py",      # Event handler - depends on ui
+    "controller/overlays.py",         # Event handler - depends on ui
+    "controller/environment.py",      # Event handler - depends on ui
+    "app.py",                         # Depends on ui, model, profiles, controller, detection
+    "cli.py",                         # Depends on app, model, profiles, installer
 ]
 
 # Local modules (imports to filter out)
-LOCAL_MODULES = {"detection", "config", "widgets", "app", "cli", "styles"}
+LOCAL_MODULES = {
+    "detection", "environment", "installer", "profiles", "app", "cli", "styles", "bwrap",
+    "model",
+    "model.ui_field", "model.bound_directory", "model.desktop_config",
+    "model.environment_config", "model.filesystem_config", "model.namespace_config",
+    "model.network_config", "model.overlay_config", "model.process_config",
+    "model.sandbox_config",
+    "controller", "controller.sync", "controller.directories", "controller.overlays",
+    "controller.environment", "controller.execute",
+    "ui", "ui.widgets", "ui.helpers",
+    "ui.tabs", "ui.tabs.directories", "ui.tabs.environment", "ui.tabs.filesystem",
+    "ui.tabs.overlays", "ui.tabs.sandbox", "ui.tabs.summary", "ui.tabs.profiles",
+}
 
 
 def extract_imports(content: str) -> tuple[set[str], str]:
@@ -190,7 +228,7 @@ def process_app_module(content: str, css_content: str) -> str:
 
     for line in lines:
         # Replace the CSS file loading line
-        if 'Path(__file__).parent / "styles.css"' in line:
+        if 'Path(__file__).parent / "ui" / "styles.css"' in line:
             # Insert inlined CSS
             result.append(f'APP_CSS = """{css_content}"""')
             skip_css_load = True
@@ -211,7 +249,7 @@ def build():
         return False
 
     # Load CSS file
-    css_path = src_dir / "styles.css"
+    css_path = src_dir / "ui" / "styles.css"
     if not css_path.exists():
         print(f"Error: {css_path} does not exist")
         return False

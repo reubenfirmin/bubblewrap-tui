@@ -1,7 +1,14 @@
 """System detection utilities for bui."""
 
+from __future__ import annotations
+
 import os
+import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from model import BoundDirectory
 
 
 def find_ssl_cert_paths() -> list[str]:
@@ -112,3 +119,64 @@ def find_dns_paths() -> list[str]:
     if nsswitch.exists():
         paths.append(str(nsswitch))
     return paths
+
+
+def resolve_command_executable(command: list[str]) -> Path | None:
+    """Resolve a command to its absolute executable path.
+
+    Args:
+        command: Command list where command[0] is the executable
+
+    Returns:
+        Resolved Path to executable, or None if not found
+    """
+    if not command:
+        return None
+
+    cmd = command[0]
+
+    if os.path.isabs(cmd):
+        if os.path.isfile(cmd) and os.access(cmd, os.X_OK):
+            return Path(cmd).resolve()
+        return None
+
+    # Search PATH
+    resolved = shutil.which(cmd)
+    return Path(resolved).resolve() if resolved else None
+
+
+def is_path_covered(
+    path: Path,
+    bound_dirs: list[BoundDirectory],
+    system_paths: dict[str, Path],
+    active_system_binds: dict[str, bool],
+) -> bool:
+    """Check if a path is already covered by existing binds.
+
+    Args:
+        path: Path to check
+        bound_dirs: List of bound directories
+        system_paths: Dict of system path names to paths (e.g., {"bind_usr": Path("/usr")})
+        active_system_binds: Dict of which system binds are active
+
+    Returns:
+        True if path is covered by an existing bind
+    """
+    # Check bound directories
+    for bd in bound_dirs:
+        try:
+            path.relative_to(bd.path)
+            return True
+        except ValueError:
+            pass
+
+    # Check system paths
+    for attr, sys_path in system_paths.items():
+        if active_system_binds.get(attr, False):
+            try:
+                path.relative_to(sys_path)
+                return True
+            except ValueError:
+                pass
+
+    return False

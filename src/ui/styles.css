@@ -373,3 +373,54 @@ OptionCard Checkbox {
 #footer-buttons Button {
     margin: 0 1;
 }
+
+/* Profiles Tab */
+#profiles-tab-content {
+    padding: 1;
+}
+
+#profiles-list {
+    height: 1fr;
+    min-height: 10;
+    border: solid $surface-lighten-2;
+    margin-bottom: 1;
+}
+
+ProfileItem {
+    height: auto;
+    width: 100%;
+    margin-bottom: 1;
+}
+
+.profile-row {
+    width: 100%;
+    height: auto;
+    align: left middle;
+}
+
+.profile-name-btn {
+    width: 1fr;
+}
+
+.profile-delete-btn {
+    width: 5;
+    min-width: 5;
+}
+
+#save-profile-section, #load-profile-section {
+    margin-top: 1;
+}
+
+#save-profile-row, #load-profile-row {
+    height: auto;
+    width: 100%;
+}
+
+#save-profile-row Input, #load-profile-row Input {
+    width: 1fr;
+}
+
+#save-profile-row Button, #load-profile-row Button {
+    width: auto;
+    min-width: 10;
+}
