@@ -120,13 +120,37 @@ def do_install(version: str, source_path: Path | None = None) -> None:
     print(f"Installed bui v{version} to {install_path}")
 
 
-def do_update(version: str) -> None:
+def get_latest_version() -> str | None:
+    """Fetch the latest version tag from GitHub.
+
+    Returns:
+        Latest version string, or None if fetch fails
+    """
+    import json
+
+    try:
+        req = urllib.request.Request(
+            BUI_API_URL, headers={"Accept": "application/vnd.github.v3+json"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode())
+            return data.get("tag_name", "").lstrip("v")
+    except Exception:
+        return None
+
+
+def do_update(current_version: str) -> None:
     """Download latest bui from GitHub and install.
 
     Args:
-        version: Current version string for display after install
+        current_version: Current version string for comparison
     """
-    print("Downloading latest bui from GitHub...")
+    # Get the latest version first
+    latest_version = get_latest_version()
+    if latest_version:
+        print(f"Downloading bui v{latest_version} from GitHub...")
+    else:
+        print("Downloading latest bui from GitHub...")
 
     try:
         with urllib.request.urlopen(BUI_RELEASE_URL) as response:
@@ -141,7 +165,8 @@ def do_update(version: str) -> None:
 
     try:
         temp_path.chmod(0o755)
-        do_install(version, temp_path)
+        # Use the latest version for the install message
+        do_install(latest_version or current_version, temp_path)
     finally:
         temp_path.unlink()
 

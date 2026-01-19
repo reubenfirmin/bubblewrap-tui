@@ -290,6 +290,18 @@ EnvVarItem .env-value {
 #uid-gid-options {
     padding-left: 4;
     margin-bottom: 1;
+    height: auto;
+    layout: horizontal;
+}
+
+#uid-gid-options Label {
+    width: 5;
+    padding-top: 1;
+}
+
+#uid-gid-options Input {
+    width: 12;
+    margin-right: 2;
 }
 
 /* File Systems & Sandbox Tabs */

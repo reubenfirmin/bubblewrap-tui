@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Callable
 
@@ -33,9 +32,9 @@ def compose_sandbox_tab(on_dev_mode_change: Callable[[str], None]) -> ComposeRes
                     yield OptionCard(groups.unshare_user)
                     with Container(id="uid-gid-options", classes="hidden"):
                         yield Label("UID:")
-                        yield Input(value=str(os.getuid()), id="opt-uid")
+                        yield Input(value="0", id="opt-uid")
                         yield Label("GID:")
-                        yield Input(value=str(os.getgid()), id="opt-gid")
+                        yield Input(value="0", id="opt-gid")
                     yield OptionCard(groups.unshare_pid)
                     yield OptionCard(groups.unshare_ipc)
                     yield OptionCard(groups.unshare_uts)
