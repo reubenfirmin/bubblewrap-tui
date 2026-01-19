@@ -12,15 +12,62 @@ import pytest
 from bwrap import BubblewrapSerializer
 from model import (
     BoundDirectory,
-    DesktopConfig,
-    EnvironmentConfig,
-    FilesystemConfig,
-    NamespaceConfig,
-    NetworkConfig,
     OverlayConfig,
-    ProcessConfig,
     SandboxConfig,
 )
+
+
+def make_config(
+    command=None,
+    filesystem=None,
+    network=None,
+    namespace=None,
+    process=None,
+    environment=None,
+    desktop=None,
+    bound_dirs=None,
+    overlays=None,
+    drop_caps=None,
+):
+    """Helper to create SandboxConfig with the new group-based architecture."""
+    config = SandboxConfig(
+        command=command or ["bash"],
+        bound_dirs=bound_dirs or [],
+        overlays=overlays or [],
+        drop_caps=drop_caps or set(),
+    )
+
+    # Apply filesystem settings
+    if filesystem:
+        for key, value in filesystem.items():
+            setattr(config.filesystem, key, value)
+
+    # Apply network settings
+    if network:
+        for key, value in network.items():
+            setattr(config.network, key, value)
+
+    # Apply namespace settings
+    if namespace:
+        for key, value in namespace.items():
+            setattr(config.namespace, key, value)
+
+    # Apply process settings
+    if process:
+        for key, value in process.items():
+            setattr(config.process, key, value)
+
+    # Apply environment settings
+    if environment:
+        for key, value in environment.items():
+            setattr(config.environment, key, value)
+
+    # Apply desktop settings
+    if desktop:
+        for key, value in desktop.items():
+            setattr(config.desktop, key, value)
+
+    return config
 
 
 class TestBasicSandbox:
@@ -47,10 +94,7 @@ class TestFilesystemBinds:
 
     def test_dev_mode_minimal(self):
         """dev_mode='minimal' produces --dev /dev."""
-        config = SandboxConfig(
-            command=["bash"],
-            filesystem=FilesystemConfig(dev_mode="minimal"),
-        )
+        config = make_config(filesystem={"dev_mode": "minimal"})
         args = BubblewrapSerializer(config).serialize()
         assert "--dev" in args
         dev_idx = args.index("--dev")
@@ -58,10 +102,7 @@ class TestFilesystemBinds:
 
     def test_dev_mode_full(self):
         """dev_mode='full' produces --bind /dev /dev."""
-        config = SandboxConfig(
-            command=["bash"],
-            filesystem=FilesystemConfig(dev_mode="full"),
-        )
+        config = make_config(filesystem={"dev_mode": "full"})
         args = BubblewrapSerializer(config).serialize()
         assert "--bind" in args
         bind_indices = [i for i, x in enumerate(args) if x == "--bind"]
@@ -74,10 +115,7 @@ class TestFilesystemBinds:
 
     def test_dev_mode_none(self):
         """dev_mode='none' produces no /dev args."""
-        config = SandboxConfig(
-            command=["bash"],
-            filesystem=FilesystemConfig(dev_mode="none"),
-        )
+        config = make_config(filesystem={"dev_mode": "none"})
         args = BubblewrapSerializer(config).serialize()
         # Should not have --dev /dev or --bind /dev /dev
         for i, arg in enumerate(args):
@@ -86,10 +124,7 @@ class TestFilesystemBinds:
 
     def test_mount_proc(self):
         """mount_proc=True produces --proc /proc."""
-        config = SandboxConfig(
-            command=["bash"],
-            filesystem=FilesystemConfig(mount_proc=True),
-        )
+        config = make_config(filesystem={"mount_proc": True})
         args = BubblewrapSerializer(config).serialize()
         assert "--proc" in args
         proc_idx = args.index("--proc")
@@ -97,10 +132,7 @@ class TestFilesystemBinds:
 
     def test_mount_tmp_without_size(self):
         """mount_tmp=True without size produces --tmpfs /tmp."""
-        config = SandboxConfig(
-            command=["bash"],
-            filesystem=FilesystemConfig(mount_tmp=True, tmpfs_size=""),
-        )
+        config = make_config(filesystem={"mount_tmp": True, "tmpfs_size": ""})
         args = BubblewrapSerializer(config).serialize()
         assert "--tmpfs" in args
         tmpfs_idx = args.index("--tmpfs")
@@ -108,10 +140,7 @@ class TestFilesystemBinds:
 
     def test_mount_tmp_with_size(self):
         """mount_tmp=True with size produces --size X --tmpfs /tmp."""
-        config = SandboxConfig(
-            command=["bash"],
-            filesystem=FilesystemConfig(mount_tmp=True, tmpfs_size="100M"),
-        )
+        config = make_config(filesystem={"mount_tmp": True, "tmpfs_size": "100M"})
         args = BubblewrapSerializer(config).serialize()
         assert "--size" in args
         size_idx = args.index("--size")
@@ -122,14 +151,7 @@ class TestFilesystemBinds:
     @patch("pathlib.Path.exists", return_value=True)
     def test_system_binds_when_paths_exist(self, mock_exists):
         """System binds are added when paths exist."""
-        config = SandboxConfig(
-            command=["bash"],
-            filesystem=FilesystemConfig(
-                bind_usr=True,
-                bind_bin=True,
-                bind_lib=False,
-            ),
-        )
+        config = make_config(filesystem={"bind_usr": True, "bind_bin": True, "bind_lib": False})
         args = BubblewrapSerializer(config).serialize()
         # Should have --ro-bind /usr /usr and --ro-bind /bin /bin
         ro_bind_indices = [i for i, x in enumerate(args) if x == "--ro-bind"]
@@ -150,10 +172,7 @@ class TestNetworkIsolation:
 
     def test_share_net_enabled(self):
         """share_net=True produces --share-net."""
-        config = SandboxConfig(
-            command=["bash"],
-            network=NetworkConfig(share_net=True),
-        )
+        config = make_config(network={"share_net": True})
         args = BubblewrapSerializer(config).serialize()
         assert "--share-net" in args
 
@@ -161,10 +180,7 @@ class TestNetworkIsolation:
     def test_bind_resolv_conf(self, mock_dns):
         """bind_resolv_conf binds DNS paths."""
         mock_dns.return_value = ["/etc/resolv.conf", "/run/systemd/resolve"]
-        config = SandboxConfig(
-            command=["bash"],
-            network=NetworkConfig(bind_resolv_conf=True),
-        )
+        config = make_config(network={"bind_resolv_conf": True})
         args = BubblewrapSerializer(config).serialize()
         # Should bind the DNS paths
         assert "/etc/resolv.conf" in args or "/run/systemd/resolve" in args
@@ -173,10 +189,7 @@ class TestNetworkIsolation:
     def test_bind_ssl_certs(self, mock_certs):
         """bind_ssl_certs binds SSL cert paths."""
         mock_certs.return_value = ["/etc/ssl/certs"]
-        config = SandboxConfig(
-            command=["bash"],
-            network=NetworkConfig(bind_ssl_certs=True),
-        )
+        config = make_config(network={"bind_ssl_certs": True})
         args = BubblewrapSerializer(config).serialize()
         assert "/etc/ssl/certs" in args
 
@@ -186,55 +199,37 @@ class TestNamespaceOptions:
 
     def test_unshare_user(self):
         """unshare_user produces --unshare-user."""
-        config = SandboxConfig(
-            command=["bash"],
-            namespace=NamespaceConfig(unshare_user=True),
-        )
+        config = make_config(namespace={"unshare_user": True})
         args = BubblewrapSerializer(config).serialize()
         assert "--unshare-user" in args
 
     def test_unshare_pid(self):
         """unshare_pid produces --unshare-pid."""
-        config = SandboxConfig(
-            command=["bash"],
-            namespace=NamespaceConfig(unshare_pid=True),
-        )
+        config = make_config(namespace={"unshare_pid": True})
         args = BubblewrapSerializer(config).serialize()
         assert "--unshare-pid" in args
 
     def test_unshare_ipc(self):
         """unshare_ipc produces --unshare-ipc."""
-        config = SandboxConfig(
-            command=["bash"],
-            namespace=NamespaceConfig(unshare_ipc=True),
-        )
+        config = make_config(namespace={"unshare_ipc": True})
         args = BubblewrapSerializer(config).serialize()
         assert "--unshare-ipc" in args
 
     def test_unshare_uts(self):
         """unshare_uts produces --unshare-uts."""
-        config = SandboxConfig(
-            command=["bash"],
-            namespace=NamespaceConfig(unshare_uts=True),
-        )
+        config = make_config(namespace={"unshare_uts": True})
         args = BubblewrapSerializer(config).serialize()
         assert "--unshare-uts" in args
 
     def test_unshare_cgroup(self):
         """unshare_cgroup produces --unshare-cgroup."""
-        config = SandboxConfig(
-            command=["bash"],
-            namespace=NamespaceConfig(unshare_cgroup=True),
-        )
+        config = make_config(namespace={"unshare_cgroup": True})
         args = BubblewrapSerializer(config).serialize()
         assert "--unshare-cgroup" in args
 
     def test_disable_userns(self):
         """disable_userns produces --disable-userns."""
-        config = SandboxConfig(
-            command=["bash"],
-            namespace=NamespaceConfig(disable_userns=True),
-        )
+        config = make_config(namespace={"disable_userns": True})
         args = BubblewrapSerializer(config).serialize()
         assert "--disable-userns" in args
 
@@ -244,28 +239,21 @@ class TestProcessOptions:
 
     def test_die_with_parent(self):
         """die_with_parent produces --die-with-parent."""
-        config = SandboxConfig(
-            command=["bash"],
-            process=ProcessConfig(die_with_parent=True),
-        )
+        config = make_config(process={"die_with_parent": True})
         args = BubblewrapSerializer(config).serialize()
         assert "--die-with-parent" in args
 
     def test_new_session(self):
         """new_session produces --new-session."""
-        config = SandboxConfig(
-            command=["bash"],
-            process=ProcessConfig(new_session=True),
-        )
+        config = make_config(process={"new_session": True})
         args = BubblewrapSerializer(config).serialize()
         assert "--new-session" in args
 
     def test_as_pid_1_adds_unshare_pid(self):
         """as_pid_1 implies --unshare-pid if not already set."""
-        config = SandboxConfig(
-            command=["bash"],
-            namespace=NamespaceConfig(unshare_pid=False),
-            process=ProcessConfig(as_pid_1=True),
+        config = make_config(
+            namespace={"unshare_pid": False},
+            process={"as_pid_1": True},
         )
         args = BubblewrapSerializer(config).serialize()
         assert "--as-pid-1" in args
@@ -273,10 +261,9 @@ class TestProcessOptions:
 
     def test_as_pid_1_with_existing_unshare_pid(self):
         """as_pid_1 doesn't duplicate --unshare-pid."""
-        config = SandboxConfig(
-            command=["bash"],
-            namespace=NamespaceConfig(unshare_pid=True),
-            process=ProcessConfig(as_pid_1=True),
+        config = make_config(
+            namespace={"unshare_pid": True},
+            process={"as_pid_1": True},
         )
         args = BubblewrapSerializer(config).serialize()
         assert "--as-pid-1" in args
@@ -285,10 +272,7 @@ class TestProcessOptions:
 
     def test_chdir(self):
         """chdir produces --chdir <path>."""
-        config = SandboxConfig(
-            command=["bash"],
-            process=ProcessConfig(chdir="/home/user"),
-        )
+        config = make_config(process={"chdir": "/home/user"})
         args = BubblewrapSerializer(config).serialize()
         assert "--chdir" in args
         chdir_idx = args.index("--chdir")
@@ -296,10 +280,9 @@ class TestProcessOptions:
 
     def test_uid_gid_with_user_namespace(self):
         """UID/GID mapping when user namespace is enabled."""
-        config = SandboxConfig(
-            command=["bash"],
-            namespace=NamespaceConfig(unshare_user=True),
-            process=ProcessConfig(uid=1000, gid=1000),
+        config = make_config(
+            namespace={"unshare_user": True},
+            process={"uid": 1000, "gid": 1000},
         )
         args = BubblewrapSerializer(config).serialize()
         assert "--uid" in args
@@ -311,10 +294,9 @@ class TestProcessOptions:
 
     def test_no_uid_gid_without_user_namespace(self):
         """UID/GID not added without user namespace."""
-        config = SandboxConfig(
-            command=["bash"],
-            namespace=NamespaceConfig(unshare_user=False),
-            process=ProcessConfig(uid=1000, gid=1000),
+        config = make_config(
+            namespace={"unshare_user": False},
+            process={"uid": 1000, "gid": 1000},
         )
         args = BubblewrapSerializer(config).serialize()
         assert "--uid" not in args
@@ -326,8 +308,7 @@ class TestBoundDirectories:
 
     def test_readonly_bound_dir(self):
         """Readonly bound dir produces --ro-bind."""
-        config = SandboxConfig(
-            command=["bash"],
+        config = make_config(
             bound_dirs=[BoundDirectory(path=Path("/home/user/docs"), readonly=True)],
         )
         args = BubblewrapSerializer(config).serialize()
@@ -342,8 +323,7 @@ class TestBoundDirectories:
 
     def test_readwrite_bound_dir(self):
         """Read-write bound dir produces --bind."""
-        config = SandboxConfig(
-            command=["bash"],
+        config = make_config(
             bound_dirs=[BoundDirectory(path=Path("/home/user/work"), readonly=False)],
         )
         args = BubblewrapSerializer(config).serialize()
@@ -361,8 +341,7 @@ class TestOverlays:
 
     def test_tmpfs_overlay(self):
         """Tmpfs overlay produces --overlay-src and --tmp-overlay."""
-        config = SandboxConfig(
-            command=["bash"],
+        config = make_config(
             overlays=[OverlayConfig(source="/src", dest="/dest", mode="tmpfs")],
         )
         args = BubblewrapSerializer(config).serialize()
@@ -375,8 +354,7 @@ class TestOverlays:
 
     def test_persistent_overlay(self):
         """Persistent overlay produces --overlay-src and --overlay."""
-        config = SandboxConfig(
-            command=["bash"],
+        config = make_config(
             overlays=[
                 OverlayConfig(
                     source="/src",
@@ -398,10 +376,7 @@ class TestCapabilities:
 
     def test_drop_caps(self):
         """Dropping capabilities produces --cap-drop."""
-        config = SandboxConfig(
-            command=["bash"],
-            drop_caps={"CAP_NET_RAW", "CAP_SYS_ADMIN"},
-        )
+        config = make_config(drop_caps={"CAP_NET_RAW", "CAP_SYS_ADMIN"})
         args = BubblewrapSerializer(config).serialize()
         cap_drop_indices = [i for i, x in enumerate(args) if x == "--cap-drop"]
         dropped_caps = {args[i + 1] for i in cap_drop_indices}
@@ -414,22 +389,18 @@ class TestEnvironment:
 
     def test_clear_env(self):
         """clear_env produces --clearenv."""
-        config = SandboxConfig(
-            command=["bash"],
-            environment=EnvironmentConfig(clear_env=True),
-        )
+        config = make_config(environment={"clear_env": True})
         args = BubblewrapSerializer(config).serialize()
         assert "--clearenv" in args
 
     @patch.dict("os.environ", {"PATH": "/usr/bin", "HOME": "/home/user"}, clear=True)
     def test_keep_env_vars_with_clearenv(self):
         """Kept env vars are re-set after --clearenv."""
-        config = SandboxConfig(
-            command=["bash"],
-            environment=EnvironmentConfig(
-                clear_env=True,
-                keep_env_vars={"PATH"},
-            ),
+        config = make_config(
+            environment={
+                "clear_env": True,
+                "keep_env_vars": {"PATH"},
+            },
         )
         args = BubblewrapSerializer(config).serialize()
         assert "--clearenv" in args
@@ -440,12 +411,11 @@ class TestEnvironment:
 
     def test_unset_env_vars(self):
         """Unset env vars produce --unsetenv."""
-        config = SandboxConfig(
-            command=["bash"],
-            environment=EnvironmentConfig(
-                clear_env=False,
-                unset_env_vars={"SECRET_VAR"},
-            ),
+        config = make_config(
+            environment={
+                "clear_env": False,
+                "unset_env_vars": {"SECRET_VAR"},
+            },
         )
         args = BubblewrapSerializer(config).serialize()
         assert "--unsetenv" in args
@@ -454,11 +424,8 @@ class TestEnvironment:
 
     def test_custom_env_vars(self):
         """Custom env vars produce --setenv."""
-        config = SandboxConfig(
-            command=["bash"],
-            environment=EnvironmentConfig(
-                custom_env_vars={"MY_VAR": "my_value"},
-            ),
+        config = make_config(
+            environment={"custom_env_vars": {"MY_VAR": "my_value"}},
         )
         args = BubblewrapSerializer(config).serialize()
         assert "--setenv" in args
@@ -472,10 +439,7 @@ class TestEnvironment:
 
     def test_custom_hostname(self):
         """Custom hostname produces --hostname."""
-        config = SandboxConfig(
-            command=["bash"],
-            environment=EnvironmentConfig(custom_hostname="sandbox"),
-        )
+        config = make_config(environment={"custom_hostname": "sandbox"})
         args = BubblewrapSerializer(config).serialize()
         assert "--hostname" in args
         hostname_idx = args.index("--hostname")
@@ -489,10 +453,7 @@ class TestDesktopIntegration:
     def test_allow_dbus(self, mock_dbus):
         """allow_dbus binds D-Bus paths."""
         mock_dbus.return_value = ["/run/user/1000/bus"]
-        config = SandboxConfig(
-            command=["bash"],
-            desktop=DesktopConfig(allow_dbus=True),
-        )
+        config = make_config(desktop={"allow_dbus": True})
         args = BubblewrapSerializer(config).serialize()
         assert "/run/user/1000/bus" in args
 
@@ -504,10 +465,7 @@ class TestDesktopIntegration:
             "paths": ["/tmp/.X11-unix"],
             "env_vars": ["DISPLAY"],
         }
-        config = SandboxConfig(
-            command=["bash"],
-            desktop=DesktopConfig(allow_display=True),
-        )
+        config = make_config(desktop={"allow_display": True})
         args = BubblewrapSerializer(config).serialize()
         assert "/tmp/.X11-unix" in args
 
@@ -516,10 +474,7 @@ class TestDesktopIntegration:
     def test_bind_user_config(self, mock_home, mock_exists):
         """bind_user_config binds ~/.config."""
         mock_home.return_value = Path("/home/testuser")
-        config = SandboxConfig(
-            command=["bash"],
-            desktop=DesktopConfig(bind_user_config=True),
-        )
+        config = make_config(desktop={"bind_user_config": True})
         args = BubblewrapSerializer(config).serialize()
         assert "/home/testuser/.config" in args
 

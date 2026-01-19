@@ -49,13 +49,13 @@ bui -- "curl foo.sh | bash"
 ### Running Tests
 
 ```bash
-uv run --with pytest --with pytest-cov --with textual pytest tests/ -v
+uv run --with pytest --with pytest-cov --with pytest-asyncio --with textual pytest tests/ -v
 ```
 
 With coverage report:
 
 ```bash
-uv run --with pytest --with pytest-cov --with textual pytest tests/ --cov=src --cov-report=term-missing
+uv run --with pytest --with pytest-cov --with pytest-asyncio --with textual pytest tests/ --cov=src --cov-report=term-missing
 ```
 
 ## License

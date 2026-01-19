@@ -7,12 +7,7 @@ import pytest
 
 from model import (
     BoundDirectory,
-    EnvironmentConfig,
-    FilesystemConfig,
-    NamespaceConfig,
-    NetworkConfig,
     OverlayConfig,
-    ProcessConfig,
     SandboxConfig,
 )
 from profiles import (
@@ -22,6 +17,59 @@ from profiles import (
     serialize,
     validate_config,
 )
+
+
+def make_config(
+    command=None,
+    filesystem=None,
+    network=None,
+    namespace=None,
+    process=None,
+    environment=None,
+    desktop=None,
+    bound_dirs=None,
+    overlays=None,
+    drop_caps=None,
+):
+    """Helper to create SandboxConfig with the new group-based architecture."""
+    config = SandboxConfig(
+        command=command or ["bash"],
+        bound_dirs=bound_dirs or [],
+        overlays=overlays or [],
+        drop_caps=drop_caps or set(),
+    )
+
+    # Apply filesystem settings
+    if filesystem:
+        for key, value in filesystem.items():
+            setattr(config.filesystem, key, value)
+
+    # Apply network settings
+    if network:
+        for key, value in network.items():
+            setattr(config.network, key, value)
+
+    # Apply namespace settings
+    if namespace:
+        for key, value in namespace.items():
+            setattr(config.namespace, key, value)
+
+    # Apply process settings
+    if process:
+        for key, value in process.items():
+            setattr(config.process, key, value)
+
+    # Apply environment settings
+    if environment:
+        for key, value in environment.items():
+            setattr(config.environment, key, value)
+
+    # Apply desktop settings
+    if desktop:
+        for key, value in desktop.items():
+            setattr(config.desktop, key, value)
+
+    return config
 
 
 class TestSerialize:
@@ -36,35 +84,33 @@ class TestSerialize:
 
     def test_serialize_preserves_basic_types(self):
         """Basic types are preserved."""
-        config = SandboxConfig(
-            command=["bash"],
-            environment=EnvironmentConfig(
-                clear_env=True,
-                custom_hostname="test-host",
-            ),
+        config = make_config(
+            environment={
+                "clear_env": True,
+                "custom_hostname": "test-host",
+            },
         )
         data = serialize(config)
-        env_data = data["environment"]
+        # The structure is now group-based, check the environment group
+        assert "_environment_group" in data
+        env_data = data["_environment_group"]["_values"]
         assert env_data["clear_env"] is True
         assert env_data["custom_hostname"] == "test-host"
 
     def test_serialize_sets_to_lists(self):
         """Sets are serialized as lists."""
-        config = SandboxConfig(
-            command=["bash"],
-            environment=EnvironmentConfig(
-                keep_env_vars={"PATH", "HOME"},
-            ),
+        config = make_config(
+            environment={"keep_env_vars": {"PATH", "HOME"}},
         )
         data = serialize(config)
         # Sets become lists
-        assert isinstance(data["environment"]["keep_env_vars"], list)
-        assert set(data["environment"]["keep_env_vars"]) == {"PATH", "HOME"}
+        env_data = data["_environment_group"]["_values"]
+        assert isinstance(env_data["keep_env_vars"], list)
+        assert set(env_data["keep_env_vars"]) == {"PATH", "HOME"}
 
     def test_serialize_paths_to_strings(self):
         """Paths are serialized as strings."""
-        config = SandboxConfig(
-            command=["bash"],
+        config = make_config(
             bound_dirs=[BoundDirectory(path=Path("/home/user"), readonly=True)],
         )
         data = serialize(config)
@@ -73,30 +119,27 @@ class TestSerialize:
 
     def test_serialize_dicts(self):
         """Dicts are preserved."""
-        config = SandboxConfig(
-            command=["bash"],
-            environment=EnvironmentConfig(
-                custom_env_vars={"FOO": "bar", "BAZ": "qux"},
-            ),
+        config = make_config(
+            environment={"custom_env_vars": {"FOO": "bar", "BAZ": "qux"}},
         )
         data = serialize(config)
-        assert data["environment"]["custom_env_vars"] == {"FOO": "bar", "BAZ": "qux"}
+        env_data = data["_environment_group"]["_values"]
+        assert env_data["custom_env_vars"] == {"FOO": "bar", "BAZ": "qux"}
 
     def test_serialize_nested_configs(self, full_config):
         """Nested configs are serialized recursively."""
         data = serialize(full_config)
-        # Check nested structures
-        assert "filesystem" in data
-        assert "namespace" in data
-        assert "process" in data
-        assert "environment" in data
-        assert "network" in data
-        assert "desktop" in data
+        # Check nested structures (group-based)
+        assert "_vfs_group" in data
+        assert "_isolation_group" in data
+        assert "_process_group" in data
+        assert "_environment_group" in data
+        assert "_network_group" in data
+        assert "_desktop_group" in data
 
     def test_serialize_overlays(self):
         """Overlays are serialized correctly."""
-        config = SandboxConfig(
-            command=["bash"],
+        config = make_config(
             overlays=[
                 OverlayConfig(source="/src", dest="/dest", mode="tmpfs"),
                 OverlayConfig(
@@ -120,7 +163,7 @@ class TestDeserialize:
     def test_deserialize_minimal(self):
         """Deserialize minimal data."""
         data = {
-            "filesystem": {"dev_mode": "minimal"},
+            "_vfs_group": {"_values": {"dev_mode": "minimal"}},
         }
         config = deserialize(SandboxConfig, data, command=["bash"])
         assert config.command == ["bash"]
@@ -129,8 +172,8 @@ class TestDeserialize:
     def test_deserialize_sets(self):
         """Lists deserialize to sets where expected."""
         data = {
-            "environment": {
-                "keep_env_vars": ["PATH", "HOME"],
+            "_environment_group": {
+                "_values": {"keep_env_vars": ["PATH", "HOME"]},
             },
         }
         config = deserialize(SandboxConfig, data, command=["bash"])
@@ -152,18 +195,22 @@ class TestDeserialize:
     def test_deserialize_nested_configs(self):
         """Nested configs are deserialized."""
         data = {
-            "namespace": {
-                "unshare_user": True,
-                "unshare_pid": True,
+            "_isolation_group": {
+                "_values": {
+                    "unshare_user": True,
+                    "unshare_ipc": True,
+                },
             },
-            "process": {
-                "uid": 1000,
-                "gid": 1000,
+            "_process_group": {
+                "_values": {
+                    "uid": 1000,
+                    "gid": 1000,
+                },
             },
         }
         config = deserialize(SandboxConfig, data, command=["bash"])
         assert config.namespace.unshare_user is True
-        assert config.namespace.unshare_pid is True
+        assert config.namespace.unshare_ipc is True
         assert config.process.uid == 1000
         assert config.process.gid == 1000
 
@@ -244,10 +291,7 @@ class TestValidateConfig:
 
     def test_invalid_uid_raises(self):
         """UID outside 0-65535 raises ProfileValidationError."""
-        config = SandboxConfig(
-            command=["bash"],
-            process=ProcessConfig(uid=70000),
-        )
+        config = make_config(process={"uid": 70000})
         with pytest.raises(ProfileValidationError) as exc_info:
             validate_config(config)
         assert "Invalid UID" in str(exc_info.value)
@@ -255,10 +299,7 @@ class TestValidateConfig:
 
     def test_invalid_gid_raises(self):
         """GID outside 0-65535 raises ProfileValidationError."""
-        config = SandboxConfig(
-            command=["bash"],
-            process=ProcessConfig(gid=-1),
-        )
+        config = make_config(process={"gid": -1})
         with pytest.raises(ProfileValidationError) as exc_info:
             validate_config(config)
         assert "Invalid GID" in str(exc_info.value)
@@ -266,27 +307,18 @@ class TestValidateConfig:
     def test_valid_uid_gid_edge_cases(self):
         """Valid edge case UIDs/GIDs don't raise."""
         # UID 0 (root)
-        config = SandboxConfig(
-            command=["bash"],
-            process=ProcessConfig(uid=0, gid=0),
-        )
+        config = make_config(process={"uid": 0, "gid": 0})
         warnings = validate_config(config)
         assert warnings == []
 
         # UID 65535 (max)
-        config = SandboxConfig(
-            command=["bash"],
-            process=ProcessConfig(uid=65535, gid=65535),
-        )
+        config = make_config(process={"uid": 65535, "gid": 65535})
         warnings = validate_config(config)
         assert warnings == []
 
     def test_unknown_dev_mode_warns_and_fixes(self):
         """Unknown dev_mode produces warning and is fixed."""
-        config = SandboxConfig(
-            command=["bash"],
-            filesystem=FilesystemConfig(dev_mode="invalid"),
-        )
+        config = make_config(filesystem={"dev_mode": "invalid"})
         warnings = validate_config(config)
         assert any("dev_mode" in w for w in warnings)
         # Should be fixed to minimal
@@ -295,17 +327,13 @@ class TestValidateConfig:
     def test_valid_dev_modes(self):
         """Valid dev_modes produce no warnings."""
         for mode in ["none", "minimal", "full"]:
-            config = SandboxConfig(
-                command=["bash"],
-                filesystem=FilesystemConfig(dev_mode=mode),
-            )
+            config = make_config(filesystem={"dev_mode": mode})
             warnings = validate_config(config)
             assert not any("dev_mode" in w for w in warnings)
 
     def test_unknown_overlay_mode_warns_and_fixes(self):
         """Unknown overlay mode produces warning and is fixed."""
-        config = SandboxConfig(
-            command=["bash"],
+        config = make_config(
             overlays=[OverlayConfig(source="/src", dest="/dest", mode="invalid")],
         )
         warnings = validate_config(config)
@@ -314,8 +342,7 @@ class TestValidateConfig:
 
     def test_persistent_overlay_without_write_dir_warns(self):
         """Persistent overlay without write_dir produces warning."""
-        config = SandboxConfig(
-            command=["bash"],
+        config = make_config(
             overlays=[
                 OverlayConfig(source="/src", dest="/dest", mode="persistent", write_dir="")
             ],
@@ -326,8 +353,7 @@ class TestValidateConfig:
     def test_nonexistent_bound_dir_warns(self, tmp_path):
         """Non-existent bound directory produces warning."""
         nonexistent = tmp_path / "does_not_exist"
-        config = SandboxConfig(
-            command=["bash"],
+        config = make_config(
             bound_dirs=[BoundDirectory(path=nonexistent, readonly=True)],
         )
         warnings = validate_config(config)
@@ -337,8 +363,7 @@ class TestValidateConfig:
         """Existing bound directory produces no warning."""
         existing = tmp_path / "exists"
         existing.mkdir()
-        config = SandboxConfig(
-            command=["bash"],
+        config = make_config(
             bound_dirs=[BoundDirectory(path=existing, readonly=True)],
         )
         warnings = validate_config(config)
@@ -392,7 +417,7 @@ class TestProfile:
         profile_path = tmp_profile / "invalid.json"
         # Write invalid JSON directly
         data = {
-            "process": {"uid": 999999},  # Invalid UID
+            "_process_group": {"_values": {"uid": 999999}},  # Invalid UID
         }
         profile_path.write_text(json.dumps(data))
 

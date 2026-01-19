@@ -7,13 +7,7 @@ import pytest
 
 from model import (
     BoundDirectory,
-    DesktopConfig,
-    EnvironmentConfig,
-    FilesystemConfig,
-    NamespaceConfig,
-    NetworkConfig,
     OverlayConfig,
-    ProcessConfig,
     SandboxConfig,
 )
 
@@ -38,7 +32,7 @@ def minimal_config():
 @pytest.fixture
 def full_config():
     """SandboxConfig with many options enabled for comprehensive testing."""
-    return SandboxConfig(
+    config = SandboxConfig(
         command=["python", "script.py", "--arg"],
         bound_dirs=[
             BoundDirectory(path=Path("/home/user/documents"), readonly=True),
@@ -54,46 +48,47 @@ def full_config():
             ),
         ],
         drop_caps={"CAP_NET_RAW", "CAP_SYS_ADMIN"},
-        environment=EnvironmentConfig(
-            clear_env=True,
-            custom_hostname="sandbox",
-            keep_env_vars={"PATH", "HOME"},
-            custom_env_vars={"MY_VAR": "my_value"},
-        ),
-        filesystem=FilesystemConfig(
-            dev_mode="minimal",
-            mount_proc=True,
-            mount_tmp=True,
-            tmpfs_size="100M",
-            bind_usr=True,
-            bind_bin=True,
-            bind_lib=True,
-            bind_etc=False,
-        ),
-        network=NetworkConfig(
-            share_net=True,
-            bind_resolv_conf=True,
-            bind_ssl_certs=True,
-        ),
-        desktop=DesktopConfig(
-            allow_dbus=False,
-            allow_display=False,
-            bind_user_config=False,
-        ),
-        namespace=NamespaceConfig(
-            unshare_user=True,
-            unshare_pid=True,
-            unshare_ipc=True,
-        ),
-        process=ProcessConfig(
-            die_with_parent=True,
-            new_session=True,
-            as_pid_1=False,
-            chdir="/home/user",
-            uid=1000,
-            gid=1000,
-        ),
     )
+    # Configure environment
+    config.environment.clear_env = True
+    config.environment.custom_hostname = "sandbox"
+    config.environment.keep_env_vars = {"PATH", "HOME"}
+    config.environment.custom_env_vars = {"MY_VAR": "my_value"}
+
+    # Configure filesystem
+    config.filesystem.dev_mode = "minimal"
+    config.filesystem.mount_proc = True
+    config.filesystem.mount_tmp = True
+    config.filesystem.tmpfs_size = "100M"
+    config.filesystem.bind_usr = True
+    config.filesystem.bind_bin = True
+    config.filesystem.bind_lib = True
+    config.filesystem.bind_etc = False
+
+    # Configure network
+    config.network.share_net = True
+    config.network.bind_resolv_conf = True
+    config.network.bind_ssl_certs = True
+
+    # Configure desktop
+    config.desktop.allow_dbus = False
+    config.desktop.allow_display = False
+    config.desktop.bind_user_config = False
+
+    # Configure namespace
+    config.namespace.unshare_user = True
+    config.namespace.unshare_pid = True
+    config.namespace.unshare_ipc = True
+
+    # Configure process
+    config.process.die_with_parent = True
+    config.process.new_session = True
+    config.process.as_pid_1 = False
+    config.process.chdir = "/home/user"
+    config.process.uid = 1000
+    config.process.gid = 1000
+
+    return config
 
 
 @pytest.fixture

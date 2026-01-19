@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable, get_args, get_origin, get_type_
 log = logging.getLogger(__name__)
 
 from model import BoundDirectory, OverlayConfig, SandboxConfig
+from model.config_group import ConfigGroup
 from model.ui_field import ConfigBase, Field, UIField
 
 # Valid range for Unix UID/GID values
@@ -93,6 +94,10 @@ def _get_all_fields(cls: type) -> dict[str, UIField | Field]:
 
 def serialize(obj: Any) -> dict | list | str | int | float | bool | None:
     """Recursively serialize a config object to JSON-compatible dict."""
+    # Handle ConfigGroup objects - only serialize their _values
+    if isinstance(obj, ConfigGroup):
+        return {"_values": serialize(obj._values)}
+
     # Handle UIField-based classes
     if _has_ui_fields(obj) and not isinstance(obj, type):
         result = {}
@@ -127,6 +132,11 @@ def serialize(obj: Any) -> dict | list | str | int | float | bool | None:
 
 def deserialize(cls: type, data: dict, **overrides) -> Any:
     """Deserialize a dict into a config instance."""
+    # Handle SandboxConfig specially to restore group values
+    if cls is SandboxConfig:
+        config = _deserialize_sandbox_config(data, **overrides)
+        return config
+
     # Handle UIField-based classes
     if hasattr(cls, "_ui_fields") or hasattr(cls, "_data_fields"):
         kwargs = {}
@@ -203,6 +213,10 @@ def _deserialize_value(value: Any, field_type: type) -> Any:
     origin = get_origin(field_type)
     args = get_args(field_type)
 
+    # Handle ConfigGroup - don't deserialize here, handled specially in SandboxConfig
+    if field_type is ConfigGroup:
+        return None  # Will be reconstructed by SandboxConfig.__post_init__
+
     # Handle list[X]
     if origin is list and args:
         item_type = args[0]
@@ -274,6 +288,53 @@ class Profile:
         if not directory.exists():
             return []
         return [cls(p) for p in sorted(directory.glob("*.json"))]
+
+
+def _deserialize_sandbox_config(data: dict, **overrides) -> SandboxConfig:
+    """Deserialize a SandboxConfig from data."""
+    hints = get_type_hints(SandboxConfig)
+    kwargs = {}
+
+    for f in fields(SandboxConfig):
+        if f.name in overrides:
+            kwargs[f.name] = overrides[f.name]
+            continue
+        if f.name not in data:
+            continue
+        # Skip group fields - they'll be restored separately
+        if f.name.startswith("_") and f.name.endswith("_group"):
+            continue
+
+        value = data[f.name]
+        field_type = hints.get(f.name)
+        kwargs[f.name] = _deserialize_value(value, field_type)
+
+    config = SandboxConfig(**kwargs)
+    _restore_group_values(config, data)
+    return config
+
+
+def _restore_group_values(config: SandboxConfig, data: dict) -> None:
+    """Restore ConfigGroup values from serialized data."""
+    group_fields = [
+        ("_vfs_group", config._vfs_group),
+        ("_system_paths_group", config._system_paths_group),
+        ("_isolation_group", config._isolation_group),
+        ("_process_group", config._process_group),
+        ("_network_group", config._network_group),
+        ("_desktop_group", config._desktop_group),
+        ("_environment_group", config._environment_group),
+    ]
+
+    for field_name, group in group_fields:
+        if field_name in data and isinstance(data[field_name], dict):
+            group_data = data[field_name]
+            if "_values" in group_data:
+                for key, value in group_data["_values"].items():
+                    # Handle sets (serialized as lists)
+                    if isinstance(value, list) and key in ("keep_env_vars", "unset_env_vars"):
+                        value = set(value)
+                    group.set(key, value)
 
 
 class ProfileManager:

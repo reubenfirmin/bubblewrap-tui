@@ -129,9 +129,9 @@ class TestBuiltScriptDefaults:
 
         content = bui_path.read_text()
         # Find the bind_etc UIField definition
-        # It should be: bind_etc = UIField(bool, False, "opt-etc", ...)
+        # New pattern: bind_etc = _named("bind_etc", UIField(\n    bool, False, ...
         import re
-        match = re.search(r'bind_etc\s*=\s*UIField\s*\(\s*bool\s*,\s*(True|False)', content)
+        match = re.search(r'bind_etc\s*=\s*_named\s*\([^)]+,\s*UIField\s*\(\s*bool\s*,\s*(True|False)', content)
         assert match is not None, "bind_etc UIField not found"
         default_value = match.group(1)
         assert default_value == "False", f"bind_etc default should be False, got {default_value}"

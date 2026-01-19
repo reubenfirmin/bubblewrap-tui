@@ -396,22 +396,24 @@ class TestProfileEvents:
 
     @pytest.mark.asyncio
     async def test_save_profile_button_triggers_handler(self):
-        """Clicking Save Profile button should trigger handler."""
+        """Clicking Save Profile button should open modal."""
         config = SandboxConfig(command=["bash"])
         app = BubblewrapTUI(command=["bash"], config=config)
 
         async with app.run_test() as pilot:
-            # Enter a profile name
-            name_input = app.query_one(css(ids.PROFILE_NAME_INPUT), Input)
-            name_input.value = "test-profile"
-
-            # Click save
+            # Click the save button in the header (opens modal)
             save_btn = app.query_one(css(ids.SAVE_PROFILE_BTN), Button)
             await pilot.click(save_btn)
+            # Wait for modal animation/mounting
+            await pilot.pause()
             await pilot.pause()
 
-            # Handler should complete without crash
-            assert True
+            # Verify the modal opened by checking for the modal screen
+            # The modal is pushed as a new screen
+            from ui.modals import SaveProfileModal
+            screens = list(app.screen_stack)
+            modal_found = any(isinstance(s, SaveProfileModal) for s in screens)
+            assert modal_found, "SaveProfileModal should be in screen stack"
 
 
 class TestMixinEventInheritance:
