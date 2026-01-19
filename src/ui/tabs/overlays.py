@@ -16,10 +16,12 @@ def compose_overlays_tab() -> ComposeResult:
     with Vertical(id="overlays-tab-content"):
         yield Static(
             "Overlays make directories appear writable without changing originals.\n\n"
-            "  tmpfs      Changes discarded on exit\n"
-            "  persistent Changes saved to write dir\n\n"
-            "Example: source=/usr, mount=/usr, mode=tmpfs\n"
-            "         Sandbox can 'install' packages, real /usr untouched.",
+            "  Source     Real directory providing the read-only base\n"
+            "  Mount      Where it appears in the sandbox\n"
+            "  Write dir  Separate directory to store changes (persistent only)\n\n"
+            "  tmpfs      Changes stored in RAM, discarded on exit\n"
+            "  persistent Changes saved to write dir, persist across runs\n\n"
+            "Example: source=/usr, mount=/usr, mode=tmpfs → sandbox can 'install' packages",
             id="overlay-hint",
         )
         yield Button("+ Add Overlay", id="add-overlay-btn", variant="success")

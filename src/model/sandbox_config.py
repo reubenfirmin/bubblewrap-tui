@@ -49,15 +49,6 @@ class GroupProxy:
 class FilesystemProxy(GroupProxy):
     """Proxy for filesystem settings, spanning vfs and system_paths groups."""
 
-    SYSTEM_PATHS = {
-        "bind_usr": "/usr",
-        "bind_bin": "/bin",
-        "bind_lib": "/lib",
-        "bind_lib64": "/lib64",
-        "bind_sbin": "/sbin",
-        "bind_etc": "/etc",
-    }
-
     def __init__(self, vfs_group: ConfigGroup, system_paths_group: ConfigGroup) -> None:
         object.__setattr__(self, "_vfs_group", vfs_group)
         object.__setattr__(self, "_system_paths_group", system_paths_group)

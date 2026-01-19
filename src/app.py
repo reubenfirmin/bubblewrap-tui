@@ -42,12 +42,12 @@ from ui import (
     OverlayItem,
     compose_directories_tab,
     compose_environment_tab,
-    compose_filesystem_tab,
     compose_overlays_tab,
     compose_sandbox_tab,
     compose_summary_tab,
     reflow_env_columns,
 )
+from model.groups import QUICK_SHORTCUT_BY_CHECKBOX_ID, QUICK_SHORTCUTS
 from ui.ids import css
 from ui.modals import LoadProfileModal, SaveProfileModal
 import ui.ids as ids
@@ -110,12 +110,41 @@ class BubblewrapTUI(
             # Bind current directory read-only by default
             cwd = Path.cwd().resolve()
             self.config.bound_dirs.append(BoundDirectory(path=cwd, readonly=True))
-            # Auto-detect command executable and bind its directory
+            # Initialize bound_dirs with default-checked quick shortcuts
+            self._init_quick_shortcuts_bound_dirs()
+            # Auto-detect command executable and bind its directory (after system paths added)
             self._auto_bind_command_dir(command)
             # All env vars kept by default
             self.config.environment.keep_env_vars = set(os.environ.keys())
             self._loaded_from_profile = False
         self._execute_command = False
+
+    def _init_quick_shortcuts_bound_dirs(self) -> None:
+        """Initialize bound_dirs with default-checked quick shortcuts."""
+        for field in QUICK_SHORTCUTS:
+            # Get the default value for this shortcut
+            path = getattr(field, "shortcut_path", None)
+            if path is None or not path.exists():
+                continue
+
+            # Check if this shortcut is enabled by default
+            if field.name in ("bind_usr", "bind_bin", "bind_lib", "bind_lib64", "bind_sbin"):
+                enabled = field.default  # True for these
+            elif field.name in ("bind_etc", "bind_user_config"):
+                enabled = False  # Never enabled by default
+            else:
+                enabled = field.default
+
+            if not enabled:
+                continue
+
+            # Check if already in bound_dirs (avoid duplicates)
+            resolved = path.resolve()
+            if any(bd.path.resolve() == resolved for bd in self.config.bound_dirs):
+                continue
+
+            # Add to bound_dirs
+            self.config.bound_dirs.append(BoundDirectory(path=path, readonly=True))
 
     def _auto_bind_command_dir(self, command: list[str]) -> None:
         """Auto-detect and bind the directory containing the command executable."""
@@ -123,19 +152,8 @@ class BubblewrapTUI(
         if not resolved_path:
             return
 
-        # Build active system binds dict
-        active_binds = {
-            attr: getattr(self.config.filesystem, attr)
-            for attr in self.config.filesystem.SYSTEM_PATHS
-        }
-
-        # Check if already covered
-        if not is_path_covered(
-            resolved_path,
-            self.config.bound_dirs,
-            self.config.filesystem.SYSTEM_PATHS,
-            active_binds,
-        ):
+        # Check if already covered by bound_dirs (includes system paths from quick shortcuts)
+        if not is_path_covered(resolved_path, self.config.bound_dirs):
             self.config.bound_dirs.append(BoundDirectory(path=resolved_path.parent, readonly=True))
 
         # Update command to use resolved path
@@ -164,14 +182,11 @@ class BubblewrapTUI(
             with TabPane("Environment", id="env-tab"):
                 yield from compose_environment_tab(self._toggle_env_var)
 
-            with TabPane("File Systems", id="filesystems-tab"):
-                yield from compose_filesystem_tab(self._on_dev_mode_change)
-
             with TabPane("Overlays", id="overlays-tab"):
                 yield from compose_overlays_tab()
 
             with TabPane("Sandbox", id="sandbox-tab"):
-                yield from compose_sandbox_tab()
+                yield from compose_sandbox_tab(self._on_dev_mode_change)
 
             with TabPane("Summary", id="summary-tab"):
                 yield from compose_summary_tab(
@@ -252,6 +267,9 @@ class BubblewrapTUI(
         sync.sync_uid_gid_visibility()
         sync.sync_dev_mode(DevModeCard)
         sync.rebuild_bound_dirs_list(BoundDirItem, self._update_preview, self._remove_bound_dir)
+        sync.rebuild_quick_shortcuts_bound_dirs(
+            BoundDirItem, self._update_preview, self._remove_bound_dir
+        )
         sync.rebuild_overlays_list(OverlayItem, self._update_preview, self._remove_overlay)
         sync.sync_env_button_state()
         self._reflow_env_columns()
@@ -280,6 +298,10 @@ class BubblewrapTUI(
                     uid_gid.add_class("hidden")
             except NoMatches:
                 log.debug("UID/GID options container not found")
+        # Handle quick shortcuts - sync with bound dirs list
+        if event.checkbox.id in QUICK_SHORTCUT_BY_CHECKBOX_ID:
+            field = QUICK_SHORTCUT_BY_CHECKBOX_ID[event.checkbox.id]
+            self._handle_quick_shortcut_change(field, event.value)
         self._sync_config_from_ui()
         self._update_preview()
 
@@ -293,6 +315,52 @@ class BubblewrapTUI(
         """Handle /dev mode change."""
         self.config.filesystem.dev_mode = mode
         self._update_preview()
+
+    def _handle_quick_shortcut_change(self, field, enabled: bool) -> None:
+        """Handle quick shortcut checkbox toggle - sync with bound dirs list.
+
+        Args:
+            field: UIField with shortcut_path attribute
+            enabled: Whether the shortcut is enabled
+        """
+        from textual.containers import VerticalScroll
+
+        path = getattr(field, "shortcut_path", None)
+        if path is None or not path.exists():
+            return
+
+        try:
+            dirs_list = self.query_one(css(ids.BOUND_DIRS_LIST), VerticalScroll)
+            resolved = path.resolve()
+
+            if enabled:
+                # Check if already in bound_dirs (avoid duplicates)
+                if any(bd.path.resolve() == resolved for bd in self.config.bound_dirs):
+                    return
+
+                # Add to config and mount widget (same as file picker)
+                bound_dir = BoundDirectory(path=path, readonly=True)
+                self.config.bound_dirs.append(bound_dir)
+                dirs_list.mount(
+                    BoundDirItem(
+                        bound_dir,
+                        self._update_preview,
+                        self._remove_bound_dir,
+                    )
+                )
+            else:
+                # Remove from config and unmount widget
+                for bd in list(self.config.bound_dirs):
+                    if bd.path.resolve() == resolved:
+                        self.config.bound_dirs.remove(bd)
+                        # Find and remove the widget
+                        for item in dirs_list.query(BoundDirItem):
+                            if item.bound_dir is bd:
+                                item.remove()
+                                break
+                        break
+        except NoMatches:
+            log.debug("Bound dirs list not found for quick shortcut sync")
 
     # =========================================================================
     # Callbacks for Event Mixins

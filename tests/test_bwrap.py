@@ -150,16 +150,18 @@ class TestFilesystemBinds:
 
     @patch("pathlib.Path.exists", return_value=True)
     def test_system_binds_when_paths_exist(self, mock_exists):
-        """System binds are added when paths exist."""
-        config = make_config(filesystem={"bind_usr": True, "bind_bin": True, "bind_lib": False})
+        """System binds are added via bound_dirs (Quick Shortcuts flow)."""
+        from model import BoundDirectory
+        # Quick shortcuts now work through bound_dirs, not config.filesystem values
+        config = make_config()
+        config.bound_dirs.append(BoundDirectory(path=Path("/usr"), readonly=True))
+        config.bound_dirs.append(BoundDirectory(path=Path("/bin"), readonly=True))
         args = BubblewrapSerializer(config).serialize()
         # Should have --ro-bind /usr /usr and --ro-bind /bin /bin
         ro_bind_indices = [i for i, x in enumerate(args) if x == "--ro-bind"]
         bound_paths = [args[i + 1] for i in ro_bind_indices]
         assert "/usr" in bound_paths
         assert "/bin" in bound_paths
-        # lib should NOT be bound since bind_lib=False
-        assert "/lib" not in bound_paths or config.filesystem.bind_lib
 
 
 class TestNetworkIsolation:
@@ -472,9 +474,12 @@ class TestDesktopIntegration:
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.home")
     def test_bind_user_config(self, mock_home, mock_exists):
-        """bind_user_config binds ~/.config."""
+        """bind_user_config binds ~/.config via bound_dirs (Quick Shortcuts flow)."""
+        from model import BoundDirectory
         mock_home.return_value = Path("/home/testuser")
-        config = make_config(desktop={"bind_user_config": True})
+        # Quick shortcuts now work through bound_dirs, not config.desktop values
+        config = make_config()
+        config.bound_dirs.append(BoundDirectory(path=Path("/home/testuser/.config"), readonly=True))
         args = BubblewrapSerializer(config).serialize()
         assert "/home/testuser/.config" in args
 

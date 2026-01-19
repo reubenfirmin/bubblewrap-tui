@@ -57,15 +57,15 @@ class TestDirectoryEvents:
             path_input.focus()
             await pilot.pause()
 
-            # Enter a path and trigger submit
-            path_input.value = "/tmp"
+            # Enter a path and trigger submit (use /var, not /tmp which conflicts with VFS)
+            path_input.value = "/var"
             # Directly call the action (simulating Input.Submitted event)
             await path_input.action_submit()
             await pilot.pause()
 
-            # Check if /tmp was added to bound dirs
+            # Check if /var was added to bound dirs
             paths = [str(bd.path) for bd in app.config.bound_dirs]
-            assert "/tmp" in paths, f"Expected /tmp in {paths}"
+            assert "/var" in paths, f"Expected /var in {paths}"
 
     @pytest.mark.asyncio
     async def test_add_path_button_triggers_handler(self):

@@ -10,11 +10,11 @@ from ui.widgets import (
     OptionCard,
     OverlayItem,
     ProfileItem,
+    is_user_owned,
 )
 from ui.tabs import (
     compose_directories_tab,
     compose_environment_tab,
-    compose_filesystem_tab,
     compose_overlays_tab,
     compose_profiles_tab,
     compose_sandbox_tab,
@@ -34,10 +34,10 @@ __all__ = [
     "OptionCard",
     "OverlayItem",
     "ProfileItem",
+    "is_user_owned",
     # Tab composers
     "compose_directories_tab",
     "compose_environment_tab",
-    "compose_filesystem_tab",
     "compose_overlays_tab",
     "compose_profiles_tab",
     "compose_sandbox_tab",

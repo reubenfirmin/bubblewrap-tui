@@ -35,6 +35,15 @@ class DirectoryEventsMixin:
         resolved_path = path.resolve()
         return any(bd.path.resolve() == resolved_path for bd in self.config.bound_dirs)
 
+    def _check_vfs_conflict(self, path: Path) -> str | None:
+        """Check if path conflicts with VFS options. Returns warning message or None."""
+        resolved = path.resolve()
+        if resolved == Path("/proc") and self.config.filesystem.mount_proc:
+            return "/proc is already mounted via Virtual Filesystems"
+        if resolved == Path("/tmp") and self.config.filesystem.mount_tmp:
+            return "/tmp is already mounted via Virtual Filesystems"
+        return None
+
     @on(Button.Pressed, css(ids.ADD_DIR_BTN))
     def on_add_dir_pressed(self, event: Button.Pressed) -> None:
         """Add the selected directory."""
@@ -84,6 +93,10 @@ class DirectoryEventsMixin:
             if self._is_path_already_bound(path):
                 self._set_status(f"Already added: {path}")
                 return
+            conflict = self._check_vfs_conflict(path)
+            if conflict:
+                self._set_status(conflict)
+                return
             bound_dir = BoundDirectory(path=path, readonly=True)
             self.config.bound_dirs.append(bound_dir)
             dirs_list = self.query_one(css(ids.BOUND_DIRS_LIST), VerticalScroll)
@@ -110,6 +123,10 @@ class DirectoryEventsMixin:
                 if isinstance(path, Path) and path.is_dir():
                     if self._is_path_already_bound(path):
                         self._set_status(f"Already added: {path}")
+                        return
+                    conflict = self._check_vfs_conflict(path)
+                    if conflict:
+                        self._set_status(conflict)
                         return
 
                     bound_dir = BoundDirectory(path=path, readonly=True)

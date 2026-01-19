@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Callable
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
@@ -11,11 +12,14 @@ from textual.widgets import Input, Label
 
 from detection import detect_dbus_session, detect_display_server
 from model import groups
-from ui.widgets import OptionCard
+from ui.widgets import DevModeCard, OptionCard
 
 
-def compose_sandbox_tab() -> ComposeResult:
+def compose_sandbox_tab(on_dev_mode_change: Callable[[str], None]) -> ComposeResult:
     """Compose the sandbox options tab content.
+
+    Args:
+        on_dev_mode_change: Callback when /dev mode is changed
 
     Yields:
         Textual widgets for the sandbox tab
@@ -47,7 +51,7 @@ def compose_sandbox_tab() -> ComposeResult:
                     yield Label("Custom hostname:")
                     yield Input(placeholder="sandbox", id="opt-hostname")
 
-            # Right column: Network + Desktop
+            # Right column: Network + Desktop + Virtual Filesystems
             with Vertical(classes="options-column"):
                 with Container(classes="options-section"):
                     yield Label(groups.network_group.title, classes="section-label")
@@ -74,4 +78,10 @@ def compose_sandbox_tab() -> ComposeResult:
                     else:
                         display_desc = "No display detected"
                     yield OptionCard(groups.allow_display, explanation=display_desc)
-                    yield OptionCard(groups.bind_user_config)
+                with Container(classes="options-section"):
+                    yield Label(groups.vfs_group.title, classes="section-label")
+                    yield DevModeCard(on_dev_mode_change)
+                    yield OptionCard(groups.mount_proc)
+                    yield OptionCard(groups.mount_tmp)
+                    yield Label("Tmpfs size:")
+                    yield Input(placeholder="default (half of RAM)", id="opt-tmpfs-size")
