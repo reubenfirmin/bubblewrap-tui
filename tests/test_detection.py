@@ -218,68 +218,38 @@ class TestIsPathCovered:
     def test_path_covered_by_bound_dir(self):
         """Path under a bound directory is covered."""
         bound_dirs = [BoundDirectory(path=Path("/home/user"), readonly=True)]
-        result = is_path_covered(
-            Path("/home/user/documents/file.txt"),
-            bound_dirs,
-            {},
-            {},
-        )
+        result = is_path_covered(Path("/home/user/documents/file.txt"), bound_dirs)
         assert result is True
 
     def test_path_not_covered_by_bound_dir(self):
         """Path not under any bound directory is not covered."""
         bound_dirs = [BoundDirectory(path=Path("/home/user"), readonly=True)]
-        result = is_path_covered(
-            Path("/opt/other/file.txt"),
-            bound_dirs,
-            {},
-            {},
-        )
+        result = is_path_covered(Path("/opt/other/file.txt"), bound_dirs)
         assert result is False
 
     def test_path_covered_by_system_bind(self):
-        """Path under active system bind is covered."""
-        system_paths = {"bind_usr": Path("/usr")}
-        active_binds = {"bind_usr": True}
-        result = is_path_covered(
-            Path("/usr/bin/python"),
-            [],
-            system_paths,
-            active_binds,
-        )
+        """Path under system bind (now in bound_dirs) is covered."""
+        # System paths are now added to bound_dirs via quick shortcuts
+        bound_dirs = [BoundDirectory(path=Path("/usr"), readonly=True)]
+        result = is_path_covered(Path("/usr/bin/python"), bound_dirs)
         assert result is True
 
     def test_path_not_covered_by_inactive_system_bind(self):
-        """Path under inactive system bind is not covered."""
-        system_paths = {"bind_usr": Path("/usr")}
-        active_binds = {"bind_usr": False}
-        result = is_path_covered(
-            Path("/usr/bin/python"),
-            [],
-            system_paths,
-            active_binds,
-        )
+        """Path not in bound_dirs is not covered."""
+        # When system bind is not active, it's not in bound_dirs
+        bound_dirs = []
+        result = is_path_covered(Path("/usr/bin/python"), bound_dirs)
         assert result is False
 
     def test_exact_path_match(self):
         """Exact path match is covered."""
         bound_dirs = [BoundDirectory(path=Path("/home/user"), readonly=True)]
-        result = is_path_covered(
-            Path("/home/user"),
-            bound_dirs,
-            {},
-            {},
-        )
+        result = is_path_covered(Path("/home/user"), bound_dirs)
         assert result is True
 
     def test_similar_but_not_nested_path(self):
         """Path with similar prefix but not nested is not covered."""
         bound_dirs = [BoundDirectory(path=Path("/home/user"), readonly=True)]
         # /home/user2 is not under /home/user
-        result = is_path_covered(
-            Path("/home/user2/file.txt"),
-            bound_dirs,
-            {},
-            {},
-        )
+        result = is_path_covered(Path("/home/user2/file.txt"), bound_dirs)
         assert result is False

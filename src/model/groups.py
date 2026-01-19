@@ -47,13 +47,13 @@ dev_mode = _named("dev_mode", UIField(
 
 mount_proc = _named("mount_proc", UIField(
     bool, True, "opt-proc",
-    "/proc", "Process info filesystem",
+    "/proc", "New procfs for sandbox",
     bwrap_args=lambda v: ["--proc", "/proc"] if v else [],
 ))
 
 mount_tmp = _named("mount_tmp", UIField(
     bool, True, "opt-tmp",
-    "/tmp", "Ephemeral temp storage",
+    "/tmp", "Private temp filesystem",
     # Note: bwrap_args handled by group's custom to_args due to tmpfs_size dependency
 ))
 
@@ -70,38 +70,44 @@ tmpfs_size = _named("tmpfs_size", UIField(
 bind_usr = _named("bind_usr", UIField(
     bool, True, "opt-usr",
     "/usr", "Programs and libraries",
-    bwrap_args=lambda v: ["--ro-bind", "/usr", "/usr"] if v and Path("/usr").exists() else [],
+    # bwrap_args handled via bound_dirs sync in Quick Shortcuts
 ))
+bind_usr.shortcut_path = Path("/usr")
 
 bind_bin = _named("bind_bin", UIField(
     bool, True, "opt-bin",
     "/bin", "Essential binaries",
-    bwrap_args=lambda v: ["--ro-bind", "/bin", "/bin"] if v and Path("/bin").exists() else [],
+    # bwrap_args handled via bound_dirs sync in Quick Shortcuts
 ))
+bind_bin.shortcut_path = Path("/bin")
 
 bind_lib = _named("bind_lib", UIField(
     bool, True, "opt-lib",
     "/lib", "Shared libraries",
-    bwrap_args=lambda v: ["--ro-bind", "/lib", "/lib"] if v and Path("/lib").exists() else [],
+    # bwrap_args handled via bound_dirs sync in Quick Shortcuts
 ))
+bind_lib.shortcut_path = Path("/lib")
 
 bind_lib64 = _named("bind_lib64", UIField(
     bool, True, "opt-lib64",
     "/lib64", "64-bit libraries",
-    bwrap_args=lambda v: ["--ro-bind", "/lib64", "/lib64"] if v and Path("/lib64").exists() else [],
+    # bwrap_args handled via bound_dirs sync in Quick Shortcuts
 ))
+bind_lib64.shortcut_path = Path("/lib64")
 
 bind_sbin = _named("bind_sbin", UIField(
     bool, True, "opt-sbin",
     "/sbin", "System binaries",
-    bwrap_args=lambda v: ["--ro-bind", "/sbin", "/sbin"] if v and Path("/sbin").exists() else [],
+    # bwrap_args handled via bound_dirs sync in Quick Shortcuts
 ))
+bind_sbin.shortcut_path = Path("/sbin")
 
 bind_etc = _named("bind_etc", UIField(
     bool, False, "opt-etc",
-    "/etc", "Config files - RISKY!",
-    bwrap_args=lambda v: ["--ro-bind", "/etc", "/etc"] if v and Path("/etc").exists() else [],
+    "/etc", "Config files - use caution",
+    # bwrap_args handled via bound_dirs sync in Quick Shortcuts
 ))
+bind_etc.shortcut_path = Path("/etc")
 
 
 # =============================================================================
@@ -225,9 +231,10 @@ allow_display = _named("allow_display", UIField(
 
 bind_user_config = _named("bind_user_config", UIField(
     bool, False, "opt-user-config",
-    "User config", "~/.config for default apps, themes",
-    # bwrap_args handled by group's custom to_args
+    "~/.config", "App settings - use caution",
+    # bwrap_args handled via bound_dirs sync in Quick Shortcuts
 ))
+bind_user_config.shortcut_path = Path.home() / ".config"
 
 
 # =============================================================================
@@ -304,23 +311,7 @@ def _vfs_to_summary(group: ConfigGroup) -> str | None:
     return "\n".join(lines) if lines else None
 
 
-def _system_paths_to_summary(group: ConfigGroup) -> str | None:
-    """Custom summary for system paths."""
-    paths = []
-    path_map = {
-        "bind_usr": "/usr",
-        "bind_bin": "/bin",
-        "bind_lib": "/lib",
-        "bind_lib64": "/lib64",
-        "bind_sbin": "/sbin",
-        "bind_etc": "/etc",
-    }
-    for attr, path in path_map.items():
-        if group.get(attr):
-            paths.append(path)
-    if paths:
-        return f"System paths (read-only): {', '.join(paths)} — sandbox cannot modify"
-    return None
+# Note: _system_paths_to_summary removed - system paths are now shown via bound_dirs summary
 
 
 def _network_to_args(group: ConfigGroup) -> list[str]:
@@ -370,10 +361,7 @@ def _desktop_to_args(group: ConfigGroup) -> list[str]:
         for display_path in display_info["paths"]:
             args.extend(["--ro-bind", display_path, display_path])
 
-    if group.get("bind_user_config"):
-        config_dir = Path.home() / ".config"
-        if config_dir.exists():
-            args.extend(["--ro-bind", str(config_dir), str(config_dir)])
+    # Note: bind_user_config is now handled via Quick Shortcuts -> bound_dirs
 
     return args
 
@@ -397,8 +385,7 @@ def _desktop_to_summary(group: ConfigGroup) -> str | None:
     if group.get("allow_dbus"):
         lines.append("D-Bus: Session bus access — can call host services (systemd, portals, etc.)")
 
-    if group.get("bind_user_config"):
-        lines.append("Config: ~/.config bound read-only for app settings and themes")
+    # Note: bind_user_config is now shown via Quick Shortcuts in directories tab
 
     return "\n".join(lines) if lines else None
 
@@ -557,7 +544,7 @@ system_paths_group = ConfigGroup(
     name="system_paths",
     title="System Paths (read-only)",
     items=[bind_usr, bind_bin, bind_lib, bind_lib64, bind_sbin, bind_etc],
-    _to_summary_fn=_system_paths_to_summary,
+    # No summary - system paths are shown via bound_dirs
 )
 
 
@@ -590,7 +577,7 @@ network_group = ConfigGroup(
 desktop_group = ConfigGroup(
     name="desktop",
     title="Desktop Integration",
-    items=[allow_dbus, allow_display, bind_user_config],
+    items=[allow_dbus, allow_display, bind_user_config],  # bind_user_config also in Quick Shortcuts
     _to_args_fn=_desktop_to_args,
     _to_summary_fn=_desktop_to_summary,
 )
@@ -696,12 +683,18 @@ def get_group(name: str) -> ConfigGroup | None:
     return None
 
 
-# Map of path for sync (group.field -> widget_id mapping is in controller/sync.py)
-SYSTEM_PATHS = {
-    "bind_usr": "/usr",
-    "bind_bin": "/bin",
-    "bind_lib": "/lib",
-    "bind_lib64": "/lib64",
-    "bind_sbin": "/sbin",
-    "bind_etc": "/etc",
+# Quick shortcuts - UIField objects with shortcut_path attribute
+QUICK_SHORTCUTS = [
+    bind_usr,
+    bind_bin,
+    bind_lib,
+    bind_lib64,
+    bind_sbin,
+    bind_etc,
+    bind_user_config,
+]
+
+# Build checkbox_id -> UIField mapping for quick shortcuts
+QUICK_SHORTCUT_BY_CHECKBOX_ID = {
+    field.checkbox_id: field for field in QUICK_SHORTCUTS
 }

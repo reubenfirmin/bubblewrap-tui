@@ -16,11 +16,25 @@ BUI_VERSION = "0.3.3"
 _update_available: str | None = None
 
 
-def load_profile(profile_path: str, command: list[str]) -> SandboxConfig:
-    """Load a profile from a JSON file."""
+def load_profile(profile_name: str, command: list[str]) -> SandboxConfig:
+    """Load a profile from the profiles directory.
+
+    Args:
+        profile_name: Profile name (without .json) or full path
+        command: Command to run in sandbox
+    """
     from profiles import ProfileValidationError
 
-    path = Path(profile_path).expanduser().resolve()
+    # If it's a simple name (no path separators), look in the default profiles dir
+    if "/" not in profile_name and "\\" not in profile_name:
+        # Add .json extension if not present
+        if not profile_name.endswith(".json"):
+            profile_name = f"{profile_name}.json"
+        path = BUI_PROFILES_DIR / profile_name
+    else:
+        # Explicit path provided
+        path = Path(profile_name).expanduser().resolve()
+
     if not path.exists():
         print(f"Error: Profile not found: {path}", file=sys.stderr)
         sys.exit(1)
@@ -60,14 +74,14 @@ def show_help() -> None:
     print(f"Version: {BUI_VERSION}")
     print("\nUsage:")
     print("  bui -- <command> [args...]            Configure and run a sandboxed command")
-    print("  bui --profile <file> -- <command>     Load profile and run command")
+    print("  bui --profile <name> -- <command>     Load profile and run command")
     print("  bui --install                         Install bui to ~/.local/bin")
     print("  bui --update                          Download latest version and install")
     print("\nExamples:")
     print("  bui -- /bin/bash")
     print("  bui -- python script.py arg1 arg2")
     print('  bui -- "curl foo.sh | bash"           (pipes and redirects auto-handled)')
-    print("  bui --profile ~/bui/dev.json -- code  (load profile for command)")
+    print("  bui --profile myprofile -- code       (load from ~/.config/bui/profiles/)")
     sys.exit(0)
 
 

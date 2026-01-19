@@ -47,16 +47,21 @@ class FieldMapping:
 # Registry of all checkbox/input mappings
 # These map widget IDs to config paths for automatic sync
 FIELD_MAPPINGS: list[FieldMapping] = [
-    # Filesystem options
+    # Filesystem options (Virtual Filesystems)
     FieldMapping(ids.OPT_PROC, "filesystem.mount_proc", Checkbox),
     FieldMapping(ids.OPT_TMP, "filesystem.mount_tmp", Checkbox),
     FieldMapping(ids.OPT_TMPFS_SIZE, "filesystem.tmpfs_size", Input, lambda v: v.strip()),
+
+    # Quick Shortcuts (system paths + user config)
+    # These sync checkbox state for profile saving/loading
+    # The bound_dirs sync is handled separately in app.py
     FieldMapping(ids.OPT_USR, "filesystem.bind_usr", Checkbox),
     FieldMapping(ids.OPT_BIN, "filesystem.bind_bin", Checkbox),
     FieldMapping(ids.OPT_LIB, "filesystem.bind_lib", Checkbox),
     FieldMapping(ids.OPT_LIB64, "filesystem.bind_lib64", Checkbox),
     FieldMapping(ids.OPT_SBIN, "filesystem.bind_sbin", Checkbox),
     FieldMapping(ids.OPT_ETC, "filesystem.bind_etc", Checkbox),
+    FieldMapping(ids.OPT_USER_CONFIG, "desktop.bind_user_config", Checkbox),
 
     # Network options
     FieldMapping(ids.OPT_NET, "network.share_net", Checkbox),
@@ -66,7 +71,7 @@ FIELD_MAPPINGS: list[FieldMapping] = [
     # Desktop integration
     FieldMapping(ids.OPT_DBUS, "desktop.allow_dbus", Checkbox),
     FieldMapping(ids.OPT_DISPLAY, "desktop.allow_display", Checkbox),
-    FieldMapping(ids.OPT_USER_CONFIG, "desktop.bind_user_config", Checkbox),
+    # Note: bind_user_config is handled via Quick Shortcuts in directories tab
 
     # Namespaces
     FieldMapping(ids.OPT_UNSHARE_USER, "namespace.unshare_user", Checkbox),
@@ -261,3 +266,54 @@ class ConfigSyncManager:
             dev_card.set_mode(self.config.filesystem.dev_mode)
         except NoMatches:
             log.debug("DevModeCard not found")
+
+    def rebuild_quick_shortcuts_bound_dirs(
+        self,
+        bound_dir_item_class: type,
+        on_update: Callable[[], None],
+        on_remove: Callable[[Any], None],
+    ) -> None:
+        """Rebuild quick shortcut bound dirs from config checkbox states.
+
+        Args:
+            bound_dir_item_class: The BoundDirItem widget class
+            on_update: Callback for updates
+            on_remove: Callback for removal
+        """
+        from model import BoundDirectory
+        from model.groups import QUICK_SHORTCUTS
+
+        try:
+            dirs_list = self.app.query_one(css(ids.BOUND_DIRS_LIST), VerticalScroll)
+
+            # Now add items for each enabled quick shortcut
+            for field in QUICK_SHORTCUTS:
+                # Get the checkbox state from config
+                if field.name in ("bind_usr", "bind_bin", "bind_lib", "bind_lib64", "bind_sbin", "bind_etc"):
+                    enabled = getattr(self.config.filesystem, field.name, False)
+                elif field.name == "bind_user_config":
+                    enabled = getattr(self.config.desktop, field.name, False)
+                else:
+                    continue
+
+                path = getattr(field, "shortcut_path", None)
+                if not enabled or path is None or not path.exists():
+                    continue
+
+                # Check if already in bound_dirs (avoid duplicates)
+                resolved = path.resolve()
+                if any(bd.path.resolve() == resolved for bd in self.config.bound_dirs):
+                    continue
+
+                # Add to config and mount widget (same as file picker)
+                bound_dir = BoundDirectory(path=path, readonly=True)
+                self.config.bound_dirs.append(bound_dir)
+                dirs_list.mount(
+                    bound_dir_item_class(
+                        bound_dir,
+                        on_update,
+                        on_remove,
+                    )
+                )
+        except NoMatches:
+            log.debug("Bound dirs list not found for quick shortcuts sync")

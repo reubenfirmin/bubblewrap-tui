@@ -136,3 +136,6 @@ DOTENV_PARENT_BTN = "dotenv-parent-btn"
 ADD_BTN = "add-btn"
 
 # Note: CANCEL_BTN is shared with footer, already defined above
+
+# Quick shortcuts section (directories tab)
+QUICK_SHORTCUTS_SECTION = "quick-shortcuts-section"

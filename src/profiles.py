@@ -58,11 +58,28 @@ def validate_config(config: SandboxConfig) -> list[str]:
             overlay.mode = "tmpfs"
         if overlay.mode == "persistent" and not overlay.write_dir:
             warnings.append(f"Overlay {i}: persistent mode requires write_dir")
+        if overlay.mode == "persistent" and overlay.write_dir:
+            # Check for conflicting paths
+            src = Path(overlay.source).resolve() if overlay.source else None
+            dest = Path(overlay.dest).resolve() if overlay.dest else None
+            write = Path(overlay.write_dir).resolve()
+            if src and write == src:
+                warnings.append(f"Overlay {i}: write_dir cannot be same as source")
+            if dest and write == dest:
+                warnings.append(f"Overlay {i}: write_dir cannot be same as mount point")
 
     # Warn about non-existent bound directories (don't fail - they might be created later)
     for bd in config.bound_dirs:
         if not bd.path.exists():
             warnings.append(f"Bound directory does not exist: {bd.path}")
+
+    # Warn about VFS conflicts
+    for bd in config.bound_dirs:
+        resolved = bd.path.resolve()
+        if resolved == Path("/proc") and config.filesystem.mount_proc:
+            warnings.append("/proc bound directory conflicts with VFS /proc option")
+        if resolved == Path("/tmp") and config.filesystem.mount_tmp:
+            warnings.append("/tmp bound directory conflicts with VFS /tmp option")
 
     return warnings
 
