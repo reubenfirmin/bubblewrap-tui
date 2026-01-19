@@ -8,16 +8,32 @@ Screen {
 
 #header-container {
     height: auto;
-    padding: 1;
+    padding: 0 1;
     background: $primary;
-    text-align: center;
+    align: left middle;
 }
 
 #header-title {
     text-style: bold;
+    width: 1fr;
 }
 
-#main-content {
+#load-profile-btn,
+#save-profile-btn {
+    min-width: 8;
+    height: 1;
+    border: none;
+    background: $primary-darken-2;
+    margin-left: 1;
+}
+
+#load-profile-btn:hover,
+#save-profile-btn:hover {
+    background: $primary-darken-1;
+}
+
+#tabs-container {
+    width: 1fr;
     height: 100%;
 }
 
@@ -25,9 +41,20 @@ TabbedContent {
     height: 100%;
 }
 
+/* Main views */
+#config-tabs {
+    height: 100%;
+}
+
+#summary-view, #profiles-view {
+    height: 100%;
+    padding: 1;
+}
+
 /* Directories Tab */
 #dirs-tab-content {
     width: 100%;
+    height: 1fr;
 }
 
 #dir-browser-container {
@@ -223,8 +250,10 @@ OverlayItem {
     height: 1fr;
 }
 
-#env-hint {
+#env-hint,
+#dirs-hint {
     color: $text-muted;
+    height: auto;
     margin-bottom: 1;
 }
 
@@ -332,9 +361,10 @@ OptionCard Checkbox {
     margin-top: 1;
 }
 
-/* Summary Tab */
-#summary-tab-content {
-    padding: 1;
+/* Summary View */
+#summary-view #summary-tab-content {
+    padding: 0;
+    height: 100%;
 }
 
 #summary-header {
@@ -357,9 +387,11 @@ OptionCard Checkbox {
     padding: 1;
 }
 
+/* Footer with status bar and buttons */
 #footer-buttons {
-    height: 3;
-    padding: 0 1;
+    height: auto;
+    width: 100%;
+    align: left middle;
 }
 
 #status-bar {
@@ -371,5 +403,63 @@ OptionCard Checkbox {
 }
 
 #footer-buttons Button {
-    margin: 0 1;
+    margin-left: 1;
+}
+
+/* Profile Modals */
+LoadProfileModal,
+SaveProfileModal {
+    align: center middle;
+}
+
+#load-profile-modal,
+#save-profile-modal {
+    width: 50;
+    max-width: 80%;
+    height: auto;
+    max-height: 80%;
+    background: $surface;
+    border: solid $primary;
+    padding: 1 2;
+}
+
+#modal-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#modal-profile-list {
+    height: auto;
+    max-height: 15;
+    min-height: 3;
+    margin-bottom: 1;
+    border: solid $surface-lighten-2;
+}
+
+.profile-list-item {
+    padding: 0 1;
+}
+
+.profile-list-item:hover {
+    background: $primary;
+}
+
+#no-profiles {
+    color: $text-muted;
+    padding: 1;
+}
+
+#modal-buttons {
+    width: 100%;
+    align: right middle;
+    height: auto;
+}
+
+#modal-buttons Button {
+    margin-left: 1;
+}
+
+#save-profile-modal Input {
+    width: 100%;
+    margin-bottom: 1;
 }

@@ -1,85 +1,57 @@
 """Command-line interface for bui."""
 
 import os
-import shutil
+import shlex
 import sys
 from pathlib import Path
 
 from app import BubblewrapTUI
+from installer import check_for_updates, do_install, do_update, show_update_notice
+from model import SandboxConfig
+from profiles import BUI_PROFILES_DIR, Profile
 
-BUI_VERSION = "0.3.2"
-BUI_RELEASE_URL = "https://github.com/reubenfirmin/bubblewrap-tui/releases/latest/download/bui"
+BUI_VERSION = "0.3.3"
 
-
-def get_install_path() -> Path:
-    """Get the installation path."""
-    return Path.home() / ".local" / "bin" / "bui"
-
-
-def is_local_bin_on_path() -> bool:
-    """Check if ~/.local/bin is on PATH."""
-    local_bin = str(Path.home() / ".local" / "bin")
-    return local_bin in os.environ.get("PATH", "").split(os.pathsep)
+# Global to store update message for display after TUI exits
+_update_available: str | None = None
 
 
-def do_install(source_path: Path | None = None) -> None:
-    """Install bui to ~/.local/bin."""
-    local_bin = Path.home() / ".local" / "bin"
-    install_path = local_bin / "bui"
+def load_profile(profile_path: str, command: list[str]) -> SandboxConfig:
+    """Load a profile from a JSON file."""
+    from profiles import ProfileValidationError
 
-    if not is_local_bin_on_path():
-        print("~/.local/bin is not on your PATH.")
-        print("\nTo add it, add this line to your shell rc file (~/.bashrc, ~/.zshrc, etc.):")
-        print('  export PATH="$HOME/.local/bin:$PATH"')
-        print("\nThen restart your shell or run: source ~/.bashrc")
+    path = Path(profile_path).expanduser().resolve()
+    if not path.exists():
+        print(f"Error: Profile not found: {path}", file=sys.stderr)
         sys.exit(1)
 
-    # Create directory if needed
-    local_bin.mkdir(parents=True, exist_ok=True)
-
-    # Copy the script
-    if source_path is None:
-        source_path = Path(__file__).resolve()
-
-    shutil.copy2(source_path, install_path)
-    install_path.chmod(0o755)
-
-    print(f"Installed bui v{BUI_VERSION} to {install_path}")
-
-
-def do_update() -> None:
-    """Download latest bui from GitHub and install."""
-    import tempfile
-    import urllib.request
-
-    print("Downloading latest bui from GitHub...")
-
     try:
-        with urllib.request.urlopen(BUI_RELEASE_URL) as response:
-            content = response.read()
+        profile = Profile(path)
+        config, warnings = profile.load(command)
+        # Print any warnings
+        for warning in warnings:
+            print(f"Warning: {warning}", file=sys.stderr)
+        return config
+    except ProfileValidationError as e:
+        print(f"Profile validation error: {e}", file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
-        print(f"Error downloading: {e}", file=sys.stderr)
+        print(f"Error loading profile: {e}", file=sys.stderr)
         sys.exit(1)
-
-    # Write to temp file
-    with tempfile.NamedTemporaryFile(mode='wb', suffix='.py', delete=False) as f:
-        f.write(content)
-        temp_path = Path(f.name)
-
-    try:
-        temp_path.chmod(0o755)
-        do_install(temp_path)
-    finally:
-        temp_path.unlink()
 
 
 def needs_shell_wrap(command: list[str]) -> bool:
-    """Check if command needs to be wrapped in a shell."""
-    if len(command) != 1:
-        return False
-    cmd = command[0]
-    shell_chars = ['|', '&&', '||', ';', '>', '<', '$(', '`']
-    return any(c in cmd for c in shell_chars)
+    """Check if command needs to be wrapped in a shell.
+
+    Checks all arguments for shell metacharacters, not just single-arg commands.
+    This handles cases like: /bin/bash -c "cmd | cmd"
+    """
+    shell_chars = ["|", "&&", "||", ";", ">", "<", "$(", "`"]
+    # Check all arguments for shell metacharacters
+    for arg in command:
+        if any(c in arg for c in shell_chars):
+            return True
+    return False
 
 
 def show_help() -> None:
@@ -87,34 +59,53 @@ def show_help() -> None:
     print(__doc__ or "Bubblewrap TUI - A visual interface for configuring bubblewrap sandboxes.")
     print(f"Version: {BUI_VERSION}")
     print("\nUsage:")
-    print("  bui -- <command> [args...]   Configure and run a sandboxed command")
-    print("  bui --install                Install bui to ~/.local/bin")
-    print("  bui --update                 Download latest version and install")
+    print("  bui -- <command> [args...]            Configure and run a sandboxed command")
+    print("  bui --profile <file> -- <command>     Load profile and run command")
+    print("  bui --install                         Install bui to ~/.local/bin")
+    print("  bui --update                          Download latest version and install")
     print("\nExamples:")
     print("  bui -- /bin/bash")
     print("  bui -- python script.py arg1 arg2")
-    print('  bui -- "curl foo.sh | bash"    (pipes and redirects auto-handled)')
+    print('  bui -- "curl foo.sh | bash"           (pipes and redirects auto-handled)')
+    print("  bui --profile ~/bui/dev.json -- code  (load profile for command)")
     sys.exit(0)
 
 
-def parse_args() -> list[str]:
-    """Parse command line arguments."""
+def parse_args() -> tuple[list[str], str | None]:
+    """Parse command line arguments.
+
+    Returns: (command, profile_path)
+    """
     args = sys.argv[1:]
 
     if not args or "--help" in args or "-h" in args:
         show_help()
 
     if "--install" in args:
-        do_install()
+        do_install(BUI_VERSION)
         sys.exit(0)
 
     if "--update" in args:
-        do_update()
+        do_update(BUI_VERSION)
         sys.exit(0)
+
+    # Check for --profile flag
+    profile_path = None
+    if "--profile" in args:
+        try:
+            profile_idx = args.index("--profile")
+            if profile_idx + 1 >= len(args) or args[profile_idx + 1].startswith("-"):
+                print("Error: --profile requires a file path", file=sys.stderr)
+                sys.exit(1)
+            profile_path = args[profile_idx + 1]
+            # Remove --profile and its argument from args
+            args = args[:profile_idx] + args[profile_idx + 2 :]
+        except (IndexError, ValueError):
+            pass
 
     try:
         sep_idx = args.index("--")
-        command = args[sep_idx + 1:]
+        command = args[sep_idx + 1 :]
         if not command:
             print("Error: No command specified after '--'", file=sys.stderr)
             print("Usage: bui -- <command> [args...]", file=sys.stderr)
@@ -123,20 +114,34 @@ def parse_args() -> list[str]:
         command = args
 
     if needs_shell_wrap(command):
-        return ["/bin/bash", "-c", command[0]]
-    return command
+        # Join all args with proper quoting and wrap in shell
+        return ["/bin/bash", "-c", shlex.join(command)], profile_path
+    return command, profile_path
 
 
 def main() -> None:
     """Main entry point."""
-    command = parse_args()
+    global _update_available
+    command, profile_path = parse_args()
 
-    app = BubblewrapTUI(command, version=BUI_VERSION)
+    # Check for updates in background (non-blocking, cached for 1 day)
+    _update_available = check_for_updates(BUI_VERSION)
+
+    # Load profile if specified
+    if profile_path:
+        config = load_profile(profile_path, command)
+        app = BubblewrapTUI(command, version=BUI_VERSION, config=config)
+    else:
+        app = BubblewrapTUI(command, version=BUI_VERSION)
     app.run()
+
+    # Show update notice after TUI exits
+    if _update_available:
+        show_update_notice(BUI_VERSION, _update_available)
 
     if app._execute_command:
         cmd = app.config.build_command()
-        print("\n" + "=" * 60)
+        print("=" * 60)
         print("Executing:")
         print(" ".join(cmd))
         print("=" * 60 + "\n")

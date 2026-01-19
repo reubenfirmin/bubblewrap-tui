@@ -6,7 +6,7 @@ Instead of memorizing dozens of `bwrap` flags, visually configure your sandbox a
 
 ## Status
 
-- This is both alpha quality and lightly tested. That said it doesn't do anything except generate (and run, on demand) a bwrap command, so is mostly harmless. 
+- This is both beta quality and lightly tested. That said it doesn't do anything except generate (and run, on demand) a bwrap command, so is mostly harmless. 
 - PRs and bug reports are welcomed. Feature requests will be considered. :) 
 
 ## Requirements
@@ -42,6 +42,20 @@ bui -- python script.py
 
 # Shell commands (pipes and redirects auto-handled)
 bui -- "curl foo.sh | bash"
+```
+
+## Development
+
+### Running Tests
+
+```bash
+uv run --with pytest --with pytest-cov --with pytest-asyncio --with textual pytest tests/ -v
+```
+
+With coverage report:
+
+```bash
+uv run --with pytest --with pytest-cov --with pytest-asyncio --with textual pytest tests/ --cov=src --cov-report=term-missing
 ```
 
 ## License

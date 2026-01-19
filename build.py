@@ -25,15 +25,50 @@ Usage: bui -- <command> [args...]
 
 # Order matters - modules must be concatenated in dependency order
 MODULE_ORDER = [
-    "detection.py",  # No dependencies
-    "config.py",     # Depends on detection (uses find_* functions)
-    "widgets.py",    # Depends on config (uses OverlayConfig, etc.)
-    "app.py",        # Depends on widgets, config, styles
-    "cli.py",        # Depends on app
+    "detection.py",                   # No dependencies (system detection)
+    "environment.py",                 # No dependencies (env var utilities)
+    "installer.py",                   # No dependencies (install/update)
+    "model/ui_field.py",              # No dependencies - UIField, Field, ConfigBase
+    "model/bound_directory.py",       # No dependencies
+    "model/overlay_config.py",        # No dependencies
+    "model/config_group.py",          # Depends on ui_field
+    "model/config.py",                # Depends on config_group
+    "model/groups.py",                # Depends on config, config_group, ui_field
+    "model/sandbox_config.py",        # Depends on config_group, groups
+    "bwrap.py",                       # Depends on detection, model (serialization/summary)
+    "profiles.py",                    # Depends on model (JSON serialization)
+    "ui/ids.py",                      # No dependencies - widget ID constants (needed early for ids.X refs)
+    "controller/sync.py",             # UI ↔ Config sync (uses ids.X)
+    "ui/widgets.py",                  # Depends on model (uses BoundDirectory, etc.)
+    "ui/helpers.py",                  # Depends on ui.widgets
+    "ui/tabs/directories.py",         # Depends on ui.widgets
+    "ui/tabs/environment.py",         # Depends on ui.widgets
+    "ui/tabs/filesystem.py",          # Depends on ui.widgets, model, detection
+    "ui/tabs/overlays.py",            # No widget dependencies
+    "ui/tabs/sandbox.py",             # Depends on ui.widgets, model, detection
+    "ui/tabs/summary.py",             # No dependencies
+    "ui/tabs/profiles.py",            # No dependencies
+    "ui/modals.py",                   # Profile modals - depends on profiles
+    "controller/execute.py",          # Event handler - no ui deps
+    "controller/directories.py",      # Event handler - depends on ui
+    "controller/overlays.py",         # Event handler - depends on ui
+    "controller/environment.py",      # Event handler - depends on ui
+    "app.py",                         # Depends on ui, model, profiles, controller, detection
+    "cli.py",                         # Depends on app, model, profiles, installer
 ]
 
 # Local modules (imports to filter out)
-LOCAL_MODULES = {"detection", "config", "widgets", "app", "cli", "styles"}
+LOCAL_MODULES = {
+    "detection", "environment", "installer", "profiles", "app", "cli", "styles", "bwrap",
+    "model",
+    "model.ui_field", "model.bound_directory", "model.overlay_config",
+    "model.config_group", "model.config", "model.groups", "model.sandbox_config",
+    "controller", "controller.sync", "controller.directories", "controller.overlays",
+    "controller.environment", "controller.execute",
+    "ui", "ui.ids", "ui.widgets", "ui.helpers", "ui.modals",
+    "ui.tabs", "ui.tabs.directories", "ui.tabs.environment", "ui.tabs.filesystem",
+    "ui.tabs.overlays", "ui.tabs.sandbox", "ui.tabs.summary", "ui.tabs.profiles",
+}
 
 
 def extract_imports(content: str) -> tuple[set[str], str]:
@@ -83,8 +118,13 @@ def extract_imports(content: str) -> tuple[set[str], str]:
                 continue
 
             # Single line import - filter out local module imports
-            is_local = any(stripped.startswith(f'from {mod} ') or stripped == f'import {mod}'
-                          for mod in LOCAL_MODULES)
+            # Handle: 'from mod import X', 'import mod', 'import mod as alias'
+            is_local = any(
+                stripped.startswith(f'from {mod} ') or
+                stripped == f'import {mod}' or
+                stripped.startswith(f'import {mod} ')  # handles 'import X as Y'
+                for mod in LOCAL_MODULES
+            )
             if not is_local:
                 imports.add(line)
         else:
@@ -94,6 +134,33 @@ def extract_imports(content: str) -> tuple[set[str], str]:
         i += 1
 
     return imports, '\n'.join(non_import_lines)
+
+
+def strip_deferred_imports(code: str, local_modules: set[str]) -> str:
+    """Remove deferred imports (inside functions) of local modules.
+
+    These imports exist to avoid circular dependencies at module level,
+    but in the concatenated output, all code is already available.
+    """
+    lines = code.split('\n')
+    result = []
+    for line in lines:
+        stripped = line.strip()
+        # Check if this is an indented import of a local module
+        if line and line[0].isspace():
+            is_local_import = any(
+                stripped.startswith(f'from {mod} import') or
+                stripped == f'import {mod}' or
+                stripped.startswith(f'import {mod} ')
+                for mod in local_modules
+            )
+            if is_local_import:
+                # Replace with pass to maintain valid syntax after if/else/etc
+                indent = len(line) - len(line.lstrip())
+                result.append(' ' * indent + 'pass  # (deferred import removed)')
+                continue
+        result.append(line)
+    return '\n'.join(result)
 
 
 def normalize_import(imp: str) -> tuple[str, set[str]]:
@@ -190,7 +257,7 @@ def process_app_module(content: str, css_content: str) -> str:
 
     for line in lines:
         # Replace the CSS file loading line
-        if 'Path(__file__).parent / "styles.css"' in line:
+        if 'Path(__file__).parent / "ui" / "styles.css"' in line:
             # Insert inlined CSS
             result.append(f'APP_CSS = """{css_content}"""')
             skip_css_load = True
@@ -211,7 +278,7 @@ def build():
         return False
 
     # Load CSS file
-    css_path = src_dir / "styles.css"
+    css_path = src_dir / "ui" / "styles.css"
     if not css_path.exists():
         print(f"Error: {css_path} does not exist")
         return False
@@ -235,9 +302,34 @@ def build():
         imports, code = extract_imports(content)
         all_imports.update(imports)
 
+        # Strip deferred imports of local modules (they're already concatenated)
+        code = strip_deferred_imports(code, LOCAL_MODULES)
+
         # Add module separator comment
         all_code.append(f"\n# === {module_name} ===\n")
         all_code.append(code.strip())
+
+        # After model/groups.py, add a namespace shim so 'groups.vfs_group' works
+        if module_name == "model/groups.py":
+            all_code.append('''
+
+# Namespace shim for 'from model import groups' pattern
+class _GroupsNamespace:
+    def __getattr__(self, name):
+        return globals()[name]
+groups = _GroupsNamespace()
+''')
+
+        # After ui/ids.py, add a namespace shim so 'ids.CONSTANT' works
+        if module_name == "ui/ids.py":
+            all_code.append('''
+
+# Namespace shim for 'import ui.ids as ids' pattern
+class _IdsNamespace:
+    def __getattr__(self, name):
+        return globals()[name]
+ids = _IdsNamespace()
+''')
 
     # Combine everything
     output = HEADER

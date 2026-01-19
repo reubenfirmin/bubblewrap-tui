@@ -1,0 +1,218 @@
+"""Sandbox configuration model.
+
+Uses the group-based architecture while providing backward-compatible
+property access for existing code.
+"""
+
+from __future__ import annotations
+
+import copy
+import os
+from dataclasses import dataclass, field
+from typing import Any
+
+from model.bound_directory import BoundDirectory
+from model.config_group import ConfigGroup
+from model.overlay_config import OverlayConfig
+
+
+class GroupProxy:
+    """Proxy that provides attribute access to a ConfigGroup's values.
+
+    This allows existing code like `config.filesystem.mount_proc` to work
+    while the actual data lives in ConfigGroup instances.
+    """
+
+    def __init__(self, group: ConfigGroup) -> None:
+        object.__setattr__(self, "_group", group)
+
+    def __getattr__(self, name: str) -> Any:
+        group = object.__getattribute__(self, "_group")
+        # Check if it's an item in the group
+        if name in group._values:
+            return group._values[name]
+        # Check if it's a group attribute
+        if hasattr(group, name):
+            return getattr(group, name)
+        raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        group = object.__getattribute__(self, "_group")
+        group._values[name] = value
+
+    @classmethod
+    def get_ui_fields(cls) -> dict:
+        """For compatibility with code that uses ClassName.get_ui_fields()."""
+        return {}
+
+
+class FilesystemProxy(GroupProxy):
+    """Proxy for filesystem settings, spanning vfs and system_paths groups."""
+
+    SYSTEM_PATHS = {
+        "bind_usr": "/usr",
+        "bind_bin": "/bin",
+        "bind_lib": "/lib",
+        "bind_lib64": "/lib64",
+        "bind_sbin": "/sbin",
+        "bind_etc": "/etc",
+    }
+
+    def __init__(self, vfs_group: ConfigGroup, system_paths_group: ConfigGroup) -> None:
+        object.__setattr__(self, "_vfs_group", vfs_group)
+        object.__setattr__(self, "_system_paths_group", system_paths_group)
+
+    def __getattr__(self, name: str) -> Any:
+        vfs = object.__getattribute__(self, "_vfs_group")
+        syspaths = object.__getattribute__(self, "_system_paths_group")
+
+        # Check vfs group first
+        if name in vfs._values:
+            return vfs._values[name]
+        # Check system_paths group
+        if name in syspaths._values:
+            return syspaths._values[name]
+        raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        vfs = object.__getattribute__(self, "_vfs_group")
+        syspaths = object.__getattribute__(self, "_system_paths_group")
+
+        if name in ("dev_mode", "mount_proc", "mount_tmp", "tmpfs_size"):
+            vfs._values[name] = value
+        else:
+            syspaths._values[name] = value
+
+
+class NamespaceProxy(GroupProxy):
+    """Proxy for namespace isolation settings."""
+
+    # Class-level attribute for summary lookup (used by _add_namespace_summary)
+    unshare_pid = property(lambda self: object.__getattribute__(self, "_group").get_item("unshare_pid"))
+
+
+class ProcessProxy(GroupProxy):
+    """Proxy for process settings with uid/gid defaults."""
+
+
+class EnvironmentProxy(GroupProxy):
+    """Proxy for environment settings."""
+
+
+@dataclass
+class SandboxConfig:
+    """Configuration for the sandbox.
+
+    This class uses the group-based architecture internally while providing
+    a backward-compatible API through property accessors.
+    """
+
+    command: list[str] = field(default_factory=list)
+    bound_dirs: list[BoundDirectory] = field(default_factory=list)
+    overlays: list[OverlayConfig] = field(default_factory=list)
+    drop_caps: set[str] = field(default_factory=set)
+
+    # Internal group storage
+    _vfs_group: ConfigGroup = field(default=None, repr=False)
+    _system_paths_group: ConfigGroup = field(default=None, repr=False)
+    _isolation_group: ConfigGroup = field(default=None, repr=False)
+    _process_group: ConfigGroup = field(default=None, repr=False)
+    _network_group: ConfigGroup = field(default=None, repr=False)
+    _desktop_group: ConfigGroup = field(default=None, repr=False)
+    _environment_group: ConfigGroup = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        """Initialize groups with fresh copies."""
+        # Import here to avoid circular imports (stripped in concatenated build)
+        from model import groups
+
+        # Create deep copies of groups so each SandboxConfig is independent
+        if self._vfs_group is None:
+            self._vfs_group = _copy_group(groups.vfs_group)
+        if self._system_paths_group is None:
+            self._system_paths_group = _copy_group(groups.system_paths_group)
+        if self._isolation_group is None:
+            self._isolation_group = _copy_group(groups.isolation_group)
+        if self._process_group is None:
+            self._process_group = _copy_group(groups.process_group)
+            # Reset uid/gid to current user
+            self._process_group.set("uid", os.getuid())
+            self._process_group.set("gid", os.getgid())
+        if self._network_group is None:
+            self._network_group = _copy_group(groups.network_group)
+        if self._desktop_group is None:
+            self._desktop_group = _copy_group(groups.desktop_group)
+        if self._environment_group is None:
+            self._environment_group = _copy_group(groups.environment_group)
+            # Reset mutable defaults
+            self._environment_group.set("keep_env_vars", set())
+            self._environment_group.set("unset_env_vars", set())
+            self._environment_group.set("custom_env_vars", {})
+
+    # Property accessors for backward compatibility
+    @property
+    def filesystem(self) -> FilesystemProxy:
+        """Access filesystem settings."""
+        return FilesystemProxy(self._vfs_group, self._system_paths_group)
+
+    @property
+    def namespace(self) -> GroupProxy:
+        """Access namespace isolation settings."""
+        return NamespaceProxy(self._isolation_group)
+
+    @property
+    def process(self) -> GroupProxy:
+        """Access process settings."""
+        return ProcessProxy(self._process_group)
+
+    @property
+    def network(self) -> GroupProxy:
+        """Access network settings."""
+        return GroupProxy(self._network_group)
+
+    @property
+    def desktop(self) -> GroupProxy:
+        """Access desktop integration settings."""
+        return GroupProxy(self._desktop_group)
+
+    @property
+    def environment(self) -> GroupProxy:
+        """Access environment settings."""
+        return GroupProxy(self._environment_group)
+
+    def get_all_groups(self) -> list[ConfigGroup]:
+        """Get all groups in serialization order."""
+        return [
+            self._vfs_group,
+            self._system_paths_group,
+            self._isolation_group,
+            self._process_group,
+            self._network_group,
+            self._desktop_group,
+            self._environment_group,
+        ]
+
+    def build_command(self) -> list[str]:
+        """Build the complete bwrap command."""
+        from bwrap import BubblewrapSerializer
+        return BubblewrapSerializer(self).serialize()
+
+    def get_explanation(self) -> str:
+        """Generate a human-readable explanation of the sandbox."""
+        from bwrap import BubblewrapSummarizer
+        return BubblewrapSummarizer(self).summarize()
+
+
+def _copy_group(group: ConfigGroup) -> ConfigGroup:
+    """Create a deep copy of a ConfigGroup."""
+    new_group = ConfigGroup(
+        name=group.name,
+        title=group.title,
+        items=group.items,  # Items are shared (they're definitions, not data)
+        description=group.description,
+        _to_args_fn=group._to_args_fn,
+        _to_summary_fn=group._to_summary_fn,
+    )
+    # Deep copy the values dict
+    new_group._values = copy.deepcopy(group._values)
+    return new_group
