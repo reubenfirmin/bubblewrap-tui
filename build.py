@@ -31,13 +31,10 @@ MODULE_ORDER = [
     "model/ui_field.py",              # No dependencies - UIField, Field, ConfigBase
     "model/bound_directory.py",       # No dependencies
     "model/overlay_config.py",        # No dependencies
-    "model/environment_config.py",    # Depends on ui_field
-    "model/filesystem_config.py",     # Depends on ui_field
-    "model/network_config.py",        # Depends on ui_field
-    "model/desktop_config.py",        # Depends on ui_field
-    "model/namespace_config.py",      # Depends on ui_field
-    "model/process_config.py",        # Depends on ui_field (uses os)
-    "model/sandbox_config.py",        # Depends on other model classes
+    "model/config_group.py",          # Depends on ui_field
+    "model/config.py",                # Depends on config_group
+    "model/groups.py",                # Depends on config, config_group, ui_field
+    "model/sandbox_config.py",        # Depends on config_group, groups
     "bwrap.py",                       # Depends on detection, model (serialization/summary)
     "profiles.py",                    # Depends on model (JSON serialization)
     "ui/ids.py",                      # No dependencies - widget ID constants (needed early for ids.X refs)
@@ -51,6 +48,7 @@ MODULE_ORDER = [
     "ui/tabs/sandbox.py",             # Depends on ui.widgets, model, detection
     "ui/tabs/summary.py",             # No dependencies
     "ui/tabs/profiles.py",            # No dependencies
+    "ui/modals.py",                   # Profile modals - depends on profiles
     "controller/execute.py",          # Event handler - no ui deps
     "controller/directories.py",      # Event handler - depends on ui
     "controller/overlays.py",         # Event handler - depends on ui
@@ -63,13 +61,11 @@ MODULE_ORDER = [
 LOCAL_MODULES = {
     "detection", "environment", "installer", "profiles", "app", "cli", "styles", "bwrap",
     "model",
-    "model.ui_field", "model.bound_directory", "model.desktop_config",
-    "model.environment_config", "model.filesystem_config", "model.namespace_config",
-    "model.network_config", "model.overlay_config", "model.process_config",
-    "model.sandbox_config",
+    "model.ui_field", "model.bound_directory", "model.overlay_config",
+    "model.config_group", "model.config", "model.groups", "model.sandbox_config",
     "controller", "controller.sync", "controller.directories", "controller.overlays",
     "controller.environment", "controller.execute",
-    "ui", "ui.ids", "ui.widgets", "ui.helpers",
+    "ui", "ui.ids", "ui.widgets", "ui.helpers", "ui.modals",
     "ui.tabs", "ui.tabs.directories", "ui.tabs.environment", "ui.tabs.filesystem",
     "ui.tabs.overlays", "ui.tabs.sandbox", "ui.tabs.summary", "ui.tabs.profiles",
 }
@@ -312,6 +308,17 @@ def build():
         # Add module separator comment
         all_code.append(f"\n# === {module_name} ===\n")
         all_code.append(code.strip())
+
+        # After model/groups.py, add a namespace shim so 'groups.vfs_group' works
+        if module_name == "model/groups.py":
+            all_code.append('''
+
+# Namespace shim for 'from model import groups' pattern
+class _GroupsNamespace:
+    def __getattr__(self, name):
+        return globals()[name]
+groups = _GroupsNamespace()
+''')
 
         # After ui/ids.py, add a namespace shim so 'ids.CONSTANT' works
         if module_name == "ui/ids.py":

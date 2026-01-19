@@ -21,6 +21,6 @@ def compose_summary_tab(version: str, command_preview: str, explanation: str) ->
     with Vertical(id="summary-tab-content"):
         yield Static(f"Bubblewrap TUI\nVersion {version}", id="summary-header")
         yield Label("Command Preview", classes="section-label")
-        yield Static(command_preview, id="command-preview")
+        yield Static(command_preview, id="command-preview", markup=True)
         yield Label("Summary", classes="section-label")
-        yield Static(explanation, id="explanation")
+        yield Static(explanation, id="explanation", markup=True)

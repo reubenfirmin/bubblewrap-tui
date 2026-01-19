@@ -8,18 +8,28 @@ Screen {
 
 #header-container {
     height: auto;
-    padding: 1;
+    padding: 0 1;
     background: $primary;
-    text-align: center;
+    align: left middle;
 }
 
 #header-title {
     text-style: bold;
+    width: 1fr;
 }
 
-#main-content {
-    height: 100%;
-    width: 100%;
+#load-profile-btn,
+#save-profile-btn {
+    min-width: 8;
+    height: 1;
+    border: none;
+    background: $primary-darken-2;
+    margin-left: 1;
+}
+
+#load-profile-btn:hover,
+#save-profile-btn:hover {
+    background: $primary-darken-1;
 }
 
 #tabs-container {
@@ -44,6 +54,7 @@ TabbedContent {
 /* Directories Tab */
 #dirs-tab-content {
     width: 100%;
+    height: 1fr;
 }
 
 #dir-browser-container {
@@ -239,8 +250,10 @@ OverlayItem {
     height: 1fr;
 }
 
-#env-hint {
+#env-hint,
+#dirs-hint {
     color: $text-muted;
+    height: auto;
     margin-bottom: 1;
 }
 
@@ -374,22 +387,11 @@ OptionCard Checkbox {
     padding: 1;
 }
 
-/* Footer with nav tabs */
+/* Footer with status bar and buttons */
 #footer-buttons {
     height: auto;
-    padding: 0 1;
+    width: 100%;
     align: left middle;
-}
-
-#nav-tabs {
-    width: auto;
-    height: auto;
-}
-
-#nav-tabs Tab.nav-changed {
-    background: $warning;
-    color: $text;
-    text-style: bold;
 }
 
 #status-bar {
@@ -400,56 +402,64 @@ OptionCard Checkbox {
     padding: 0 1;
 }
 
-#execute-btn, #cancel-btn {
+#footer-buttons Button {
     margin-left: 1;
 }
 
-/* Profiles View Content */
-#profiles-view #profiles-tab-content {
-    height: 100%;
+/* Profile Modals */
+LoadProfileModal,
+SaveProfileModal {
+    align: center middle;
 }
 
-#profiles-view .section-label {
+#load-profile-modal,
+#save-profile-modal {
+    width: 50;
+    max-width: 80%;
+    height: auto;
+    max-height: 80%;
+    background: $surface;
+    border: solid $primary;
+    padding: 1 2;
+}
+
+#modal-title {
+    text-style: bold;
     margin-bottom: 1;
 }
 
-#profiles-list {
-    height: 1fr;
-    min-height: 5;
+#modal-profile-list {
+    height: auto;
+    max-height: 15;
+    min-height: 3;
+    margin-bottom: 1;
     border: solid $surface-lighten-2;
-    margin-bottom: 1;
 }
 
-ProfileItem {
-    height: auto;
+.profile-list-item {
+    padding: 0 1;
+}
+
+.profile-list-item:hover {
+    background: $primary;
+}
+
+#no-profiles {
+    color: $text-muted;
+    padding: 1;
+}
+
+#modal-buttons {
     width: 100%;
-    margin-bottom: 1;
-}
-
-.profile-row {
-    width: 100%;
+    align: right middle;
     height: auto;
-    align: left middle;
 }
 
-.profile-name-btn {
-    width: 1fr;
-}
-
-.profile-delete-btn {
-    width: 5;
-    min-width: 5;
-}
-
-#save-profile-row {
-    height: auto;
-    width: 100%;
-}
-
-#save-profile-row Input {
-    width: 1fr;
-}
-
-#save-profile-row Button {
+#modal-buttons Button {
     margin-left: 1;
+}
+
+#save-profile-modal Input {
+    width: 100%;
+    margin-bottom: 1;
 }

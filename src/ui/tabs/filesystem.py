@@ -9,7 +9,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Input, Label
 
-from model import FilesystemConfig
+from model import groups
 from ui.widgets import DevModeCard, OptionCard
 
 
@@ -24,20 +24,23 @@ def compose_filesystem_tab(on_dev_mode_change: Callable[[str], None]) -> Compose
     """
     with VerticalScroll(id="filesystems-tab-content"):
         with Horizontal(id="options-grid"):
+            # Left column: Virtual Filesystems
             with Vertical(classes="options-column"):
                 with Container(classes="options-section"):
-                    yield Label("Virtual Filesystems", classes="section-label")
+                    yield Label(groups.vfs_group.title, classes="section-label")
                     yield DevModeCard(on_dev_mode_change)
-                    yield OptionCard(FilesystemConfig.mount_proc)
-                    yield OptionCard(FilesystemConfig.mount_tmp)
+                    yield OptionCard(groups.mount_proc)
+                    yield OptionCard(groups.mount_tmp)
                     yield Label("Tmpfs size:")
                     yield Input(placeholder="default (half of RAM)", id="opt-tmpfs-size")
+
+            # Right column: System Paths
             with Vertical(classes="options-column"):
                 with Container(classes="options-section"):
-                    yield Label("System Paths (read-only)", classes="section-label")
-                    yield OptionCard(FilesystemConfig.bind_usr)
-                    yield OptionCard(FilesystemConfig.bind_bin)
-                    yield OptionCard(FilesystemConfig.bind_lib)
-                    yield OptionCard(FilesystemConfig.bind_lib64, default=Path("/lib64").exists())
-                    yield OptionCard(FilesystemConfig.bind_sbin)
-                    yield OptionCard(FilesystemConfig.bind_etc)
+                    yield Label(groups.system_paths_group.title, classes="section-label")
+                    yield OptionCard(groups.bind_usr)
+                    yield OptionCard(groups.bind_bin)
+                    yield OptionCard(groups.bind_lib)
+                    yield OptionCard(groups.bind_lib64, default=Path("/lib64").exists())
+                    yield OptionCard(groups.bind_sbin)
+                    yield OptionCard(groups.bind_etc)

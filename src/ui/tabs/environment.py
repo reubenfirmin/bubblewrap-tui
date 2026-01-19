@@ -22,15 +22,14 @@ def compose_environment_tab(on_toggle: Callable[[str, bool], None]) -> ComposeRe
         Textual widgets for the environment tab
     """
     with Vertical(id="env-tab-content"):
+        yield Static(
+            "Sandbox will inherit all checked environment variables.",
+            id="env-hint",
+        )
         with Horizontal(id="env-buttons-row"):
             yield Button("+ Add Variables", id="add-env-btn", variant="success")
-            yield Button("Clear System Env", id="toggle-clear-btn", variant="error")
+            yield Button("Clear Sandbox Env", id="toggle-clear-btn", variant="error")
         with VerticalScroll(id="env-grid-scroll"):
-            yield Static(
-                "Sandbox will inherit all checked environment variables. "
-                "Use Clear All to start with an empty environment.",
-                id="env-hint",
-            )
             with Horizontal(id="env-grid"):
                 # Split env vars into 3 columns
                 env_items = sorted(os.environ.items())

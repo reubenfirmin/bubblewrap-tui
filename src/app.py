@@ -8,7 +8,7 @@ from pathlib import Path
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal
+from textual.containers import Horizontal
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widgets import (
@@ -17,10 +17,8 @@ from textual.widgets import (
     Input,
     Label,
     Static,
-    Tab,
     TabbedContent,
     TabPane,
-    Tabs,
 )
 
 from model import (
@@ -28,7 +26,7 @@ from model import (
     OverlayConfig,
     SandboxConfig,
 )
-from profiles import ProfileManager
+from profiles import Profile, ProfileManager, BUI_PROFILES_DIR
 from controller import (
     ConfigSyncManager,
     DirectoryEventsMixin,
@@ -42,17 +40,16 @@ from ui import (
     DevModeCard,
     EnvVarItem,
     OverlayItem,
-    ProfileItem,
     compose_directories_tab,
     compose_environment_tab,
     compose_filesystem_tab,
     compose_overlays_tab,
-    compose_profiles_tab,
     compose_sandbox_tab,
     compose_summary_tab,
     reflow_env_columns,
 )
 from ui.ids import css
+from ui.modals import LoadProfileModal, SaveProfileModal
 import ui.ids as ids
 
 # Set up logging to XDG state directory
@@ -149,52 +146,41 @@ class BubblewrapTUI(
         log.info(f"bound_dirs: {self.config.bound_dirs}")
         log.info(f"env vars count: {len(os.environ)}")
 
-        yield Container(
+        yield Horizontal(
             Label(f"bui - {' '.join(self.config.command)}", id="header-title"),
+            Button("Load", id="load-profile-btn", variant="default"),
+            Button("Save", id="save-profile-btn", variant="default"),
             id="header-container",
         )
 
-        with Container(id="main-content"):
-            # Configuration tabs (default view)
-            with TabbedContent(id="config-tabs"):
-                with TabPane("Directories", id="dirs-tab"):
-                    yield from compose_directories_tab(
-                        self.config.bound_dirs,
-                        self._update_preview,
-                        self._remove_bound_dir,
-                    )
-
-                with TabPane("Environment", id="env-tab"):
-                    yield from compose_environment_tab(self._toggle_env_var)
-
-                with TabPane("File Systems", id="filesystems-tab"):
-                    yield from compose_filesystem_tab(self._on_dev_mode_change)
-
-                with TabPane("Overlays", id="overlays-tab"):
-                    yield from compose_overlays_tab()
-
-                with TabPane("Sandbox", id="sandbox-tab"):
-                    yield from compose_sandbox_tab()
-
-            # Summary view (hidden by default)
-            with Container(id="summary-view", classes="hidden"):
-                yield from compose_summary_tab(
-                    self.version,
-                    self._format_command(),
-                    self.config.get_explanation(),
+        with TabbedContent(id="config-tabs"):
+            with TabPane("Directories", id="dirs-tab"):
+                yield from compose_directories_tab(
+                    self.config.bound_dirs,
+                    self._update_preview,
+                    self._remove_bound_dir,
                 )
 
-            # Profiles view (hidden by default)
-            with Container(id="profiles-view", classes="hidden"):
-                yield from compose_profiles_tab()
+            with TabPane("Environment", id="env-tab"):
+                yield from compose_environment_tab(self._toggle_env_var)
+
+            with TabPane("File Systems", id="filesystems-tab"):
+                yield from compose_filesystem_tab(self._on_dev_mode_change)
+
+            with TabPane("Overlays", id="overlays-tab"):
+                yield from compose_overlays_tab()
+
+            with TabPane("Sandbox", id="sandbox-tab"):
+                yield from compose_sandbox_tab()
+
+            with TabPane("Summary", id="summary-tab"):
+                yield from compose_summary_tab(
+                    self.version,
+                    self._format_command_colored(),
+                    self._format_explanation_colored(),
+                )
 
         yield Horizontal(
-            Tabs(
-                Tab("Config", id="nav-config"),
-                Tab("Profiles", id="nav-profiles"),
-                Tab("Summary", id="nav-summary"),
-                id="nav-tabs",
-            ),
             Static("", id="status-bar"),
             Button("Execute [Enter]", id="execute-btn", variant="success"),
             Button("Cancel [Esc]", id="cancel-btn", variant="error"),
@@ -218,29 +204,23 @@ class BubblewrapTUI(
         args = self.config.build_command()
         return shlex.join(args)
 
+    def _format_command_colored(self) -> str:
+        """Format the command with section-based color coding."""
+        from bwrap import BubblewrapSerializer
+        return BubblewrapSerializer(self.config).serialize_colored()
+
+    def _format_explanation_colored(self) -> str:
+        """Format the explanation with section-based color coding."""
+        from bwrap import BubblewrapSummarizer
+        return BubblewrapSummarizer(self.config).summarize_colored()
+
     def _update_preview(self) -> None:
         """Update the command preview."""
         try:
             preview = self.query_one(css(ids.COMMAND_PREVIEW), Static)
-            preview.update(self._format_command())
+            preview.update(self._format_command_colored())
             explanation = self.query_one(css(ids.EXPLANATION), Static)
-            explanation.update(self.config.get_explanation())
-        except NoMatches:
-            pass
-        # Highlight Summary tab to indicate changes (only after initial mount)
-        if hasattr(self, "_mounted") and self._mounted:
-            self._highlight_summary_tab()
-
-    def _highlight_summary_tab(self) -> None:
-        """Add highlight to Summary nav tab to indicate pending changes."""
-        try:
-            summary_view = self.query_one(css(ids.SUMMARY_VIEW))
-            # Only highlight if not currently viewing summary
-            if summary_view.has_class("hidden"):
-                for tab in self.query("#nav-tabs Tab"):
-                    if tab.id == "nav-summary":
-                        tab.add_class("nav-changed")
-                        break
+            explanation.update(self._format_explanation_colored())
         except NoMatches:
             pass
 
@@ -257,6 +237,10 @@ class BubblewrapTUI(
     def _sync_config_from_ui(self) -> None:
         """Sync the config from UI state using the sync manager."""
         self._get_sync_manager().sync_config_from_ui()
+
+    def _sync_env_button_state(self) -> None:
+        """Sync the clear/restore environment button state."""
+        self._get_sync_manager().sync_env_button_state()
 
     def _sync_ui_from_config(self) -> None:
         """Sync the UI to reflect the current config state."""
@@ -304,36 +288,6 @@ class BubblewrapTUI(
         """Handle input changes."""
         self._sync_config_from_ui()
         self._update_preview()
-
-    # =========================================================================
-    # View Switching (Bottom nav tabs)
-    # =========================================================================
-
-    @on(Tabs.TabActivated, "#nav-tabs")
-    def on_nav_tab_activated(self, event: Tabs.TabActivated) -> None:
-        """Handle bottom navigation tab activation."""
-        tab_id = event.tab.id
-        try:
-            config_tabs = self.query_one(css(ids.CONFIG_TABS))
-            summary_view = self.query_one(css(ids.SUMMARY_VIEW))
-            profiles_view = self.query_one(css(ids.PROFILES_VIEW))
-
-            # Hide all views
-            config_tabs.add_class("hidden")
-            summary_view.add_class("hidden")
-            profiles_view.add_class("hidden")
-
-            # Show selected view
-            if tab_id == "nav-config":
-                config_tabs.remove_class("hidden")
-            elif tab_id == "nav-profiles":
-                profiles_view.remove_class("hidden")
-            elif tab_id == "nav-summary":
-                summary_view.remove_class("hidden")
-                self._update_preview()
-                event.tab.remove_class("nav-changed")
-        except NoMatches:
-            pass
 
     def _on_dev_mode_change(self, mode: str) -> None:
         """Handle /dev mode change."""
@@ -401,6 +355,28 @@ class BubblewrapTUI(
             )
         return self._profile_manager
 
+    @on(Button.Pressed, "#load-profile-btn")
+    def on_load_profile_pressed(self, event: Button.Pressed) -> None:
+        """Open load profile modal."""
+        self.push_screen(LoadProfileModal(), self._on_profile_modal_result)
+
+    @on(Button.Pressed, "#save-profile-btn")
+    def on_save_profile_pressed(self, event: Button.Pressed) -> None:
+        """Open save profile modal."""
+        self.push_screen(SaveProfileModal(), self._on_save_profile_result)
+
+    def _on_profile_modal_result(self, profile_path: Path | None) -> None:
+        """Handle result from load profile modal."""
+        if profile_path:
+            self._get_profile_manager().load_profile(profile_path)
+
+    def _on_save_profile_result(self, name: str | None) -> None:
+        """Handle result from save profile modal."""
+        if name:
+            pm = self._get_profile_manager()
+            pm.save_profile(name, self._sync_config_from_ui)
+            self._set_status(f"Saved profile: {name}")
+
     def _set_config(self, config: SandboxConfig) -> None:
         """Set a new config (called by ProfileManager)."""
         self.config = config
@@ -411,19 +387,6 @@ class BubblewrapTUI(
         """Called when a profile is loaded (sync UI)."""
         self._sync_ui_from_config()
         self._update_preview()
-
-    @on(Button.Pressed, css(ids.SAVE_PROFILE_BTN))
-    def on_save_profile_pressed(self, event: Button.Pressed) -> None:
-        """Save the current config as a profile."""
-        try:
-            name_input = self.query_one(css(ids.PROFILE_NAME_INPUT), Input)
-            name = name_input.value.strip()
-            pm = self._get_profile_manager()
-            pm.save_profile(name, self._sync_config_from_ui)
-            pm.refresh_profiles_list(ProfileItem)
-            name_input.value = ""
-        except NoMatches:
-            pass
 
     # =========================================================================
     # Mixin Handler Forwarding
@@ -487,7 +450,9 @@ class BubblewrapTUI(
     def on_mount(self) -> None:
         """Called when the app is mounted."""
         self._mounted = True  # Track that initial mount is complete
-        self._get_profile_manager().refresh_profiles_list(ProfileItem)
         # If loaded from profile, sync UI to show loaded config
         if self._loaded_from_profile:
             self._sync_ui_from_config()
+        # Focus the tab bar for keyboard navigation
+        from textual.widgets import Tabs
+        self.query_one("#config-tabs").query_one(Tabs).focus()

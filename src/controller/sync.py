@@ -228,7 +228,7 @@ class ConfigSyncManager:
                 btn.variant = "primary"
             else:
                 grid.remove_class("hidden")
-                btn.label = "Clear System Env"
+                btn.label = "Clear Sandbox Env"
                 btn.variant = "error"
         except NoMatches:
             log.debug("env button/grid not found")

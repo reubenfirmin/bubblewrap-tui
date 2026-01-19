@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Callable
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Input, Label
+from textual.widgets import Button, Input, Label, Static
 
 from ui.widgets import BoundDirItem, FilteredDirectoryTree
 
@@ -32,6 +32,10 @@ def compose_directories_tab(
     """
     dir_items = [BoundDirItem(bd, on_update, on_remove) for bd in bound_dirs]
 
+    yield Static(
+        "Directories listed here will be accessible inside the sandbox.",
+        id="dirs-hint",
+    )
     with Horizontal(id="dirs-tab-content"):
         with Vertical(id="dir-browser-container"):
             yield Label("Browser")

@@ -23,6 +23,7 @@ class EnvironmentEventsMixin:
     _update_preview: Callable
     _set_status: Callable
     _reflow_env_columns: Callable
+    _sync_env_button_state: Callable
 
     @on(Button.Pressed, css(ids.TOGGLE_CLEAR_BTN))
     def on_toggle_clear_pressed(self, event: Button.Pressed) -> None:
@@ -30,19 +31,15 @@ class EnvironmentEventsMixin:
         from ui import EnvVarItem
 
         try:
-            btn = self.query_one(css(ids.TOGGLE_CLEAR_BTN), Button)
             if not self.config.environment.clear_env:
                 # Clear environment
                 self.config.environment.clear_env = True
                 self.config.environment.keep_env_vars = set(
                     self.config.environment.custom_env_vars.keys()
                 )
-                # Hide system env grid, keep custom vars
-                self.query_one(css(ids.ENV_GRID_SCROLL)).add_class("hidden")
-                btn.label = "Restore System Env"
-                btn.variant = "primary"
+                self._sync_env_button_state()
                 self._update_preview()
-                self._set_status("System environment cleared")
+                self._set_status("Sandbox environment cleared")
             else:
                 # Restore environment
                 self.config.environment.clear_env = False
@@ -50,14 +47,11 @@ class EnvironmentEventsMixin:
                     self.config.environment.custom_env_vars.keys()
                 )
                 self.config.environment.unset_env_vars.clear()
-                # Show env grid
-                self.query_one(css(ids.ENV_GRID_SCROLL)).remove_class("hidden")
+                self._sync_env_button_state()
                 # Check all env var checkboxes
                 for item in self.query(EnvVarItem):
                     checkbox = item.query_one(".env-keep-toggle", Checkbox)
                     checkbox.value = True
-                btn.label = "Clear System Env"
-                btn.variant = "error"
                 self._update_preview()
                 self._set_status("System environment restored")
         except NoMatches:

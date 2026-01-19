@@ -9,14 +9,14 @@ from textual.css.query import NoMatches
 from textual.widgets import Checkbox
 
 if TYPE_CHECKING:
-    from textual.app import App
+    from typing import Any
 
-    from model import EnvironmentConfig
+    from textual.app import App
 
 
 def reflow_env_columns(
     app: App,
-    env_config: EnvironmentConfig,
+    env_config: Any,  # GroupProxy (environment)
     env_var_item_class: type,
     on_toggle: Callable[[str, bool], None],
 ) -> None:
