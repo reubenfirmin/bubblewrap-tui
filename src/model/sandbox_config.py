@@ -7,7 +7,6 @@ property access for existing code.
 from __future__ import annotations
 
 import copy
-import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -126,9 +125,7 @@ class SandboxConfig:
             self._isolation_group = _copy_group(groups.isolation_group)
         if self._process_group is None:
             self._process_group = _copy_group(groups.process_group)
-            # Reset uid/gid to current user
-            self._process_group.set("uid", os.getuid())
-            self._process_group.set("gid", os.getgid())
+            # uid/gid default to 0 (root inside sandbox) - set in groups.py
         if self._network_group is None:
             self._network_group = _copy_group(groups.network_group)
         if self._desktop_group is None:

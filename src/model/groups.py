@@ -186,8 +186,9 @@ chdir = _named("chdir", UIField(
 ))
 
 # UID/GID fields (data fields, not standard checkboxes)
-uid_field = Field(int, default_factory=os.getuid)
-gid_field = Field(int, default_factory=os.getgid)
+# Default to 0 (root inside sandbox) since that's the common use case
+uid_field = Field(int, default=0)
+gid_field = Field(int, default=0)
 
 
 # =============================================================================
@@ -562,9 +563,9 @@ process_group = ConfigGroup(
     title="Process",
     items=[die_with_parent, new_session, as_pid_1, chdir],
 )
-# Initialize uid/gid with factory values
-process_group.set("uid", os.getuid())
-process_group.set("gid", os.getgid())
+# Initialize uid/gid - default to 0 (root inside sandbox)
+process_group.set("uid", 0)
+process_group.set("gid", 0)
 
 network_group = ConfigGroup(
     name="network",
