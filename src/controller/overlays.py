@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from textual import on
@@ -14,6 +15,8 @@ import ui.ids as ids
 
 if TYPE_CHECKING:
     from model import OverlayConfig
+
+log = logging.getLogger(__name__)
 
 
 class OverlayEventsMixin:
@@ -43,5 +46,5 @@ class OverlayEventsMixin:
             # Show header when we have overlays
             self.query_one(css(ids.OVERLAY_HEADER)).remove_class("hidden")
         except NoMatches:
-            pass
+            log.debug("Overlays list or header not found")
         self._update_preview()

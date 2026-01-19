@@ -6,7 +6,7 @@ Instead of memorizing dozens of `bwrap` flags, visually configure your sandbox a
 
 ## Status
 
-- This is both alpha quality and lightly tested. That said it doesn't do anything except generate (and run, on demand) a bwrap command, so is mostly harmless. 
+- This is both beta quality and lightly tested. That said it doesn't do anything except generate (and run, on demand) a bwrap command, so is mostly harmless. 
 - PRs and bug reports are welcomed. Feature requests will be considered. :) 
 
 ## Requirements

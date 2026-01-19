@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import TYPE_CHECKING, Callable
 
@@ -12,6 +13,8 @@ if TYPE_CHECKING:
     from typing import Any
 
     from textual.app import App
+
+log = logging.getLogger(__name__)
 
 
 def reflow_env_columns(
@@ -61,4 +64,4 @@ def reflow_env_columns(
                     checkbox = item.query_one(".env-keep-toggle", Checkbox)
                     checkbox.value = is_kept
                 except NoMatches:
-                    pass
+                    log.debug("Checkbox not found in env var item")

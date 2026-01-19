@@ -1,6 +1,7 @@
 """Custom Textual widgets for bui."""
 
 from pathlib import Path
+from typing import Callable
 
 from textual import on
 from textual.app import ComposeResult
@@ -34,7 +35,7 @@ class FilteredDirectoryTree(DirectoryTree):
 class BoundDirItem(Container):
     """A row representing a bound directory."""
 
-    def __init__(self, bound_dir: BoundDirectory, on_update: callable, on_remove: callable) -> None:
+    def __init__(self, bound_dir: BoundDirectory, on_update: Callable, on_remove: Callable) -> None:
         super().__init__()
         self.bound_dir = bound_dir
         self._on_update = on_update
@@ -65,7 +66,7 @@ class BoundDirItem(Container):
 class OverlayItem(Container):
     """A row representing an overlay configuration."""
 
-    def __init__(self, overlay: OverlayConfig, on_update: callable, on_remove: callable) -> None:
+    def __init__(self, overlay: OverlayConfig, on_update: Callable, on_remove: Callable) -> None:
         super().__init__()
         self.overlay = overlay
         self._on_update = on_update
@@ -134,7 +135,7 @@ class OverlayItem(Container):
 class EnvVarItem(Container):
     """A card for an environment variable."""
 
-    def __init__(self, name: str, value: str, on_toggle: callable) -> None:
+    def __init__(self, name: str, value: str, on_toggle: Callable) -> None:
         super().__init__()
         self.var_name = name
         self.var_value = value
@@ -370,7 +371,7 @@ class DevModeCard(Container):
     }
     MODE_ORDER = ["none", "minimal", "full"]
 
-    def __init__(self, on_change: callable) -> None:
+    def __init__(self, on_change: Callable) -> None:
         super().__init__()
         self._on_change = on_change
         self._mode = "minimal"
@@ -421,7 +422,7 @@ class OptionCard(Container):
 class ProfileItem(Container):
     """A clickable profile entry in the profiles list."""
 
-    def __init__(self, profile_path: Path, on_load: callable, on_delete: callable) -> None:
+    def __init__(self, profile_path: Path, on_load: Callable, on_delete: Callable) -> None:
         super().__init__()
         self.profile_path = profile_path
         self._on_load = on_load

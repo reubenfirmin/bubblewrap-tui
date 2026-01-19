@@ -94,13 +94,9 @@ class NamespaceProxy(GroupProxy):
 class ProcessProxy(GroupProxy):
     """Proxy for process settings with uid/gid defaults."""
 
-    pass
-
 
 class EnvironmentProxy(GroupProxy):
     """Proxy for environment settings."""
-
-    pass
 
 
 @dataclass

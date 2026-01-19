@@ -197,7 +197,7 @@ class BubblewrapTUI(
             status = self.query_one(css(ids.STATUS_BAR), Static)
             status.update(message)
         except NoMatches:
-            pass
+            log.debug("Status bar not found when setting: %s", message)
 
     def _format_command(self) -> str:
         """Format the command for display - compact single line."""
@@ -222,7 +222,7 @@ class BubblewrapTUI(
             explanation = self.query_one(css(ids.EXPLANATION), Static)
             explanation.update(self._format_explanation_colored())
         except NoMatches:
-            pass
+            log.debug("Preview widgets not found during update")
 
     # =========================================================================
     # Config Sync (using ConfigSyncManager)
@@ -269,7 +269,7 @@ class BubblewrapTUI(
                 self.query_one(css(ids.OPT_RESOLV_CONF), Checkbox).value = True
                 self.query_one(css(ids.OPT_SSL_CERTS), Checkbox).value = True
             except NoMatches:
-                pass
+                log.debug("DNS/SSL checkboxes not found for auto-enable")
         # Show/hide UID/GID options when user namespace is toggled
         if event.checkbox.id == ids.OPT_UNSHARE_USER:
             try:
@@ -279,7 +279,7 @@ class BubblewrapTUI(
                 else:
                     uid_gid.add_class("hidden")
             except NoMatches:
-                pass
+                log.debug("UID/GID options container not found")
         self._sync_config_from_ui()
         self._update_preview()
 
@@ -316,7 +316,7 @@ class BubblewrapTUI(
                 try:
                     self.query_one(css(ids.OVERLAY_HEADER)).add_class("hidden")
                 except NoMatches:
-                    pass
+                    log.debug("Overlay header not found when hiding")
             self._update_preview()
             self._set_status("Overlay removed")
 

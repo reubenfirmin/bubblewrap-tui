@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import fields, is_dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, get_args, get_origin, get_type_hints
 
+log = logging.getLogger(__name__)
+
 from model import BoundDirectory, OverlayConfig, SandboxConfig
 from model.ui_field import ConfigBase, Field, UIField
+
+# Valid range for Unix UID/GID values
+MAX_UID_GID = 65535
 
 
 class ProfileValidationError(Exception):
     """Raised when profile validation fails."""
-
-    pass
 
 
 def validate_config(config: SandboxConfig) -> list[str]:
@@ -27,15 +31,15 @@ def validate_config(config: SandboxConfig) -> list[str]:
 
     # Validate UID/GID range (0-65535)
     if config.process.uid is not None:
-        if not (0 <= config.process.uid <= 65535):
+        if not (0 <= config.process.uid <= MAX_UID_GID):
             raise ProfileValidationError(
-                f"Invalid UID: {config.process.uid} (must be 0-65535)"
+                f"Invalid UID: {config.process.uid} (must be 0-{MAX_UID_GID})"
             )
 
     if config.process.gid is not None:
-        if not (0 <= config.process.gid <= 65535):
+        if not (0 <= config.process.gid <= MAX_UID_GID):
             raise ProfileValidationError(
-                f"Invalid GID: {config.process.gid} (must be 0-65535)"
+                f"Invalid GID: {config.process.gid} (must be 0-{MAX_UID_GID})"
             )
 
     # Validate dev_mode is a known value
@@ -324,7 +328,7 @@ class ProfileManager:
                     profile_item_class(profile.path, self.load_profile, self.delete_profile)
                 )
         except NoMatches:
-            pass
+            log.debug("Profiles list not found")
 
     def load_profile(self, profile_path: Path) -> None:
         """Load a profile from file."""

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Callable
 
@@ -11,6 +12,8 @@ from textual.widgets import Button, Checkbox
 
 from ui.ids import css
 import ui.ids as ids
+
+log = logging.getLogger(__name__)
 
 
 class EnvironmentEventsMixin:
@@ -55,7 +58,7 @@ class EnvironmentEventsMixin:
                 self._update_preview()
                 self._set_status("System environment restored")
         except NoMatches:
-            pass
+            log.debug("Environment UI widgets not found")
 
     @on(Button.Pressed, css(ids.ADD_ENV_BTN))
     def on_add_env_pressed(self, event: Button.Pressed) -> None:
@@ -76,7 +79,7 @@ class EnvironmentEventsMixin:
             try:
                 self.query_one(css(ids.ENV_GRID_SCROLL)).remove_class("hidden")
             except NoMatches:
-                pass
+                log.debug("Environment grid not found")
         self._reflow_env_columns()
         self._update_preview()
         self._set_status(f"Added {len(pairs)} variable(s)")

@@ -20,6 +20,18 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# Valid range for Unix UID/GID values
+MAX_UID_GID = 65535
+
+
+def _validate_uid_gid(value: str) -> int | None:
+    """Validate UID/GID is numeric and in valid range (0-65535)."""
+    stripped = value.strip()
+    if not stripped.isdigit():
+        return None
+    num = int(stripped)
+    return num if 0 <= num <= MAX_UID_GID else None
+
 
 @dataclass
 class FieldMapping:
@@ -72,14 +84,8 @@ FIELD_MAPPINGS: list[FieldMapping] = [
     FieldMapping(ids.OPT_HOSTNAME, "environment.custom_hostname", Input),
 
     # UID/GID (int conversion with range validation 0-65535)
-    FieldMapping(
-        ids.OPT_UID, "process.uid", Input,
-        lambda v: int(v) if v.strip().isdigit() and 0 <= int(v) <= 65535 else None
-    ),
-    FieldMapping(
-        ids.OPT_GID, "process.gid", Input,
-        lambda v: int(v) if v.strip().isdigit() and 0 <= int(v) <= 65535 else None
-    ),
+    FieldMapping(ids.OPT_UID, "process.uid", Input, _validate_uid_gid),
+    FieldMapping(ids.OPT_GID, "process.gid", Input, _validate_uid_gid),
 ]
 
 

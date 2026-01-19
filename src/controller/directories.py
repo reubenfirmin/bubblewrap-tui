@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -16,6 +17,8 @@ import ui.ids as ids
 if TYPE_CHECKING:
     from model import BoundDirectory
 
+log = logging.getLogger(__name__)
+
 
 class DirectoryEventsMixin:
     """Mixin for directory-related event handlers."""
@@ -26,6 +29,11 @@ class DirectoryEventsMixin:
     _update_preview: Callable
     _set_status: Callable
     _remove_bound_dir: Callable
+
+    def _is_path_already_bound(self, path: Path) -> bool:
+        """Check if a path is already in bound directories."""
+        resolved_path = path.resolve()
+        return any(bd.path.resolve() == resolved_path for bd in self.config.bound_dirs)
 
     @on(Button.Pressed, css(ids.ADD_DIR_BTN))
     def on_add_dir_pressed(self, event: Button.Pressed) -> None:
@@ -44,7 +52,7 @@ class DirectoryEventsMixin:
             if parent != current:
                 tree.path = parent
         except NoMatches:
-            pass
+            log.debug("Directory tree not found for parent navigation")
 
     @on(Button.Pressed, css(ids.ADD_PATH_BTN))
     def on_add_path_pressed(self, event: Button.Pressed) -> None:
@@ -73,13 +81,9 @@ class DirectoryEventsMixin:
             if not path.is_dir():
                 self._set_status(f"Not a directory: {path}")
                 return
-            # Resolve symlinks for accurate duplicate detection
-            resolved_path = path.resolve()
-            # Check if already added (comparing resolved paths to handle symlinks)
-            for bd in self.config.bound_dirs:
-                if bd.path.resolve() == resolved_path:
-                    self._set_status(f"Already added: {path}")
-                    return
+            if self._is_path_already_bound(path):
+                self._set_status(f"Already added: {path}")
+                return
             bound_dir = BoundDirectory(path=path, readonly=True)
             self.config.bound_dirs.append(bound_dir)
             dirs_list = self.query_one(css(ids.BOUND_DIRS_LIST), VerticalScroll)
@@ -88,7 +92,7 @@ class DirectoryEventsMixin:
             self._update_preview()
             self._set_status(f"Added: {path}")
         except NoMatches:
-            pass
+            log.debug("Path input or dirs list not found")
 
     def action_add_directory(self) -> None:
         """Add the currently selected directory to the bound list."""
@@ -104,13 +108,9 @@ class DirectoryEventsMixin:
                     else tree.cursor_node.data
                 )
                 if isinstance(path, Path) and path.is_dir():
-                    # Resolve symlinks for accurate duplicate detection
-                    resolved_path = path.resolve()
-                    # Check if already added (comparing resolved paths to handle symlinks)
-                    for bd in self.config.bound_dirs:
-                        if bd.path.resolve() == resolved_path:
-                            self._set_status(f"Already added: {path}")
-                            return
+                    if self._is_path_already_bound(path):
+                        self._set_status(f"Already added: {path}")
+                        return
 
                     bound_dir = BoundDirectory(path=path, readonly=True)
                     self.config.bound_dirs.append(bound_dir)
@@ -123,4 +123,4 @@ class DirectoryEventsMixin:
                     self._update_preview()
                     self._set_status(f"Added: {path}")
         except NoMatches:
-            pass
+            log.debug("Directory tree or dirs list not found")

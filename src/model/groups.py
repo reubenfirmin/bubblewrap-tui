@@ -8,14 +8,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from model.config import Config
 from model.config_group import ConfigGroup
 from model.ui_field import UIField, Field
-
-if TYPE_CHECKING:
-    pass
 
 
 def _named(name: str, field: UIField) -> UIField:
