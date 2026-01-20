@@ -3,6 +3,7 @@
 import os
 import shlex
 import sys
+import uuid
 from pathlib import Path
 
 from app import BubblewrapTUI
@@ -10,7 +11,10 @@ from installer import check_for_updates, do_install, do_update, show_update_noti
 from model import SandboxConfig
 from profiles import BUI_PROFILES_DIR, Profile
 
-BUI_VERSION = "0.3.3"
+BUI_VERSION = "0.3.5"
+
+# Base directory for overlay storage
+BUI_STATE_DIR = Path.home() / ".local" / "state" / "bui"
 
 # Global to store update message for display after TUI exits
 _update_available: str | None = None
@@ -75,6 +79,7 @@ def show_help() -> None:
     print("\nUsage:")
     print("  bui -- <command> [args...]            Configure and run a sandboxed command")
     print("  bui --profile <name> -- <command>     Load profile and run command")
+    print("  bui --sandbox <name>                  Name for overlay storage (use with --profile)")
     print("  bui --install                         Install bui to ~/.local/bin")
     print("  bui --update                          Download latest version and install")
     print("\nExamples:")
@@ -82,13 +87,21 @@ def show_help() -> None:
     print("  bui -- python script.py arg1 arg2")
     print('  bui -- "curl foo.sh | bash"           (pipes and redirects auto-handled)')
     print("  bui --profile myprofile -- code       (load from ~/.config/bui/profiles/)")
+    print("  bui --profile untrusted --sandbox deno -- ./install.sh")
+    print("                                        (writes go to ~/.local/state/bui/overlays/deno/)")
+    print("\nBuilt-in Profiles:")
+    print("  untrusted    Safe sandbox for running untrusted code (curl|bash scripts)")
+    print("               - Read-only system paths, isolated namespaces")
+    print("               - Home directory overlay (isolated per --sandbox or UUID)")
+    print("               - Network enabled for downloads")
+    print("\n  Example: bui --profile untrusted --sandbox myapp -- bash")
     sys.exit(0)
 
 
-def parse_args() -> tuple[list[str], str | None]:
+def parse_args() -> tuple[list[str], str | None, str | None]:
     """Parse command line arguments.
 
-    Returns: (command, profile_path)
+    Returns: (command, profile_path, sandbox_name)
     """
     args = sys.argv[1:]
 
@@ -117,6 +130,20 @@ def parse_args() -> tuple[list[str], str | None]:
         except (IndexError, ValueError):
             pass
 
+    # Check for --sandbox flag (optional name for overlay isolation)
+    sandbox_name = None
+    if "--sandbox" in args:
+        try:
+            sandbox_idx = args.index("--sandbox")
+            if sandbox_idx + 1 >= len(args) or args[sandbox_idx + 1].startswith("-"):
+                print("Error: --sandbox requires a name", file=sys.stderr)
+                sys.exit(1)
+            sandbox_name = args[sandbox_idx + 1]
+            # Remove --sandbox and its argument from args
+            args = args[:sandbox_idx] + args[sandbox_idx + 2 :]
+        except (IndexError, ValueError):
+            pass
+
     try:
         sep_idx = args.index("--")
         command = args[sep_idx + 1 :]
@@ -128,25 +155,71 @@ def parse_args() -> tuple[list[str], str | None]:
         command = args
 
     if needs_shell_wrap(command):
-        # Join all args with proper quoting and wrap in shell
-        return ["/bin/bash", "-c", shlex.join(command)], profile_path
-    return command, profile_path
+        if len(command) == 1:
+            # Single string with shell metacharacters - pass directly to -c
+            # (user already quoted it as a single argument)
+            return ["/bin/bash", "-c", command[0]], profile_path, sandbox_name
+        else:
+            # Multiple arguments with shell metacharacters - join them
+            return ["/bin/bash", "-c", shlex.join(command)], profile_path, sandbox_name
+    return command, profile_path, sandbox_name
+
+
+def apply_sandbox_to_overlays(config: SandboxConfig, sandbox_name: str) -> list[Path]:
+    """Apply sandbox name to overlay write directories.
+
+    Returns list of overlay write directories that may be written to.
+    """
+    overlay_dirs = []
+    for overlay in config.overlays:
+        if overlay.write_dir:
+            # Replace the base write_dir with sandbox-specific path
+            base_dir = BUI_STATE_DIR / "overlays" / sandbox_name
+            base_dir.mkdir(parents=True, exist_ok=True)
+            overlay.write_dir = str(base_dir)
+            overlay_dirs.append(base_dir)
+
+            # Ensure the derived work_dir also exists
+            # (get_work_dir() computes parent / ".overlay-work")
+            work_dir = Path(overlay.get_work_dir())
+            work_dir.mkdir(parents=True, exist_ok=True)
+    return overlay_dirs
 
 
 def main() -> None:
     """Main entry point."""
     global _update_available
-    command, profile_path = parse_args()
+    command, profile_path, sandbox_name = parse_args()
 
     # Check for updates in background (non-blocking, cached for 1 day)
     _update_available = check_for_updates(BUI_VERSION)
 
-    # Load profile if specified
+    # If profile specified, run directly without TUI
     if profile_path:
         config = load_profile(profile_path, command)
-        app = BubblewrapTUI(command, version=BUI_VERSION, config=config)
-    else:
-        app = BubblewrapTUI(command, version=BUI_VERSION)
+
+        # Apply sandbox isolation to overlays
+        overlay_dirs = []
+        if config.overlays:
+            # Generate UUID if no sandbox name specified
+            if sandbox_name is None:
+                sandbox_name = str(uuid.uuid4())[:8]
+            overlay_dirs = apply_sandbox_to_overlays(config, sandbox_name)
+
+        cmd = config.build_command()
+        print("=" * 60)
+        print("Executing:")
+        print(" ".join(cmd))
+        if overlay_dirs:
+            print(f"\nSandbox: {sandbox_name}")
+            print("Overlay writes will go to:")
+            for d in overlay_dirs:
+                print(f"  {d}/")
+        print("=" * 60 + "\n")
+        os.execvp("bwrap", cmd)
+
+    # Otherwise show TUI for configuration
+    app = BubblewrapTUI(command, version=BUI_VERSION)
     app.run()
 
     # Show update notice after TUI exits

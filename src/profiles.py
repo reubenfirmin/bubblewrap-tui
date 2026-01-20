@@ -90,7 +90,8 @@ if TYPE_CHECKING:
 BUI_PROFILES_DIR = Path.home() / ".config" / "bui" / "profiles"
 
 # Fields to exclude from profile serialization
-EXCLUDE_FIELDS = {"command"}
+# _system_paths_group is UI-only state - checkbox values are derived from bound_dirs
+EXCLUDE_FIELDS = {"command", "_system_paths_group"}
 
 
 def _has_ui_fields(obj: Any) -> bool:
@@ -333,9 +334,10 @@ def _deserialize_sandbox_config(data: dict, **overrides) -> SandboxConfig:
 
 def _restore_group_values(config: SandboxConfig, data: dict) -> None:
     """Restore ConfigGroup values from serialized data."""
+    # Note: _system_paths_group is NOT restored - it's UI-only state
+    # Checkbox states are derived from bound_dirs when loading a profile
     group_fields = [
         ("_vfs_group", config._vfs_group),
-        ("_system_paths_group", config._system_paths_group),
         ("_isolation_group", config._isolation_group),
         ("_process_group", config._process_group),
         ("_network_group", config._network_group),
