@@ -141,7 +141,7 @@ AI coding assistants like Claude Code can execute arbitrary shell commands and m
 - Each project directory is explicitly granted access via `--bind-cwd`
 - All of Claude's installed files (npm packages, config) live in an isolated overlay
 
-**The tradeoff:** You need `--bind` and `--bind-env` flags to expose tools and set environment variables.
+**Why the complex command?** We could create a custom profile in the TUI and use `--profile my-claude-profile`, but here we're reusing the generic `untrusted` profile and layering on a few flags. This is one-time setup - once we run `--install`, we get a permanent wrapper script that handles all of this.
 
 #### Installation
 
