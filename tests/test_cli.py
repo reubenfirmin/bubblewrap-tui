@@ -310,3 +310,106 @@ class TestGenerateSandboxAlias:
             with patch("builtins.input", return_value="invalid"):
                 with pytest.raises(SystemExit):
                     generate_sandbox_alias("test")
+
+    def test_out_of_range_selection_exits(self, tmp_path):
+        """Exits with error on out of range selection."""
+        overlay_dir = tmp_path / ".local" / "state" / "bui" / "overlays" / "test"
+        overlay_dir.mkdir(parents=True)
+
+        exe = overlay_dir / "bin" / "app"
+        exe.parent.mkdir()
+        exe.write_text("#!/bin/bash")
+        exe.chmod(0o755)
+
+        with patch("cli.Path.home", return_value=tmp_path):
+            with patch("builtins.input", return_value="99"):
+                with pytest.raises(SystemExit):
+                    generate_sandbox_alias("test")
+
+    def test_eof_exits(self, tmp_path):
+        """Exits with error on EOF (e.g., piped input)."""
+        overlay_dir = tmp_path / ".local" / "state" / "bui" / "overlays" / "test"
+        overlay_dir.mkdir(parents=True)
+
+        exe = overlay_dir / "bin" / "app"
+        exe.parent.mkdir()
+        exe.write_text("#!/bin/bash")
+        exe.chmod(0o755)
+
+        with patch("cli.Path.home", return_value=tmp_path):
+            with patch("builtins.input", side_effect=EOFError):
+                with pytest.raises(SystemExit):
+                    generate_sandbox_alias("test")
+
+    def test_multiple_executables_select_second(self, tmp_path, capsys):
+        """Can select from multiple executables."""
+        overlay_dir = tmp_path / ".local" / "state" / "bui" / "overlays" / "multi"
+        overlay_dir.mkdir(parents=True)
+
+        # Create two executables
+        for name in ["alpha", "beta"]:
+            exe = overlay_dir / "bin" / name
+            exe.parent.mkdir(exist_ok=True)
+            exe.write_text("#!/bin/bash")
+            exe.chmod(0o755)
+
+        with patch("cli.Path.home", return_value=tmp_path):
+            with patch("builtins.input", return_value="2"):
+                generate_sandbox_alias("multi")
+
+        captured = capsys.readouterr()
+        assert "1. bin/alpha" in captured.out
+        assert "2. bin/beta" in captured.out
+        assert "alias beta=" in captured.out
+
+
+class TestFindExecutablesEdgeCases:
+    """Additional edge case tests for find_executables()."""
+
+    def test_excludes_npm_directory(self, tmp_path):
+        """Excludes files in .npm/ directory."""
+        npm_exe = tmp_path / ".npm" / "_npx" / "bin"
+        npm_exe.parent.mkdir(parents=True)
+        npm_exe.write_text("#!/bin/bash")
+        npm_exe.chmod(0o755)
+
+        result = find_executables(tmp_path)
+        assert len(result) == 0
+
+    def test_excludes_cargo_registry(self, tmp_path):
+        """Excludes files in .cargo/registry/ directory."""
+        cargo_exe = tmp_path / ".cargo" / "registry" / "bin" / "tool"
+        cargo_exe.parent.mkdir(parents=True)
+        cargo_exe.write_text("#!/bin/bash")
+        cargo_exe.chmod(0o755)
+
+        result = find_executables(tmp_path)
+        assert len(result) == 0
+
+    def test_includes_cargo_bin(self, tmp_path):
+        """Includes files in .cargo/bin/ (not registry)."""
+        cargo_exe = tmp_path / ".cargo" / "bin" / "rustc"
+        cargo_exe.parent.mkdir(parents=True)
+        cargo_exe.write_text("#!/bin/bash")
+        cargo_exe.chmod(0o755)
+
+        result = find_executables(tmp_path)
+        assert len(result) == 1
+        assert result[0].name == "rustc"
+
+    def test_empty_directory(self, tmp_path):
+        """Returns empty list for empty directory."""
+        result = find_executables(tmp_path)
+        assert result == []
+
+    def test_only_non_executable_files(self, tmp_path):
+        """Returns empty list when no files are executable."""
+        txt = tmp_path / "readme.txt"
+        txt.write_text("hello")
+
+        script = tmp_path / "script.sh"
+        script.write_text("#!/bin/bash")
+        # Not chmod +x
+
+        result = find_executables(tmp_path)
+        assert result == []
