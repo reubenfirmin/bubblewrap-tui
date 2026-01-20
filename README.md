@@ -252,6 +252,46 @@ uv run --with pytest --with pytest-cov --with pytest-asyncio --with textual pyte
 uv run --with pytest --with pytest-cov --with pytest-asyncio --with textual pytest tests/ --cov=src --cov-report=term-missing
 ```
 
+### Code Layout
+
+```
+src/
+├── cli.py              # Entry point, argument parsing
+├── app.py              # Main Textual App (composes UI, orchestrates mixins)
+├── bwrap.py            # bwrap command generation and execution
+├── netfilter.py        # Network filtering (slirp4netns, iptables)
+├── profiles.py         # Profile save/load
+├── detection.py        # Path detection and resolution
+│
+├── model/              # Data models (what gets configured)
+│   ├── config.py       # SandboxConfig - the main configuration object
+│   ├── network_filter.py
+│   ├── groups.py       # Option groups (filesystem, network, etc.)
+│   └── ...
+│
+├── controller/         # Event handling mixins (mixed into App)
+│   ├── directories.py  # Directory binding events
+│   ├── environment.py  # Environment variable events
+│   ├── network.py      # Network filtering events
+│   ├── overlays.py     # Overlay events
+│   └── execute.py      # Execute/run events
+│
+└── ui/                 # UI components
+    ├── tabs/           # Tab composition (one file per tab)
+    │   ├── directories.py
+    │   ├── network.py
+    │   └── ...
+    ├── widgets.py      # Reusable widgets
+    ├── modals.py       # Modal dialogs
+    ├── ids.py          # Widget IDs
+    └── styles.css      # Textual CSS
+```
+
+**Key patterns:**
+- `model/` defines data structures, `controller/` handles events, `ui/` renders
+- Each tab has a composition function in `ui/tabs/` and event handlers in `controller/`
+- `app.py` inherits from controller mixins and composes the full UI
+
 ## License
 
 MIT

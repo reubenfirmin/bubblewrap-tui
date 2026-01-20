@@ -33,6 +33,7 @@ from controller import (
     DirectoryEventsMixin,
     EnvironmentEventsMixin,
     ExecuteEventsMixin,
+    NetworkEventsMixin,
     OverlayEventsMixin,
 )
 from detection import is_path_covered, resolve_command_executable
@@ -75,9 +76,10 @@ APP_CSS = (Path(__file__).parent / "ui" / "styles.css").read_text()
 
 class BubblewrapTUI(
     DirectoryEventsMixin,
-    OverlayEventsMixin,
     EnvironmentEventsMixin,
     ExecuteEventsMixin,
+    NetworkEventsMixin,
+    OverlayEventsMixin,
     App,
 ):
     """TUI for configuring bubblewrap sandboxes."""
@@ -406,46 +408,6 @@ class BubblewrapTUI(
                 filter_opts_right.add_class("hidden")
         except NoMatches:
             pass
-        self._update_preview()
-
-    def _on_hostname_mode_change(self, mode: str) -> None:
-        """Handle hostname filter mode change."""
-        self.config.network_filter.hostname_filter.mode = FilterMode(mode)
-        self._update_preview()
-
-    def _on_hostname_add(self, hostname: str) -> None:
-        """Handle hostname added to filter list."""
-        # Already added by widget, just update preview
-        self._update_preview()
-
-    def _on_hostname_remove(self, hostname: str) -> None:
-        """Handle hostname removed from filter list."""
-        # Already removed by widget, just update preview
-        self._update_preview()
-
-    def _on_ip_mode_change(self, mode: str) -> None:
-        """Handle IP filter mode change."""
-        self.config.network_filter.ip_filter.mode = FilterMode(mode)
-        self._update_preview()
-
-    def _on_cidr_add(self, cidr: str) -> None:
-        """Handle CIDR added to filter list."""
-        # Already added by widget, just update preview
-        self._update_preview()
-
-    def _on_cidr_remove(self, cidr: str) -> None:
-        """Handle CIDR removed from filter list."""
-        # Already removed by widget, just update preview
-        self._update_preview()
-
-    def _on_port_add(self, port: int) -> None:
-        """Handle port added to localhost access list."""
-        # Already added by widget, just update preview
-        self._update_preview()
-
-    def _on_port_remove(self, port: int) -> None:
-        """Handle port removed from localhost access list."""
-        # Already removed by widget, just update preview
         self._update_preview()
 
     def _update_home_overlay_label(self) -> None:

@@ -19,6 +19,7 @@ from netfilter import (
     generate_slirp4netns_args,
     get_install_instructions,
     get_slirp4netns_status,
+    get_www_variant,
     is_ipv6,
     resolve_hostname,
     validate_cidr,
@@ -159,6 +160,25 @@ class TestValidatePort:
         assert validate_port("not a port") is False
 
 
+class TestGetWwwVariant:
+    """Test get_www_variant function."""
+
+    def test_adds_www_to_bare_domain(self):
+        """Bare domain gets www. prefix."""
+        assert get_www_variant("github.com") == "www.github.com"
+        assert get_www_variant("example.org") == "www.example.org"
+
+    def test_strips_www_from_www_domain(self):
+        """www. domain gets stripped."""
+        assert get_www_variant("www.github.com") == "github.com"
+        assert get_www_variant("www.example.org") == "example.org"
+
+    def test_returns_none_for_invalid(self):
+        """Invalid hostnames return None."""
+        assert get_www_variant("localhost") is None  # No dot
+        assert get_www_variant("") is None
+
+
 class TestResolveHostname:
     """Test resolve_hostname function."""
 
@@ -170,8 +190,7 @@ class TestResolveHostname:
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0)),
             (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:2800:220:1:248:1893:25c8:1946", 0, 0, 0)),
         ]
-        # include_www_variant=False to test single hostname
-        ipv4, ipv6 = resolve_hostname("example.com", include_www_variant=False)
+        ipv4, ipv6 = resolve_hostname("example.com")
         assert "93.184.216.34" in ipv4
         assert "2606:2800:220:1:248:1893:25c8:1946" in ipv6
 
@@ -180,44 +199,9 @@ class TestResolveHostname:
         """resolve_hostname handles resolution failure."""
         import socket
         mock_getaddrinfo.side_effect = socket.gaierror("Name resolution failed")
-        # include_www_variant=False to test single hostname
-        ipv4, ipv6 = resolve_hostname("nonexistent.invalid", include_www_variant=False)
+        ipv4, ipv6 = resolve_hostname("nonexistent.invalid")
         assert ipv4 == []
         assert ipv6 == []
-
-    @patch("socket.getaddrinfo")
-    def test_includes_www_variant(self, mock_getaddrinfo):
-        """resolve_hostname includes www variant by default."""
-        import socket
-
-        def mock_resolve(host, port, family, socktype):
-            if host == "example.com":
-                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
-            elif host == "www.example.com":
-                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.35", 0))]
-            return []
-
-        mock_getaddrinfo.side_effect = mock_resolve
-        ipv4, ipv6 = resolve_hostname("example.com")
-        assert "93.184.216.34" in ipv4
-        assert "93.184.216.35" in ipv4  # www variant
-
-    @patch("socket.getaddrinfo")
-    def test_www_variant_strips_www(self, mock_getaddrinfo):
-        """resolve_hostname strips www. prefix when present."""
-        import socket
-
-        def mock_resolve(host, port, family, socktype):
-            if host == "example.com":
-                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
-            elif host == "www.example.com":
-                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.35", 0))]
-            return []
-
-        mock_getaddrinfo.side_effect = mock_resolve
-        ipv4, ipv6 = resolve_hostname("www.example.com")
-        assert "93.184.216.34" in ipv4  # bare domain
-        assert "93.184.216.35" in ipv4  # www variant
 
 
 class TestGenerateIptablesRules:

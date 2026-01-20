@@ -57,6 +57,7 @@ MODULE_ORDER = [
     "controller/directories.py",      # Event handler - depends on ui
     "controller/overlays.py",         # Event handler - depends on ui
     "controller/environment.py",      # Event handler - depends on ui
+    "controller/network.py",          # Event handler - network filtering
     "app.py",                         # Depends on ui, model, profiles, controller, detection
     "cli.py",                         # Depends on app, model, profiles, installer, netfilter
 ]
@@ -69,7 +70,7 @@ LOCAL_MODULES = {
     "model.ui_field", "model.bound_directory", "model.overlay_config", "model.network_filter",
     "model.config_group", "model.config", "model.groups", "model.sandbox_config",
     "controller", "controller.sync", "controller.directories", "controller.overlays",
-    "controller.environment", "controller.execute",
+    "controller.environment", "controller.execute", "controller.network",
     "ui", "ui.ids", "ui.widgets", "ui.helpers", "ui.modals",
     "ui.tabs", "ui.tabs.directories", "ui.tabs.environment", "ui.tabs.filesystem",
     "ui.tabs.overlays", "ui.tabs.sandbox", "ui.tabs.network", "ui.tabs.summary", "ui.tabs.profiles",

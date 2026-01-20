@@ -115,12 +115,11 @@ def get_install_instructions() -> str:
     return "Install slirp4netns using your package manager"
 
 
-def resolve_hostname(host: str, include_www_variant: bool = True) -> tuple[list[str], list[str]]:
+def resolve_hostname(host: str) -> tuple[list[str], list[str]]:
     """Resolve hostname to IPv4 and IPv6 addresses.
 
     Args:
         host: Hostname to resolve (e.g., 'github.com')
-        include_www_variant: If True, also resolve www.host or host without www.
 
     Returns:
         Tuple of (ipv4_list, ipv6_list) with deduplicated addresses.
@@ -128,30 +127,36 @@ def resolve_hostname(host: str, include_www_variant: bool = True) -> tuple[list[
     ipv4: list[str] = []
     ipv6: list[str] = []
 
-    # Build list of hostnames to resolve
-    hosts_to_resolve = [host]
-    if include_www_variant:
-        if host.startswith("www."):
-            # Also resolve without www.
-            hosts_to_resolve.append(host[4:])
-        else:
-            # Also resolve with www.
-            hosts_to_resolve.append(f"www.{host}")
-
-    for h in hosts_to_resolve:
-        try:
-            # Get all address info (both IPv4 and IPv6)
-            results = socket.getaddrinfo(h, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-            for family, _, _, _, sockaddr in results:
-                ip = sockaddr[0]
-                if family == socket.AF_INET:
-                    ipv4.append(ip)
-                elif family == socket.AF_INET6:
-                    ipv6.append(ip)
-        except socket.gaierror:
-            pass  # Host resolution failed, continue with other hosts
+    try:
+        # Get all address info (both IPv4 and IPv6)
+        results = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        for family, _, _, _, sockaddr in results:
+            ip = sockaddr[0]
+            if family == socket.AF_INET:
+                ipv4.append(ip)
+            elif family == socket.AF_INET6:
+                ipv6.append(ip)
+    except socket.gaierror:
+        pass  # Host resolution failed
 
     return (list(set(ipv4)), list(set(ipv6)))  # Dedupe
+
+
+def get_www_variant(host: str) -> str | None:
+    """Get the www variant of a hostname.
+
+    Args:
+        host: Hostname (e.g., 'github.com' or 'www.github.com')
+
+    Returns:
+        The www variant if host doesn't start with www.,
+        the non-www variant if it does, or None if neither applies.
+    """
+    if host.startswith("www."):
+        return host[4:]  # Strip www.
+    elif "." in host and not host.startswith("www."):
+        return f"www.{host}"  # Add www.
+    return None
 
 
 def is_ipv6(cidr: str) -> bool:
