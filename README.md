@@ -67,6 +67,28 @@ Add `--sandbox <name>` to isolate installations from each other:
 bui --profile untrusted --sandbox deno -- "curl -fsSL https://deno.land/install.sh | sh"
 ```
 
+### Generating Shell Aliases
+
+After installing software in a sandbox, use `--generate` to create a shell alias:
+
+```bash
+bui --sandbox deno --generate
+```
+
+This scans the sandbox for executables and outputs an alias you can add to your shell rc file:
+
+```
+Executables in sandbox 'deno':
+  1. .deno/bin/deno
+
+Select binary (number): 1
+
+Add to your shell rc file:
+  alias deno='bui --profile untrusted --sandbox deno --bind-cwd -- ~/.deno/bin/deno'
+```
+
+The `--bind-cwd` flag binds your current working directory read-write into the sandbox, allowing the sandboxed binary to read and write files in whichever directory you run it from.
+
 ### Customizing Profiles
 
 To create a custom profile based on `untrusted`:
