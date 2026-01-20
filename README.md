@@ -12,7 +12,7 @@ Instead of memorizing dozens of `bwrap` flags, visually configure your sandbox a
 - [Quick Start](#quick-start)
 - [Profiles](#profiles)
 - [Managed Sandboxes](#managed-sandboxes)
-  - [Safe Curl|Bash - Installing Deno](#safe-curlbash---installing-deno)
+  - [Safe curl | bash - Installing Deno](#safe-curl--bash---installing-deno)
   - [Constraining Agents - Sandboxing Claude Code](#constraining-agents---sandboxing-claude-code)
 - [Development](#development)
 - [License](#license)
@@ -95,7 +95,7 @@ For applications you want to install and run repeatedly in isolation, bui provid
 - Isolating development tools from your system
 - Running AI coding assistants with restricted access
 
-### Safe Curl|Bash - Installing Deno
+### Safe curl | bash - Installing Deno
 
 Install Deno in an isolated sandbox:
 

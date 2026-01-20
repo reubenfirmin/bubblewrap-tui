@@ -32,10 +32,13 @@ MODULE_ORDER = [
     "model/ui_field.py",              # No dependencies - UIField, Field, ConfigBase
     "model/bound_directory.py",       # No dependencies
     "model/overlay_config.py",        # No dependencies
+    "model/network_filter.py",        # No dependencies - network filtering model
     "model/config_group.py",          # Depends on ui_field
     "model/config.py",                # Depends on config_group
     "model/groups.py",                # Depends on config, config_group, ui_field
-    "model/sandbox_config.py",        # Depends on config_group, groups
+    "model/sandbox_config.py",        # Depends on config_group, groups, network_filter
+    "commandoutput.py",               # Command output formatting
+    "netfilter.py",                   # Network filtering utilities (slirp4netns, iptables)
     "bwrap.py",                       # Depends on detection, model (serialization/summary)
     "profiles.py",                    # Depends on model (JSON serialization)
     "ui/ids.py",                      # No dependencies - widget ID constants (needed early for ids.X refs)
@@ -46,6 +49,7 @@ MODULE_ORDER = [
     "ui/tabs/environment.py",         # Depends on ui.widgets
     "ui/tabs/overlays.py",            # No widget dependencies
     "ui/tabs/sandbox.py",             # Depends on ui.widgets, model, detection
+    "ui/tabs/network.py",             # Depends on ui.widgets, netfilter
     "ui/tabs/summary.py",             # No dependencies
     "ui/tabs/profiles.py",            # No dependencies
     "ui/modals.py",                   # Profile modals - depends on profiles
@@ -54,20 +58,21 @@ MODULE_ORDER = [
     "controller/overlays.py",         # Event handler - depends on ui
     "controller/environment.py",      # Event handler - depends on ui
     "app.py",                         # Depends on ui, model, profiles, controller, detection
-    "cli.py",                         # Depends on app, model, profiles, installer
+    "cli.py",                         # Depends on app, model, profiles, installer, netfilter
 ]
 
 # Local modules (imports to filter out)
 LOCAL_MODULES = {
     "detection", "environment", "installer", "sandbox", "profiles", "app", "cli", "styles", "bwrap",
+    "commandoutput", "netfilter",
     "model",
-    "model.ui_field", "model.bound_directory", "model.overlay_config",
+    "model.ui_field", "model.bound_directory", "model.overlay_config", "model.network_filter",
     "model.config_group", "model.config", "model.groups", "model.sandbox_config",
     "controller", "controller.sync", "controller.directories", "controller.overlays",
     "controller.environment", "controller.execute",
     "ui", "ui.ids", "ui.widgets", "ui.helpers", "ui.modals",
     "ui.tabs", "ui.tabs.directories", "ui.tabs.environment", "ui.tabs.filesystem",
-    "ui.tabs.overlays", "ui.tabs.sandbox", "ui.tabs.summary", "ui.tabs.profiles",
+    "ui.tabs.overlays", "ui.tabs.sandbox", "ui.tabs.network", "ui.tabs.summary", "ui.tabs.profiles",
 }
 
 

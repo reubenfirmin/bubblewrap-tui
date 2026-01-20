@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from model.config import Config
 from model.config_group import ConfigGroup
 from model.ui_field import UIField, Field
+
+if TYPE_CHECKING:
+    from model.network_filter import NetworkFilter
 
 
 def _named(name: str, field: UIField) -> UIField:
@@ -334,14 +338,31 @@ def _vfs_to_summary(group: ConfigGroup) -> str | None:
 # Note: _system_paths_to_summary removed - system paths are now shown via bound_dirs summary
 
 
-def _network_to_args(group: ConfigGroup) -> list[str]:
-    """Custom to_args for network (handles DNS/SSL path detection)."""
+def _network_to_args(group: ConfigGroup, network_filter: "NetworkFilter | None" = None) -> list[str]:
+    """Custom to_args for network (handles DNS/SSL path detection and filtering).
+
+    Args:
+        group: The network ConfigGroup
+        network_filter: Optional NetworkFilter config for slirp4netns filtering
+    """
     from detection import find_dns_paths, find_ssl_cert_paths
 
     args = []
-    if group.get("share_net"):
+
+    # Check if network filtering is active (uses slirp4netns)
+    filtering_active = network_filter and network_filter.requires_slirp4netns()
+
+    if filtering_active:
+        # Network filtering requires isolated network namespace (slirp4netns provides filtered network)
+        # NOTE: We cannot use --unshare-user with network filtering because slirp4netns
+        # cannot join a user namespace from outside (setns requires CAP_SYS_ADMIN in the
+        # target namespace, which you only get when CREATING a namespace, not JOINING one)
+        args.append("--unshare-net")
+    elif group.get("share_net"):
+        # Full network access
         args.append("--share-net")
 
+    # DNS and SSL bindings are needed for both full access and filtered network
     if group.get("bind_resolv_conf"):
         for dns_path in find_dns_paths():
             args.extend(["--ro-bind", dns_path, dns_path])

@@ -8,7 +8,7 @@ from pathlib import Path
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import Container, Horizontal
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widgets import (
@@ -23,6 +23,7 @@ from textual.widgets import (
 
 from model import (
     BoundDirectory,
+    FilterMode,
     OverlayConfig,
     SandboxConfig,
 )
@@ -42,6 +43,7 @@ from ui import (
     OverlayItem,
     compose_directories_tab,
     compose_environment_tab,
+    compose_network_tab,
     compose_overlays_tab,
     compose_sandbox_tab,
     compose_summary_tab,
@@ -185,6 +187,22 @@ class BubblewrapTUI(
             with TabPane("Sandbox", id="sandbox-tab"):
                 yield from compose_sandbox_tab(self._on_dev_mode_change)
 
+            with TabPane("Network", id="network-tab"):
+                yield from compose_network_tab(
+                    self.config.network_filter,
+                    self.config.network.share_net,
+                    self.config.network.bind_resolv_conf,
+                    self.config.network.bind_ssl_certs,
+                    self._on_hostname_mode_change,
+                    self._on_hostname_add,
+                    self._on_hostname_remove,
+                    self._on_ip_mode_change,
+                    self._on_cidr_add,
+                    self._on_cidr_remove,
+                    self._on_port_add,
+                    self._on_port_remove,
+                )
+
             with TabPane("Overlays", id="overlays-tab"):
                 yield from compose_overlays_tab()
 
@@ -283,13 +301,19 @@ class BubblewrapTUI(
     @on(Checkbox.Changed)
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         """Handle checkbox changes."""
-        # Auto-enable DNS and SSL certs when network is toggled on
-        if event.checkbox.id == ids.OPT_NET and event.value:
+        # Handle network access toggle - show/hide full network options
+        if event.checkbox.id == ids.OPT_NET:
             try:
-                self.query_one(css(ids.OPT_RESOLV_CONF), Checkbox).value = True
-                self.query_one(css(ids.OPT_SSL_CERTS), Checkbox).value = True
+                full_net_opts = self.query_one("#full-network-options", Container)
+                if event.value:
+                    full_net_opts.remove_class("hidden")
+                    # Auto-enable DNS and SSL certs
+                    self.query_one(css(ids.OPT_RESOLV_CONF), Checkbox).value = True
+                    self.query_one(css(ids.OPT_SSL_CERTS), Checkbox).value = True
+                else:
+                    full_net_opts.add_class("hidden")
             except NoMatches:
-                log.debug("DNS/SSL checkboxes not found for auto-enable")
+                log.debug("Full network options container not found")
         # Show/hide UID/GID options when user namespace is toggled
         if event.checkbox.id == ids.OPT_UNSHARE_USER:
             try:
@@ -326,6 +350,9 @@ class BubblewrapTUI(
         # Handle home overlay - sync with overlays list (synthetic_passwd doesn't need overlay)
         if event.checkbox.id == ids.OPT_OVERLAY_HOME:
             self._handle_overlay_home_change(event.value)
+        # Handle network filtering enabled
+        if event.checkbox.id == ids.NETWORK_ENABLED:
+            self._on_network_enabled_change(event.value)
         self._sync_config_from_ui()
         self._update_preview()
 
@@ -359,6 +386,67 @@ class BubblewrapTUI(
     def _on_dev_mode_change(self, mode: str) -> None:
         """Handle /dev mode change."""
         self.config.filesystem.dev_mode = mode
+
+    # =========================================================================
+    # Network Filtering Callbacks
+    # =========================================================================
+
+    def _on_network_enabled_change(self, enabled: bool) -> None:
+        """Handle network filtering enabled/disabled."""
+        self.config.network_filter.enabled = enabled
+        # Toggle visibility of filter options
+        try:
+            filter_opts = self.query_one("#filter-options", Container)
+            filter_opts_right = self.query_one("#filter-options-right", Container)
+            if enabled:
+                filter_opts.remove_class("hidden")
+                filter_opts_right.remove_class("hidden")
+            else:
+                filter_opts.add_class("hidden")
+                filter_opts_right.add_class("hidden")
+        except NoMatches:
+            pass
+        self._update_preview()
+
+    def _on_hostname_mode_change(self, mode: str) -> None:
+        """Handle hostname filter mode change."""
+        self.config.network_filter.hostname_filter.mode = FilterMode(mode)
+        self._update_preview()
+
+    def _on_hostname_add(self, hostname: str) -> None:
+        """Handle hostname added to filter list."""
+        # Already added by widget, just update preview
+        self._update_preview()
+
+    def _on_hostname_remove(self, hostname: str) -> None:
+        """Handle hostname removed from filter list."""
+        # Already removed by widget, just update preview
+        self._update_preview()
+
+    def _on_ip_mode_change(self, mode: str) -> None:
+        """Handle IP filter mode change."""
+        self.config.network_filter.ip_filter.mode = FilterMode(mode)
+        self._update_preview()
+
+    def _on_cidr_add(self, cidr: str) -> None:
+        """Handle CIDR added to filter list."""
+        # Already added by widget, just update preview
+        self._update_preview()
+
+    def _on_cidr_remove(self, cidr: str) -> None:
+        """Handle CIDR removed from filter list."""
+        # Already removed by widget, just update preview
+        self._update_preview()
+
+    def _on_port_add(self, port: int) -> None:
+        """Handle port added to localhost access list."""
+        # Already added by widget, just update preview
+        self._update_preview()
+
+    def _on_port_remove(self, port: int) -> None:
+        """Handle port removed from localhost access list."""
+        # Already removed by widget, just update preview
+        self._update_preview()
 
     def _update_home_overlay_label(self) -> None:
         """Update the home overlay checkbox label and explanation based on uid/username."""

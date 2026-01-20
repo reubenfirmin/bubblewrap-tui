@@ -12,6 +12,7 @@ from typing import Any
 
 from model.bound_directory import BoundDirectory
 from model.config_group import ConfigGroup
+from model.network_filter import NetworkFilter
 from model.overlay_config import OverlayConfig
 
 
@@ -100,6 +101,7 @@ class SandboxConfig:
     command: list[str] = field(default_factory=list)
     bound_dirs: list[BoundDirectory] = field(default_factory=list)
     overlays: list[OverlayConfig] = field(default_factory=list)
+    network_filter: NetworkFilter = field(default_factory=NetworkFilter)
     drop_caps: set[str] = field(default_factory=set)
 
     # Internal group storage

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import fields, is_dataclass
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, get_args, get_origin, get_type_hints
 
@@ -137,6 +138,8 @@ def serialize(obj: Any) -> dict | list | str | int | float | bool | None:
         return result
 
     # Handle other types
+    if isinstance(obj, Enum):
+        return obj.value
     if isinstance(obj, Path):
         return str(obj)
     if isinstance(obj, set):
@@ -230,6 +233,10 @@ def _deserialize_value(value: Any, field_type: type) -> Any:
 
     origin = get_origin(field_type)
     args = get_args(field_type)
+
+    # Handle Enum types
+    if field_type is not None and isinstance(field_type, type) and issubclass(field_type, Enum):
+        return field_type(value)
 
     # Handle ConfigGroup - don't deserialize here, handled specially in SandboxConfig
     if field_type is ConfigGroup:

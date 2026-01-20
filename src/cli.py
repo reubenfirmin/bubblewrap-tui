@@ -12,8 +12,10 @@ if TYPE_CHECKING:
     from model import SandboxConfig
 
 from app import BubblewrapTUI
+from commandoutput import print_execution_header
 from installer import check_for_updates, do_install, do_update, show_update_notice
 from model import BoundDirectory, SandboxConfig
+from netfilter import check_slirp4netns, execute_with_network_filter, get_install_instructions
 from profiles import BUI_PROFILES_DIR, Profile
 from sandbox import (
     BUI_STATE_DIR,
@@ -321,6 +323,33 @@ def apply_sandbox_to_overlays(config: SandboxConfig, sandbox_name: str) -> list[
     return overlay_dirs
 
 
+def validate_network_filter(config: SandboxConfig) -> bool:
+    """Validate network filtering requirements.
+
+    Returns True if network filtering can proceed, False if there's an error.
+    """
+    nf = config.network_filter
+    if not nf.requires_slirp4netns():
+        return True
+
+    if not check_slirp4netns():
+        print("=" * 60, file=sys.stderr)
+        print("Error: Network filtering requires slirp4netns", file=sys.stderr)
+        print("", file=sys.stderr)
+        print(f"Install with: {get_install_instructions()}", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("Or disable network filtering in the profile.", file=sys.stderr)
+        print("=" * 60, file=sys.stderr)
+        return False
+
+    return True
+
+
+def _build_bwrap_command(config: SandboxConfig, fd_map: dict[str, int] | None) -> list[str]:
+    """Helper to build bwrap command from config."""
+    return config.build_command(fd_map)
+
+
 def main() -> None:
     """Main entry point."""
     global _update_available
@@ -362,18 +391,30 @@ def main() -> None:
             bind_paths_str = [str(p) for p in bind_paths] if bind_paths else None
             register_sandbox(sandbox_name, profile_path, bind_paths_str, bind_env)
 
+        # Validate network filtering requirements
+        if not validate_network_filter(config):
+            sys.exit(1)
+
         fd_map = setup_virtual_user_fds(config)
-        cmd = config.build_command(fd_map if fd_map else None)
-        print("=" * 60)
-        print("Executing:")
-        print(" ".join(cmd))
-        if overlay_dirs:
-            print(f"\nSandbox: {sandbox_name}")
-            print("Overlay writes will go to:")
-            for d in overlay_dirs:
-                print(f"  {d}/")
-        print("=" * 60 + "\n")
-        os.execvp("bwrap", cmd)
+
+        # Print execution info
+        if config.network_filter.requires_slirp4netns():
+            # Network filtering execution - header printed by execute_with_network_filter
+            execute_with_network_filter(
+                config,
+                fd_map if fd_map else None,
+                _build_bwrap_command,
+                sandbox_name if overlay_dirs else None,
+                overlay_dirs,
+            )
+        else:
+            cmd = config.build_command(fd_map if fd_map else None)
+            print_execution_header(
+                cmd,
+                sandbox_name=sandbox_name if overlay_dirs else None,
+                overlay_dirs=overlay_dirs,
+            )
+            os.execvp("bwrap", cmd)
 
     # Otherwise show TUI for configuration
     app = BubblewrapTUI(command, version=BUI_VERSION)
@@ -384,14 +425,23 @@ def main() -> None:
         show_update_notice(BUI_VERSION, _update_available)
 
     if app._execute_command:
-        fd_map = setup_virtual_user_fds(app.config)
-        cmd = app.config.build_command(fd_map if fd_map else None)
-        print("=" * 60)
-        print("Executing:")
-        print(" ".join(cmd))
-        print("=" * 60 + "\n")
+        # Validate network filtering requirements
+        if not validate_network_filter(app.config):
+            sys.exit(1)
 
-        os.execvp("bwrap", cmd)
+        fd_map = setup_virtual_user_fds(app.config)
+
+        if app.config.network_filter.requires_slirp4netns():
+            # Network filtering execution - header printed by execute_with_network_filter
+            execute_with_network_filter(
+                app.config,
+                fd_map if fd_map else None,
+                _build_bwrap_command,
+            )
+        else:
+            cmd = app.config.build_command(fd_map if fd_map else None)
+            print_execution_header(cmd)
+            os.execvp("bwrap", cmd)
     else:
         print("Cancelled.")
         sys.exit(0)

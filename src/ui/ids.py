@@ -144,3 +144,19 @@ ADD_BTN = "add-btn"
 
 # Quick shortcuts section (directories tab)
 QUICK_SHORTCUTS_SECTION = "quick-shortcuts-section"
+
+# Network filtering tab IDs
+NETWORK_TAB_CONTENT = "network-tab-content"
+NETWORK_ENABLED = "network-enabled"
+SLIRP_STATUS = "slirp-status"
+HOSTNAME_MODE_RADIO = "hostname-mode-radio"
+HOSTNAME_LIST = "hostname-list"
+HOSTNAME_INPUT = "hostname-input"
+ADD_HOSTNAME_BTN = "add-hostname-btn"
+IP_MODE_RADIO = "ip-mode-radio"
+CIDR_LIST = "cidr-list"
+CIDR_INPUT = "cidr-input"
+ADD_CIDR_BTN = "add-cidr-btn"
+PORT_LIST = "port-list"
+PORT_INPUT = "port-input"
+ADD_PORT_BTN = "add-port-btn"

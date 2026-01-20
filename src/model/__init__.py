@@ -6,6 +6,13 @@ from model.config import Config
 from model.bound_directory import BoundDirectory
 from model.overlay_config import OverlayConfig
 from model.sandbox_config import SandboxConfig
+from model.network_filter import (
+    FilterMode,
+    HostnameFilter,
+    IPFilter,
+    LocalhostAccess,
+    NetworkFilter,
+)
 
 # Re-export groups module for easy access
 from model import groups
@@ -19,5 +26,10 @@ __all__ = [
     "BoundDirectory",
     "OverlayConfig",
     "SandboxConfig",
+    "FilterMode",
+    "HostnameFilter",
+    "IPFilter",
+    "LocalhostAccess",
+    "NetworkFilter",
     "groups",
 ]

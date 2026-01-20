@@ -141,6 +141,9 @@ class BubblewrapSerializer:
             # Special handling for process group (needs isolation group)
             if group.name == "process":
                 args.extend(self._get_process_args())
+            # Special handling for network group (needs network_filter)
+            elif group.name == "network":
+                args.extend(self._get_network_args())
             else:
                 args.extend(group.to_args())
 
@@ -171,6 +174,11 @@ class BubblewrapSerializer:
         from model.groups import _process_to_args
         return _process_to_args(self.config._process_group, self.config._isolation_group)
 
+    def _get_network_args(self) -> list[str]:
+        """Get network args (checks network filtering)."""
+        from model.groups import _network_to_args
+        return _network_to_args(self.config._network_group, self.config.network_filter)
+
     def serialize_colored(self) -> str:
         """Build the command with Rich color markup, rotating colors by group."""
         parts = ["[bold]bwrap[/bold]"]
@@ -181,6 +189,9 @@ class BubblewrapSerializer:
             # Special handling for process group
             if group.name == "process":
                 args = self._get_process_args()
+            # Special handling for network group
+            elif group.name == "network":
+                args = self._get_network_args()
             else:
                 args = group.to_args()
 
@@ -228,7 +239,25 @@ class BubblewrapSerializer:
         for arg in self.config.command:
             parts.append(shlex.quote(arg))
 
-        return " ".join(parts)
+        result = " ".join(parts)
+
+        # Add slirp4netns command if network filtering is active
+        nf = self.config.network_filter
+        if nf.requires_slirp4netns():
+            color = COLORS[color_idx % len(COLORS)]
+            slirp_parts = [f"[bold {color}]slirp4netns[/]"]
+            slirp_args = ["--configure", "--mtu=65520", "--userns-path", "[dim]<userns>[/]"]
+            for port in nf.localhost_access.ports:
+                slirp_args.extend(["-p", f"{port}:127.0.0.1:{port}"])
+            slirp_args.extend(["[dim]<pid>[/]", "tap0"])
+            for arg in slirp_args:
+                if arg.startswith("[dim]"):
+                    slirp_parts.append(arg)
+                else:
+                    slirp_parts.append(f"[{color}]{arg}[/]")
+            result += "\n\n" + " ".join(slirp_parts)
+
+        return result
 
 
 class BubblewrapSummarizer:
@@ -284,6 +313,22 @@ class BubblewrapSummarizer:
                 lines.append(f"• User directories (read-only): {', '.join(ro_dirs)} — sandbox cannot modify")
             if rw_dirs:
                 lines.append(f"• User directories (read-write): {', '.join(rw_dirs)} — sandbox can modify these files")
+
+        # Network filtering
+        nf = self.config.network_filter
+        if nf.enabled and nf.requires_slirp4netns():
+            lines.append("• Network filtering (slirp4netns):")
+            if nf.hostname_filter.mode.value != "off":
+                mode = nf.hostname_filter.mode.value
+                hosts = ", ".join(nf.hostname_filter.hosts) if nf.hostname_filter.hosts else "none"
+                lines.append(f"  - Hostname {mode}: {hosts}")
+            if nf.ip_filter.mode.value != "off":
+                mode = nf.ip_filter.mode.value
+                cidrs = ", ".join(nf.ip_filter.cidrs) if nf.ip_filter.cidrs else "none"
+                lines.append(f"  - IP/CIDR {mode}: {cidrs}")
+            if nf.localhost_access.ports:
+                ports = ", ".join(str(p) for p in nf.localhost_access.ports)
+                lines.append(f"  - Localhost ports: {ports}")
 
         # Command
         lines.append(f"• Running: {' '.join(self.config.command)}")
@@ -361,6 +406,24 @@ class BubblewrapSummarizer:
                 lines.append(f"[{color}]• User directories (read-only): {', '.join(ro_dirs)} — sandbox cannot modify[/]")
             if rw_dirs:
                 lines.append(f"[{color}]• User directories (read-write): {', '.join(rw_dirs)} — sandbox can modify these files[/]")
+
+        # Network filtering
+        nf = self.config.network_filter
+        if nf.enabled and nf.requires_slirp4netns():
+            color = COLORS[color_idx % len(COLORS)]
+            color_idx += 1
+            lines.append(f"[{color}]• Network filtering (slirp4netns):[/]")
+            if nf.hostname_filter.mode.value != "off":
+                mode = nf.hostname_filter.mode.value
+                hosts = ", ".join(nf.hostname_filter.hosts) if nf.hostname_filter.hosts else "none"
+                lines.append(f"[{color}]  - Hostname {mode}: {hosts}[/]")
+            if nf.ip_filter.mode.value != "off":
+                mode = nf.ip_filter.mode.value
+                cidrs = ", ".join(nf.ip_filter.cidrs) if nf.ip_filter.cidrs else "none"
+                lines.append(f"[{color}]  - IP/CIDR {mode}: {cidrs}[/]")
+            if nf.localhost_access.ports:
+                ports = ", ".join(str(p) for p in nf.localhost_access.ports)
+                lines.append(f"[{color}]  - Localhost ports: {ports}[/]")
 
         # Command (white, not colored - it's what the user asked to run)
         lines.append(f"• Running: {' '.join(self.config.command)}")

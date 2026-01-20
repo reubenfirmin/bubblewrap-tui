@@ -25,7 +25,7 @@ def compose_sandbox_tab(on_dev_mode_change: Callable[[str], None]) -> ComposeRes
     """
     with VerticalScroll(id="sandbox-tab-content"):
         with Horizontal(id="options-grid"):
-            # Left column: User + Isolation + Process
+            # Left column: User + Desktop + Virtual Filesystems
             with Vertical(classes="options-column"):
                 # User card - always visible with progressive disclosure
                 with Container(classes="options-section"):
@@ -42,30 +42,6 @@ def compose_sandbox_tab(on_dev_mode_change: Callable[[str], None]) -> ComposeRes
                     with Container(id="virtual-user-options", classes="hidden"):
                         yield OptionCard(groups.synthetic_passwd)
                         yield OptionCard(groups.overlay_home)
-                with Container(classes="options-section"):
-                    yield Label(groups.isolation_group.title, classes="section-label")
-                    yield OptionCard(groups.unshare_pid)
-                    yield OptionCard(groups.unshare_ipc)
-                    yield OptionCard(groups.unshare_uts)
-                    yield OptionCard(groups.unshare_cgroup)
-                    yield OptionCard(groups.disable_userns)
-                with Container(classes="options-section"):
-                    yield Label(groups.process_group.title, classes="section-label")
-                    yield OptionCard(groups.die_with_parent)
-                    yield OptionCard(groups.new_session)
-                    yield OptionCard(groups.as_pid_1)
-                    yield Label("Working dir:")
-                    yield Input(value=str(Path.cwd()), id="opt-chdir")
-                    yield Label("Custom hostname:")
-                    yield Input(placeholder="sandbox", id="opt-hostname")
-
-            # Right column: Network + Desktop + Virtual Filesystems
-            with Vertical(classes="options-column"):
-                with Container(classes="options-section"):
-                    yield Label(groups.network_group.title, classes="section-label")
-                    yield OptionCard(groups.share_net)
-                    yield OptionCard(groups.bind_resolv_conf)
-                    yield OptionCard(groups.bind_ssl_certs)
                 with Container(classes="options-section"):
                     yield Label(groups.desktop_group.title, classes="section-label")
                     # Detect what's available
@@ -93,3 +69,22 @@ def compose_sandbox_tab(on_dev_mode_change: Callable[[str], None]) -> ComposeRes
                     yield OptionCard(groups.mount_tmp)
                     yield Label("Tmpfs size:")
                     yield Input(placeholder="default (half of RAM)", id="opt-tmpfs-size")
+
+            # Right column: Isolation + Process
+            with Vertical(classes="options-column"):
+                with Container(classes="options-section"):
+                    yield Label(groups.isolation_group.title, classes="section-label")
+                    yield OptionCard(groups.unshare_pid)
+                    yield OptionCard(groups.unshare_ipc)
+                    yield OptionCard(groups.unshare_uts)
+                    yield OptionCard(groups.unshare_cgroup)
+                    yield OptionCard(groups.disable_userns)
+                with Container(classes="options-section"):
+                    yield Label(groups.process_group.title, classes="section-label")
+                    yield OptionCard(groups.die_with_parent)
+                    yield OptionCard(groups.new_session)
+                    yield OptionCard(groups.as_pid_1)
+                    yield Label("Working dir:")
+                    yield Input(value=str(Path.cwd()), id="opt-chdir")
+                    yield Label("Custom hostname:")
+                    yield Input(placeholder="sandbox", id="opt-hostname")
