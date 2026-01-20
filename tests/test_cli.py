@@ -1,11 +1,12 @@
 """Tests for CLI argument parsing."""
 
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from cli import needs_shell_wrap, parse_args
+from cli import find_executables, generate_sandbox_alias, needs_shell_wrap, parse_args
 
 
 class TestNeedsShellWrap:
@@ -68,15 +69,16 @@ class TestParseArgs:
     def test_command_after_separator(self):
         """Command after -- is parsed correctly."""
         with patch.object(sys, "argv", ["bui", "--", "bash"]):
-            command, profile, sandbox = parse_args()
+            command, profile, sandbox, bind_cwd = parse_args()
             assert command == ["bash"]
             assert profile is None
             assert sandbox is None
+            assert bind_cwd is False
 
     def test_command_with_args(self):
         """Command with arguments after --."""
         with patch.object(sys, "argv", ["bui", "--", "python", "script.py", "-v"]):
-            command, profile, sandbox = parse_args()
+            command, profile, sandbox, bind_cwd = parse_args()
             assert command == ["python", "script.py", "-v"]
 
     def test_profile_flag(self):
@@ -84,7 +86,7 @@ class TestParseArgs:
         with patch.object(
             sys, "argv", ["bui", "--profile", "test.json", "--", "bash"]
         ):
-            command, profile, sandbox = parse_args()
+            command, profile, sandbox, bind_cwd = parse_args()
             assert command == ["bash"]
             assert profile == "test.json"
 
@@ -93,19 +95,19 @@ class TestParseArgs:
         with patch.object(
             sys, "argv", ["bui", "--profile", "/home/user/profiles/dev.json", "--", "bash"]
         ):
-            command, profile, sandbox = parse_args()
+            command, profile, sandbox, bind_cwd = parse_args()
             assert profile == "/home/user/profiles/dev.json"
 
     def test_no_separator(self):
         """Command without -- separator."""
         with patch.object(sys, "argv", ["bui", "bash"]):
-            command, profile, sandbox = parse_args()
+            command, profile, sandbox, bind_cwd = parse_args()
             assert command == ["bash"]
 
     def test_shell_wrap_applied(self):
         """Shell metacharacters trigger shell wrap."""
         with patch.object(sys, "argv", ["bui", "--", "cat foo | grep bar"]):
-            command, profile, sandbox = parse_args()
+            command, profile, sandbox, bind_cwd = parse_args()
             # shlex.join quotes the argument
             assert command[0] == "/bin/bash"
             assert command[1] == "-c"
@@ -116,10 +118,28 @@ class TestParseArgs:
         with patch.object(
             sys, "argv", ["bui", "--profile", "untrusted", "--sandbox", "test", "--", "bash"]
         ):
-            command, profile, sandbox = parse_args()
+            command, profile, sandbox, bind_cwd = parse_args()
             assert command == ["bash"]
             assert profile == "untrusted"
             assert sandbox == "test"
+
+    def test_bind_cwd_flag(self):
+        """--bind-cwd flag is parsed."""
+        with patch.object(
+            sys, "argv", ["bui", "--profile", "untrusted", "--bind-cwd", "--", "bash"]
+        ):
+            command, profile, sandbox, bind_cwd = parse_args()
+            assert command == ["bash"]
+            assert bind_cwd is True
+
+    def test_bind_cwd_with_sandbox(self):
+        """--bind-cwd with --sandbox."""
+        with patch.object(
+            sys, "argv", ["bui", "--profile", "untrusted", "--sandbox", "test", "--bind-cwd", "--", "bash"]
+        ):
+            command, profile, sandbox, bind_cwd = parse_args()
+            assert sandbox == "test"
+            assert bind_cwd is True
 
     def test_help_flag_exits(self):
         """--help flag shows help and exits."""
@@ -164,3 +184,232 @@ class TestParseArgs:
             with patch("cli.do_update"):
                 with pytest.raises(SystemExit):
                     parse_args()
+
+    def test_generate_without_sandbox_exits(self):
+        """--generate without --sandbox exits with error."""
+        with patch.object(sys, "argv", ["bui", "--generate"]):
+            with pytest.raises(SystemExit):
+                parse_args()
+
+    def test_generate_with_sandbox_exits(self):
+        """--generate with --sandbox calls generate_sandbox_alias and exits."""
+        with patch.object(sys, "argv", ["bui", "--sandbox", "test", "--generate"]):
+            with patch("cli.generate_sandbox_alias") as mock_gen:
+                mock_gen.side_effect = SystemExit(0)
+                with pytest.raises(SystemExit):
+                    parse_args()
+                mock_gen.assert_called_once_with("test")
+
+
+class TestFindExecutables:
+    """Test find_executables() function."""
+
+    def test_finds_executable_files(self, tmp_path):
+        """Finds executable files in directory."""
+        # Create an executable file
+        exe = tmp_path / "bin" / "myapp"
+        exe.parent.mkdir()
+        exe.write_text("#!/bin/bash\necho hello")
+        exe.chmod(0o755)
+
+        # Create a non-executable file
+        txt = tmp_path / "readme.txt"
+        txt.write_text("readme")
+
+        result = find_executables(tmp_path)
+        assert len(result) == 1
+        assert result[0] == exe
+
+    def test_excludes_cache_directories(self, tmp_path):
+        """Excludes files in cache directories."""
+        # Create executable in cache dir
+        cache_exe = tmp_path / ".cache" / "something" / "bin"
+        cache_exe.parent.mkdir(parents=True)
+        cache_exe.write_text("#!/bin/bash")
+        cache_exe.chmod(0o755)
+
+        # Create executable in .local/share
+        share_exe = tmp_path / ".local" / "share" / "app" / "bin"
+        share_exe.parent.mkdir(parents=True)
+        share_exe.write_text("#!/bin/bash")
+        share_exe.chmod(0o755)
+
+        # Create regular executable
+        regular_exe = tmp_path / "bin" / "app"
+        regular_exe.parent.mkdir()
+        regular_exe.write_text("#!/bin/bash")
+        regular_exe.chmod(0o755)
+
+        result = find_executables(tmp_path)
+        assert len(result) == 1
+        assert result[0] == regular_exe
+
+    def test_returns_sorted_list(self, tmp_path):
+        """Returns executables sorted by path."""
+        for name in ["zebra", "alpha", "beta"]:
+            exe = tmp_path / name
+            exe.write_text("#!/bin/bash")
+            exe.chmod(0o755)
+
+        result = find_executables(tmp_path)
+        names = [p.name for p in result]
+        assert names == ["alpha", "beta", "zebra"]
+
+
+class TestGenerateSandboxAlias:
+    """Test generate_sandbox_alias() function."""
+
+    def test_sandbox_not_found_exits(self, tmp_path):
+        """Exits with error if sandbox directory doesn't exist."""
+        with patch("cli.Path.home", return_value=tmp_path):
+            with pytest.raises(SystemExit):
+                generate_sandbox_alias("nonexistent")
+
+    def test_no_executables_exits(self, tmp_path):
+        """Exits with error if no executables found."""
+        overlay_dir = tmp_path / ".local" / "state" / "bui" / "overlays" / "test"
+        overlay_dir.mkdir(parents=True)
+        # Create a non-executable file
+        (overlay_dir / "readme.txt").write_text("readme")
+
+        with patch("cli.Path.home", return_value=tmp_path):
+            with pytest.raises(SystemExit):
+                generate_sandbox_alias("test")
+
+    def test_generates_alias(self, tmp_path, capsys):
+        """Generates alias for selected executable."""
+        overlay_dir = tmp_path / ".local" / "state" / "bui" / "overlays" / "deno"
+        overlay_dir.mkdir(parents=True)
+
+        # Create executable
+        exe = overlay_dir / ".deno" / "bin" / "deno"
+        exe.parent.mkdir(parents=True)
+        exe.write_text("#!/bin/bash")
+        exe.chmod(0o755)
+
+        with patch("cli.Path.home", return_value=tmp_path):
+            with patch("builtins.input", return_value="1"):
+                generate_sandbox_alias("deno")
+
+        captured = capsys.readouterr()
+        assert "Executables in sandbox 'deno':" in captured.out
+        assert ".deno/bin/deno" in captured.out
+        assert "alias deno='bui --profile untrusted --sandbox deno --bind-cwd -- ~/.deno/bin/deno'" in captured.out
+
+    def test_invalid_selection_exits(self, tmp_path):
+        """Exits with error on invalid selection."""
+        overlay_dir = tmp_path / ".local" / "state" / "bui" / "overlays" / "test"
+        overlay_dir.mkdir(parents=True)
+
+        exe = overlay_dir / "bin" / "app"
+        exe.parent.mkdir()
+        exe.write_text("#!/bin/bash")
+        exe.chmod(0o755)
+
+        with patch("cli.Path.home", return_value=tmp_path):
+            with patch("builtins.input", return_value="invalid"):
+                with pytest.raises(SystemExit):
+                    generate_sandbox_alias("test")
+
+    def test_out_of_range_selection_exits(self, tmp_path):
+        """Exits with error on out of range selection."""
+        overlay_dir = tmp_path / ".local" / "state" / "bui" / "overlays" / "test"
+        overlay_dir.mkdir(parents=True)
+
+        exe = overlay_dir / "bin" / "app"
+        exe.parent.mkdir()
+        exe.write_text("#!/bin/bash")
+        exe.chmod(0o755)
+
+        with patch("cli.Path.home", return_value=tmp_path):
+            with patch("builtins.input", return_value="99"):
+                with pytest.raises(SystemExit):
+                    generate_sandbox_alias("test")
+
+    def test_eof_exits(self, tmp_path):
+        """Exits with error on EOF (e.g., piped input)."""
+        overlay_dir = tmp_path / ".local" / "state" / "bui" / "overlays" / "test"
+        overlay_dir.mkdir(parents=True)
+
+        exe = overlay_dir / "bin" / "app"
+        exe.parent.mkdir()
+        exe.write_text("#!/bin/bash")
+        exe.chmod(0o755)
+
+        with patch("cli.Path.home", return_value=tmp_path):
+            with patch("builtins.input", side_effect=EOFError):
+                with pytest.raises(SystemExit):
+                    generate_sandbox_alias("test")
+
+    def test_multiple_executables_select_second(self, tmp_path, capsys):
+        """Can select from multiple executables."""
+        overlay_dir = tmp_path / ".local" / "state" / "bui" / "overlays" / "multi"
+        overlay_dir.mkdir(parents=True)
+
+        # Create two executables
+        for name in ["alpha", "beta"]:
+            exe = overlay_dir / "bin" / name
+            exe.parent.mkdir(exist_ok=True)
+            exe.write_text("#!/bin/bash")
+            exe.chmod(0o755)
+
+        with patch("cli.Path.home", return_value=tmp_path):
+            with patch("builtins.input", return_value="2"):
+                generate_sandbox_alias("multi")
+
+        captured = capsys.readouterr()
+        assert "1. bin/alpha" in captured.out
+        assert "2. bin/beta" in captured.out
+        assert "alias beta=" in captured.out
+
+
+class TestFindExecutablesEdgeCases:
+    """Additional edge case tests for find_executables()."""
+
+    def test_excludes_npm_directory(self, tmp_path):
+        """Excludes files in .npm/ directory."""
+        npm_exe = tmp_path / ".npm" / "_npx" / "bin"
+        npm_exe.parent.mkdir(parents=True)
+        npm_exe.write_text("#!/bin/bash")
+        npm_exe.chmod(0o755)
+
+        result = find_executables(tmp_path)
+        assert len(result) == 0
+
+    def test_excludes_cargo_registry(self, tmp_path):
+        """Excludes files in .cargo/registry/ directory."""
+        cargo_exe = tmp_path / ".cargo" / "registry" / "bin" / "tool"
+        cargo_exe.parent.mkdir(parents=True)
+        cargo_exe.write_text("#!/bin/bash")
+        cargo_exe.chmod(0o755)
+
+        result = find_executables(tmp_path)
+        assert len(result) == 0
+
+    def test_includes_cargo_bin(self, tmp_path):
+        """Includes files in .cargo/bin/ (not registry)."""
+        cargo_exe = tmp_path / ".cargo" / "bin" / "rustc"
+        cargo_exe.parent.mkdir(parents=True)
+        cargo_exe.write_text("#!/bin/bash")
+        cargo_exe.chmod(0o755)
+
+        result = find_executables(tmp_path)
+        assert len(result) == 1
+        assert result[0].name == "rustc"
+
+    def test_empty_directory(self, tmp_path):
+        """Returns empty list for empty directory."""
+        result = find_executables(tmp_path)
+        assert result == []
+
+    def test_only_non_executable_files(self, tmp_path):
+        """Returns empty list when no files are executable."""
+        txt = tmp_path / "readme.txt"
+        txt.write_text("hello")
+
+        script = tmp_path / "script.sh"
+        script.write_text("#!/bin/bash")
+        # Not chmod +x
+
+        result = find_executables(tmp_path)
+        assert result == []

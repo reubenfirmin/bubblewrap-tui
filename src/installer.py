@@ -125,8 +125,10 @@ def create_default_profiles() -> None:
     overlay_write_dir = str(overlay_write_dir)
 
     # Build bound_dirs for system paths that exist
+    # Note: /etc is NOT included - only specific files needed for networking/SSL
+    # are bound via detection (resolv.conf, nsswitch.conf, SSL certs)
     bound_dirs = []
-    for path_str in ["/usr", "/bin", "/lib", "/lib64", "/sbin", "/etc"]:
+    for path_str in ["/usr", "/bin", "/lib", "/lib64", "/sbin"]:
         if Path(path_str).exists():
             bound_dirs.append({"path": path_str, "readonly": True})
 

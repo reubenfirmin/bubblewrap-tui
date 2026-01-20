@@ -43,7 +43,6 @@ MODULE_ORDER = [
     "ui/helpers.py",                  # Depends on ui.widgets
     "ui/tabs/directories.py",         # Depends on ui.widgets
     "ui/tabs/environment.py",         # Depends on ui.widgets
-    "ui/tabs/filesystem.py",          # Depends on ui.widgets, model, detection
     "ui/tabs/overlays.py",            # No widget dependencies
     "ui/tabs/sandbox.py",             # Depends on ui.widgets, model, detection
     "ui/tabs/summary.py",             # No dependencies

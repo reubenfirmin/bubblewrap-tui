@@ -8,7 +8,7 @@ from pathlib import Path
 
 from app import BubblewrapTUI
 from installer import check_for_updates, do_install, do_update, show_update_notice
-from model import SandboxConfig
+from model import BoundDirectory, SandboxConfig
 from profiles import BUI_PROFILES_DIR, Profile
 
 BUI_VERSION = "0.3.5"
@@ -80,6 +80,8 @@ def show_help() -> None:
     print("  bui -- <command> [args...]            Configure and run a sandboxed command")
     print("  bui --profile <name> -- <command>     Load profile and run command")
     print("  bui --sandbox <name>                  Name for overlay storage (use with --profile)")
+    print("  bui --bind-cwd                        Bind CWD read-write (use with --profile)")
+    print("  bui --sandbox <name> --generate       Generate shell alias for sandbox binary")
     print("  bui --install                         Install bui to ~/.local/bin")
     print("  bui --update                          Download latest version and install")
     print("\nExamples:")
@@ -89,6 +91,7 @@ def show_help() -> None:
     print("  bui --profile myprofile -- code       (load from ~/.config/bui/profiles/)")
     print("  bui --profile untrusted --sandbox deno -- ./install.sh")
     print("                                        (writes go to ~/.local/state/bui/overlays/deno/)")
+    print("  bui --sandbox deno --generate         (generate alias for installed binary)")
     print("\nBuilt-in Profiles:")
     print("  untrusted    Safe sandbox for running untrusted code (curl|bash scripts)")
     print("               - Read-only system paths, isolated namespaces")
@@ -98,10 +101,55 @@ def show_help() -> None:
     sys.exit(0)
 
 
-def parse_args() -> tuple[list[str], str | None, str | None]:
+def find_executables(overlay_dir: Path) -> list[Path]:
+    """Find executable files in overlay directory, excluding caches."""
+    skip_prefixes = (".cache/", ".local/share/", ".npm/", ".cargo/registry/")
+    executables = []
+    for path in overlay_dir.rglob("*"):
+        if not path.is_file() or not os.access(path, os.X_OK):
+            continue
+        rel = str(path.relative_to(overlay_dir))
+        if any(rel.startswith(p) for p in skip_prefixes):
+            continue
+        executables.append(path)
+    return sorted(executables)
+
+
+def generate_sandbox_alias(sandbox_name: str) -> None:
+    """Scan sandbox for executables and output shell alias."""
+    overlay_dir = Path.home() / ".local" / "state" / "bui" / "overlays" / sandbox_name
+
+    if not overlay_dir.exists():
+        print(f"Sandbox '{sandbox_name}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    executables = find_executables(overlay_dir)
+    if not executables:
+        print(f"No executables found in sandbox '{sandbox_name}'", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Executables in sandbox '{sandbox_name}':")
+    for i, exe in enumerate(executables, 1):
+        print(f"  {i}. {exe.relative_to(overlay_dir)}")
+
+    try:
+        choice = input("\nSelect binary (number): ")
+        selected = executables[int(choice) - 1]
+    except (ValueError, IndexError, EOFError):
+        print("Invalid selection", file=sys.stderr)
+        sys.exit(1)
+
+    binary_name = selected.name
+    home_path = Path("~") / selected.relative_to(overlay_dir)
+
+    print(f"\nAdd to your shell rc file:")
+    print(f"  alias {binary_name}='bui --profile untrusted --sandbox {sandbox_name} --bind-cwd -- {home_path}'")
+
+
+def parse_args() -> tuple[list[str], str | None, str | None, bool]:
     """Parse command line arguments.
 
-    Returns: (command, profile_path, sandbox_name)
+    Returns: (command, profile_path, sandbox_name, bind_cwd)
     """
     args = sys.argv[1:]
 
@@ -144,6 +192,20 @@ def parse_args() -> tuple[list[str], str | None, str | None]:
         except (IndexError, ValueError):
             pass
 
+    # Check for --bind-cwd flag
+    bind_cwd = "--bind-cwd" in args
+    if bind_cwd:
+        args.remove("--bind-cwd")
+
+    # Check for --generate flag
+    if "--generate" in args:
+        args.remove("--generate")
+        if sandbox_name is None:
+            print("--generate requires --sandbox <name>", file=sys.stderr)
+            sys.exit(1)
+        generate_sandbox_alias(sandbox_name)
+        sys.exit(0)
+
     try:
         sep_idx = args.index("--")
         command = args[sep_idx + 1 :]
@@ -158,11 +220,11 @@ def parse_args() -> tuple[list[str], str | None, str | None]:
         if len(command) == 1:
             # Single string with shell metacharacters - pass directly to -c
             # (user already quoted it as a single argument)
-            return ["/bin/bash", "-c", command[0]], profile_path, sandbox_name
+            return ["/bin/bash", "-c", command[0]], profile_path, sandbox_name, bind_cwd
         else:
             # Multiple arguments with shell metacharacters - join them
-            return ["/bin/bash", "-c", shlex.join(command)], profile_path, sandbox_name
-    return command, profile_path, sandbox_name
+            return ["/bin/bash", "-c", shlex.join(command)], profile_path, sandbox_name, bind_cwd
+    return command, profile_path, sandbox_name, bind_cwd
 
 
 def apply_sandbox_to_overlays(config: SandboxConfig, sandbox_name: str) -> list[Path]:
@@ -189,7 +251,7 @@ def apply_sandbox_to_overlays(config: SandboxConfig, sandbox_name: str) -> list[
 def main() -> None:
     """Main entry point."""
     global _update_available
-    command, profile_path, sandbox_name = parse_args()
+    command, profile_path, sandbox_name, bind_cwd = parse_args()
 
     # Check for updates in background (non-blocking, cached for 1 day)
     _update_available = check_for_updates(BUI_VERSION)
@@ -197,6 +259,11 @@ def main() -> None:
     # If profile specified, run directly without TUI
     if profile_path:
         config = load_profile(profile_path, command)
+
+        # Apply --bind-cwd: add current directory as read-write bound directory
+        if bind_cwd:
+            cwd = Path(os.getcwd())
+            config.bound_dirs.append(BoundDirectory(path=cwd, readonly=False))
 
         # Apply sandbox isolation to overlays
         overlay_dirs = []
