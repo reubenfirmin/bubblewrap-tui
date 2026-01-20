@@ -691,19 +691,18 @@ class TestOverlayModes:
         assert "--tmp-overlay" not in args or "/data" not in args
 
     def test_persistent_mode_empty_source(self):
-        """Persistent mode with empty source creates empty persistent dir."""
+        """Persistent mode with empty source binds write_dir directly."""
         config = make_config(
             overlays=[OverlayConfig(source="", dest="/data", mode="persistent", write_dir="/writes")]
         )
         args = BubblewrapSerializer(config).serialize()
-        # Should have --overlay without --overlay-src
-        assert "--overlay" in args
-        overlay_idx = args.index("--overlay")
-        assert args[overlay_idx + 1] == "/writes"
-        assert args[overlay_idx + 3] == "/data"
-        # Should NOT have --overlay-src before it
-        if overlay_idx > 0:
-            assert args[overlay_idx - 2] != "--overlay-src" or args[overlay_idx - 1] != ""
+        # Without source, should use --bind instead of --overlay
+        assert "--bind" in args
+        bind_idx = args.index("--bind")
+        assert args[bind_idx + 1] == "/writes"
+        assert args[bind_idx + 2] == "/data"
+        # Should NOT have --overlay-src
+        assert "--overlay-src" not in args
 
     def test_persistent_mode_with_source(self):
         """Persistent mode with source creates full overlay."""
