@@ -73,8 +73,15 @@ FIELD_MAPPINGS: list[FieldMapping] = [
     FieldMapping(ids.OPT_DISPLAY, "desktop.allow_display", Checkbox),
     # Note: bind_user_config is handled via Quick Shortcuts in directories tab
 
-    # Namespaces
-    FieldMapping(ids.OPT_UNSHARE_USER, "namespace.unshare_user", Checkbox),
+    # User identity (unshare_user, uid, gid, username, synthetic_passwd)
+    FieldMapping(ids.OPT_UNSHARE_USER, "user.unshare_user", Checkbox),
+    FieldMapping(ids.OPT_UID, "user.uid", Input, _validate_uid_gid),
+    FieldMapping(ids.OPT_GID, "user.gid", Input, _validate_uid_gid),
+    FieldMapping(ids.OPT_USERNAME, "user.username", Input, lambda v: v.strip()),
+    FieldMapping(ids.OPT_SYNTHETIC_PASSWD, "user.synthetic_passwd", Checkbox),
+    # Note: overlay_home is UI-only (like directory shortcuts) - not synced to model
+
+    # Namespaces (PID, IPC, UTS, cgroup)
     FieldMapping(ids.OPT_UNSHARE_PID, "namespace.unshare_pid", Checkbox),
     FieldMapping(ids.OPT_UNSHARE_IPC, "namespace.unshare_ipc", Checkbox),
     FieldMapping(ids.OPT_UNSHARE_UTS, "namespace.unshare_uts", Checkbox),
@@ -87,10 +94,6 @@ FIELD_MAPPINGS: list[FieldMapping] = [
     FieldMapping(ids.OPT_AS_PID_1, "process.as_pid_1", Checkbox),
     FieldMapping(ids.OPT_CHDIR, "process.chdir", Input),
     FieldMapping(ids.OPT_HOSTNAME, "environment.custom_hostname", Input),
-
-    # UID/GID (int conversion with range validation 0-65535)
-    FieldMapping(ids.OPT_UID, "process.uid", Input, _validate_uid_gid),
-    FieldMapping(ids.OPT_GID, "process.gid", Input, _validate_uid_gid),
 ]
 
 
@@ -274,12 +277,63 @@ class ConfigSyncManager:
         """Show/hide UID/GID options based on user namespace setting."""
         try:
             uid_gid = self.app.query_one(css(ids.UID_GID_OPTIONS))
-            if self.config.namespace.unshare_user:
+            if self.config.user.unshare_user:
                 uid_gid.remove_class("hidden")
             else:
                 uid_gid.add_class("hidden")
         except NoMatches:
             log.debug("uid-gid-options not found")
+
+        # Show virtual user options when user namespace enabled
+        # Show username field only when uid > 0 (non-root needs a username)
+        try:
+            username_opts = self.app.query_one(css(ids.USERNAME_OPTIONS))
+            virtual_user_opts = self.app.query_one(css(ids.VIRTUAL_USER_OPTIONS))
+            uid = self.config.user.uid
+            if self.config.user.unshare_user:
+                # Always show overlay options when masking user identity
+                virtual_user_opts.remove_class("hidden")
+                # Only show username field for non-root (uid > 0)
+                if uid > 0:
+                    username_opts.remove_class("hidden")
+                else:
+                    username_opts.add_class("hidden")
+            else:
+                username_opts.add_class("hidden")
+                virtual_user_opts.add_class("hidden")
+        except NoMatches:
+            log.debug("username-options or virtual-user-options not found")
+
+    def sync_overlay_home_from_overlays(self) -> None:
+        """Derive overlay_home checkbox state from existing overlays.
+
+        This is the inverse of the normal flow. When loading a profile,
+        the overlays list is the source of truth. This method sets the
+        checkbox to match whether there's a home overlay.
+        """
+        uid = self.config.user.uid
+        username = self.config.user.username
+
+        # Determine expected home path
+        if uid == 0:
+            home_path = "/root"
+        elif username:
+            home_path = f"/home/{username}"
+        else:
+            home_path = None
+
+        # Check if there's an overlay for the home directory
+        has_home_overlay = False
+        if home_path:
+            has_home_overlay = any(ov.dest == home_path for ov in self.config.overlays)
+
+        # Set the checkbox directly (it's UI-only, not in FIELD_MAPPINGS)
+        try:
+            checkbox = self.get_widget(ids.OPT_OVERLAY_HOME, Checkbox)
+            if checkbox:
+                checkbox.value = has_home_overlay
+        except NoMatches:
+            log.debug("overlay-home checkbox not found")
 
     def sync_dev_mode(self, dev_mode_card_class: type) -> None:
         """Sync the /dev mode card from config.

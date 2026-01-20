@@ -304,6 +304,27 @@ EnvVarItem .env-value {
     margin-right: 2;
 }
 
+#username-options {
+    padding-left: 4;
+    margin-bottom: 1;
+    height: auto;
+    layout: horizontal;
+}
+
+#username-options Label {
+    width: 10;
+    padding-top: 1;
+}
+
+#username-options Input {
+    width: 20;
+}
+
+#virtual-user-options {
+    padding-left: 4;
+    height: auto;
+}
+
 /* File Systems & Sandbox Tabs */
 #filesystems-tab-content, #sandbox-tab-content {
     padding: 0;

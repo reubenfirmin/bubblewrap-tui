@@ -21,6 +21,7 @@ def make_config(
     command=None,
     filesystem=None,
     network=None,
+    user=None,
     namespace=None,
     process=None,
     environment=None,
@@ -47,7 +48,12 @@ def make_config(
         for key, value in network.items():
             setattr(config.network, key, value)
 
-    # Apply namespace settings
+    # Apply user settings (unshare_user, uid, gid, username)
+    if user:
+        for key, value in user.items():
+            setattr(config.user, key, value)
+
+    # Apply namespace settings (pid, ipc, uts, cgroup)
     if namespace:
         for key, value in namespace.items():
             setattr(config.namespace, key, value)
@@ -201,7 +207,7 @@ class TestNamespaceOptions:
 
     def test_unshare_user(self):
         """unshare_user produces --unshare-user."""
-        config = make_config(namespace={"unshare_user": True})
+        config = make_config(user={"unshare_user": True})
         args = BubblewrapSerializer(config).serialize()
         assert "--unshare-user" in args
 
@@ -283,8 +289,7 @@ class TestProcessOptions:
     def test_uid_gid_with_user_namespace(self):
         """UID/GID mapping when user namespace is enabled."""
         config = make_config(
-            namespace={"unshare_user": True},
-            process={"uid": 1000, "gid": 1000},
+            user={"unshare_user": True, "uid": 1000, "gid": 1000},
         )
         args = BubblewrapSerializer(config).serialize()
         assert "--uid" in args
@@ -297,8 +302,7 @@ class TestProcessOptions:
     def test_no_uid_gid_without_user_namespace(self):
         """UID/GID not added without user namespace."""
         config = make_config(
-            namespace={"unshare_user": False},
-            process={"uid": 1000, "gid": 1000},
+            user={"unshare_user": False, "uid": 1000, "gid": 1000},
         )
         args = BubblewrapSerializer(config).serialize()
         assert "--uid" not in args
@@ -341,10 +345,26 @@ class TestBoundDirectories:
 class TestOverlays:
     """Test overlay filesystem arguments."""
 
-    def test_tmpfs_overlay(self):
-        """Tmpfs overlay produces --overlay-src and --tmp-overlay."""
+    def test_tmpfs_empty(self):
+        """Tmpfs mode produces simple --tmpfs (empty writable dir)."""
         config = make_config(
-            overlays=[OverlayConfig(source="/src", dest="/dest", mode="tmpfs")],
+            overlays=[OverlayConfig(source="", dest="/data", mode="tmpfs")],
+        )
+        args = BubblewrapSerializer(config).serialize()
+        # Find --tmpfs /data (not the default /tmp)
+        found = False
+        for i, arg in enumerate(args):
+            if arg == "--tmpfs" and i + 1 < len(args) and args[i + 1] == "/data":
+                found = True
+                break
+        assert found, f"Expected --tmpfs /data in args: {args}"
+        # Should not have overlay-src
+        assert "--overlay-src" not in args
+
+    def test_overlay_mode(self):
+        """Overlay mode produces --overlay-src and --tmp-overlay."""
+        config = make_config(
+            overlays=[OverlayConfig(source="/src", dest="/dest", mode="overlay")],
         )
         args = BubblewrapSerializer(config).serialize()
         assert "--overlay-src" in args
@@ -512,3 +532,185 @@ class TestFullConfig:
         assert "--hostname" in args
         # From network
         assert "--share-net" in args
+
+
+class TestVirtualUser:
+    """Test virtual user (synthetic passwd/group) features."""
+
+    def test_get_virtual_user_data_with_username(self):
+        """Virtual user data is generated when username and uid > 0."""
+        config = make_config(
+            user={"unshare_user": True, "uid": 1000, "gid": 1000, "username": "testuser"}
+        )
+        serializer = BubblewrapSerializer(config)
+        data = serializer.get_virtual_user_data()
+        assert len(data) == 2
+        # Check passwd content
+        passwd_content, passwd_path = data[0]
+        assert passwd_path == "/etc/passwd"
+        assert "testuser:x:1000:1000" in passwd_content
+        assert "/home/testuser" in passwd_content
+        # Check group content
+        group_content, group_path = data[1]
+        assert group_path == "/etc/group"
+        assert "testuser:x:1000" in group_content
+
+    def test_get_virtual_user_data_uid_zero(self):
+        """No virtual user data for uid 0 (root)."""
+        config = make_config(
+            user={"unshare_user": True, "uid": 0, "gid": 0, "username": ""}
+        )
+        serializer = BubblewrapSerializer(config)
+        data = serializer.get_virtual_user_data()
+        assert data == []
+
+    def test_get_virtual_user_data_no_username(self):
+        """No virtual user data when username is empty."""
+        config = make_config(
+            user={"unshare_user": True, "uid": 1000, "gid": 1000, "username": ""}
+        )
+        serializer = BubblewrapSerializer(config)
+        data = serializer.get_virtual_user_data()
+        assert data == []
+
+    def test_serialize_virtual_user_args_with_fd_map(self):
+        """Virtual user args include FD bindings when fd_map provided."""
+        config = make_config(
+            user={"unshare_user": True, "uid": 1000, "gid": 1000, "username": "testuser"}
+        )
+        serializer = BubblewrapSerializer(config)
+        fd_map = {"/etc/passwd": 4, "/etc/group": 5}
+        args = serializer.serialize(fd_map=fd_map)
+        # Should have FD bindings
+        assert "--ro-bind-data" in args
+        assert "4" in args
+        assert "5" in args
+        assert "/etc/passwd" in args
+        assert "/etc/group" in args
+
+    def test_serialize_virtual_user_creates_home_dir(self):
+        """Virtual user args create home directory when no home overlay exists."""
+        config = make_config(
+            user={
+                "unshare_user": True,
+                "uid": 1000,
+                "gid": 1000,
+                "username": "testuser",
+                "synthetic_passwd": True,
+            }
+        )
+        serializer = BubblewrapSerializer(config)
+        fd_map = {"/etc/passwd": 4, "/etc/group": 5}
+        args = serializer.serialize(fd_map=fd_map)
+        # Should create /home and /home/testuser directories
+        home_dir_indices = [i for i, x in enumerate(args) if x == "--dir"]
+        home_dirs = [args[i + 1] for i in home_dir_indices if i + 1 < len(args)]
+        assert "/home" in home_dirs
+        assert "/home/testuser" in home_dirs
+        # Should set HOME env var
+        assert "--setenv" in args
+        for i, arg in enumerate(args):
+            if arg == "--setenv" and i + 1 < len(args) and args[i + 1] == "HOME":
+                assert args[i + 2] == "/home/testuser"
+                break
+        else:
+            pytest.fail("HOME env var not set")
+
+    def test_serialize_virtual_user_creates_etc(self):
+        """When synthetic_passwd enabled and username set with uid > 0, --dir /etc is created."""
+        config = make_config(
+            user={
+                "unshare_user": True,
+                "uid": 1000,
+                "gid": 1000,
+                "username": "testuser",
+                "synthetic_passwd": True,
+            }
+        )
+        serializer = BubblewrapSerializer(config)
+        fd_map = {"/etc/passwd": 4, "/etc/group": 5}
+        args = serializer.serialize(fd_map=fd_map)
+        # Should have --dir /etc for synthetic passwd/group
+        dir_indices = [i for i, x in enumerate(args) if x == "--dir"]
+        dirs_created = [args[i + 1] for i in dir_indices if i + 1 < len(args)]
+        assert "/etc" in dirs_created
+
+    def test_serialize_virtual_user_with_home_overlay(self):
+        """When home overlay exists, home dirs are not created (overlay handles it)."""
+        config = make_config(
+            user={
+                "unshare_user": True,
+                "uid": 1000,
+                "gid": 1000,
+                "username": "testuser",
+                "synthetic_passwd": True,
+            },
+            overlays=[OverlayConfig(source="", dest="/home/testuser", mode="tmpfs")],
+        )
+        serializer = BubblewrapSerializer(config)
+        fd_map = {"/etc/passwd": 4, "/etc/group": 5}
+        args = serializer.serialize(fd_map=fd_map)
+        # Should NOT have --dir /home or --dir /home/testuser (overlay handles it)
+        dir_indices = [i for i, x in enumerate(args) if x == "--dir"]
+        dirs_created = [args[i + 1] for i in dir_indices if i + 1 < len(args)]
+        assert "/home" not in dirs_created
+        assert "/home/testuser" not in dirs_created
+        # Should NOT set HOME (overlay handler does this)
+        home_set = False
+        for i, arg in enumerate(args):
+            if arg == "--setenv" and i + 1 < len(args) and args[i + 1] == "HOME":
+                home_set = True
+                break
+        assert not home_set
+
+
+class TestOverlayModes:
+    """Test the three overlay modes in detail."""
+
+    def test_tmpfs_mode_no_source(self):
+        """Tmpfs mode creates simple --tmpfs without source."""
+        config = make_config(
+            overlays=[OverlayConfig(source="", dest="/data", mode="tmpfs")]
+        )
+        args = BubblewrapSerializer(config).serialize()
+        # Find the tmpfs for /data
+        found = False
+        for i, arg in enumerate(args):
+            if arg == "--tmpfs" and i + 1 < len(args) and args[i + 1] == "/data":
+                found = True
+                break
+        assert found
+
+    def test_overlay_mode_requires_source(self):
+        """Overlay mode requires source to produce args."""
+        config = make_config(
+            overlays=[OverlayConfig(source="", dest="/data", mode="overlay")]
+        )
+        args = BubblewrapSerializer(config).serialize()
+        # Should not have any overlay args for /data
+        assert "--tmp-overlay" not in args or "/data" not in args
+
+    def test_persistent_mode_empty_source(self):
+        """Persistent mode with empty source binds write_dir directly."""
+        config = make_config(
+            overlays=[OverlayConfig(source="", dest="/data", mode="persistent", write_dir="/writes")]
+        )
+        args = BubblewrapSerializer(config).serialize()
+        # Without source, should use --bind instead of --overlay
+        assert "--bind" in args
+        bind_idx = args.index("--bind")
+        assert args[bind_idx + 1] == "/writes"
+        assert args[bind_idx + 2] == "/data"
+        # Should NOT have --overlay-src
+        assert "--overlay-src" not in args
+
+    def test_persistent_mode_with_source(self):
+        """Persistent mode with source creates full overlay."""
+        config = make_config(
+            overlays=[OverlayConfig(source="/src", dest="/data", mode="persistent", write_dir="/writes")]
+        )
+        args = BubblewrapSerializer(config).serialize()
+        assert "--overlay-src" in args
+        src_idx = args.index("--overlay-src")
+        assert args[src_idx + 1] == "/src"
+        assert "--overlay" in args

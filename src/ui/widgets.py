@@ -82,7 +82,18 @@ class BoundDirItem(Container):
 
 
 class OverlayItem(Container):
-    """A row representing an overlay configuration."""
+    """A row representing an overlay configuration.
+
+    Modes:
+        tmpfs: Empty writable directory (no source needed)
+        overlay: Writable layer on existing dir, changes in RAM
+        persistent: Writable layer on existing dir, changes saved to disk
+    """
+
+    # Mode cycle order and display properties
+    MODES = ["tmpfs", "overlay", "persistent"]
+    MODE_LABELS = {"tmpfs": "tmpfs", "overlay": "overlay", "persistent": "persist"}
+    MODE_VARIANTS = {"tmpfs": "default", "overlay": "primary", "persistent": "warning"}
 
     def __init__(self, overlay: OverlayConfig, on_update: Callable, on_remove: Callable) -> None:
         super().__init__()
@@ -91,36 +102,57 @@ class OverlayItem(Container):
         self._on_remove = on_remove
 
     def compose(self) -> ComposeResult:
+        mode = self.overlay.mode
         with Horizontal(classes="overlay-row"):
-            yield Button("tmpfs" if self.overlay.mode == "tmpfs" else "persist",
+            yield Button(self.MODE_LABELS.get(mode, mode),
                         classes="overlay-mode-btn",
-                        variant="default" if self.overlay.mode == "tmpfs" else "warning")
-            yield Input(value=self.overlay.source, placeholder="Source dir", classes="overlay-src-input")
+                        variant=self.MODE_VARIANTS.get(mode, "default"))
+            # Source: disabled for tmpfs (not needed), enabled for overlay/persistent
+            yield Input(value=self.overlay.source,
+                       placeholder="n/a" if mode == "tmpfs" else "Source dir",
+                       classes="overlay-src-input",
+                       disabled=(mode == "tmpfs"))
             yield Static("→", classes="overlay-arrow")
             yield Input(value=self.overlay.dest, placeholder="Mount point", classes="overlay-dest-input")
-            is_tmpfs = self.overlay.mode == "tmpfs"
+            # Write dir: only for persistent mode
             yield Input(
-                value="" if is_tmpfs else self.overlay.write_dir,
-                placeholder="n/a (tmpfs)" if is_tmpfs else "Write dir",
+                value=self.overlay.write_dir if mode == "persistent" else "",
+                placeholder="Write dir" if mode == "persistent" else "n/a",
                 classes="overlay-write-input",
-                disabled=is_tmpfs
+                disabled=(mode != "persistent")
             )
             yield Button("x", classes="overlay-remove-btn", variant="error")
 
     @on(Button.Pressed, ".overlay-mode-btn")
     def on_mode_toggle(self, event: Button.Pressed) -> None:
         event.stop()
-        self.overlay.mode = "persistent" if self.overlay.mode == "tmpfs" else "tmpfs"
+        # Cycle to next mode
+        current_idx = self.MODES.index(self.overlay.mode) if self.overlay.mode in self.MODES else 0
+        next_idx = (current_idx + 1) % len(self.MODES)
+        self.overlay.mode = self.MODES[next_idx]
+        mode = self.overlay.mode
+
+        # Update button
         btn = event.button
-        btn.label = "tmpfs" if self.overlay.mode == "tmpfs" else "persist"
-        btn.variant = "default" if self.overlay.mode == "tmpfs" else "warning"
-        # Enable/disable write dir input
+        btn.label = self.MODE_LABELS.get(mode, mode)
+        btn.variant = self.MODE_VARIANTS.get(mode, "default")
+
+        # Update source input (disabled for tmpfs)
+        src_input = self.query_one(".overlay-src-input", Input)
+        src_input.disabled = (mode == "tmpfs")
+        src_input.placeholder = "n/a" if mode == "tmpfs" else "Source dir"
+        if mode == "tmpfs":
+            src_input.value = ""
+            self.overlay.source = ""
+
+        # Update write dir input (only for persistent)
         write_input = self.query_one(".overlay-write-input", Input)
-        is_tmpfs = self.overlay.mode == "tmpfs"
-        write_input.disabled = is_tmpfs
-        write_input.placeholder = "n/a (tmpfs)" if is_tmpfs else "Write dir"
-        if is_tmpfs:
+        write_input.disabled = (mode != "persistent")
+        write_input.placeholder = "Write dir" if mode == "persistent" else "n/a"
+        if mode != "persistent":
             write_input.value = ""
+            self.overlay.write_dir = ""
+
         self._on_update()
 
     @on(Input.Changed, ".overlay-src-input")
@@ -434,7 +466,9 @@ class OptionCard(Container):
 
     def compose(self) -> ComposeResult:
         yield Checkbox(self.field.label, value=self._default, id=self.field.checkbox_id)
-        yield Static(self._explanation, classes="option-explanation")
+        # Give explanation an ID derived from checkbox ID for dynamic updates
+        explanation_id = f"{self.field.checkbox_id}-explanation"
+        yield Static(self._explanation, classes="option-explanation", id=explanation_id)
 
 
 class ProfileItem(Container):

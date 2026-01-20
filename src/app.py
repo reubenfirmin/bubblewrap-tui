@@ -182,11 +182,11 @@ class BubblewrapTUI(
             with TabPane("Environment", id="env-tab"):
                 yield from compose_environment_tab(self._toggle_env_var)
 
-            with TabPane("Overlays", id="overlays-tab"):
-                yield from compose_overlays_tab()
-
             with TabPane("Sandbox", id="sandbox-tab"):
                 yield from compose_sandbox_tab(self._on_dev_mode_change)
+
+            with TabPane("Overlays", id="overlays-tab"):
+                yield from compose_overlays_tab()
 
             with TabPane("Summary", id="summary-tab"):
                 yield from compose_summary_tab(
@@ -271,6 +271,8 @@ class BubblewrapTUI(
             BoundDirItem, self._update_preview, self._remove_bound_dir
         )
         sync.rebuild_overlays_list(OverlayItem, self._update_preview, self._remove_overlay)
+        sync.sync_overlay_home_from_overlays()
+        self._update_home_overlay_label()
         sync.sync_env_button_state()
         self._reflow_env_columns()
 
@@ -296,12 +298,34 @@ class BubblewrapTUI(
                     uid_gid.remove_class("hidden")
                 else:
                     uid_gid.add_class("hidden")
+                # Sync username + virtual user options visibility
+                try:
+                    username_opts = self.query_one(css(ids.USERNAME_OPTIONS))
+                    virtual_user_opts = self.query_one(css(ids.VIRTUAL_USER_OPTIONS))
+                    uid = self.config.user.uid
+                    if event.value:
+                        # Always show overlay options when masking user
+                        virtual_user_opts.remove_class("hidden")
+                        self._update_home_overlay_label()
+                        # Only show username for non-root
+                        if uid > 0:
+                            username_opts.remove_class("hidden")
+                        else:
+                            username_opts.add_class("hidden")
+                    else:
+                        username_opts.add_class("hidden")
+                        virtual_user_opts.add_class("hidden")
+                except NoMatches:
+                    log.debug("Username/virtual user options container not found")
             except NoMatches:
                 log.debug("UID/GID options container not found")
         # Handle quick shortcuts - sync with bound dirs list
         if event.checkbox.id in QUICK_SHORTCUT_BY_CHECKBOX_ID:
             field = QUICK_SHORTCUT_BY_CHECKBOX_ID[event.checkbox.id]
             self._handle_quick_shortcut_change(field, event.value)
+        # Handle home overlay - sync with overlays list (synthetic_passwd doesn't need overlay)
+        if event.checkbox.id == ids.OPT_OVERLAY_HOME:
+            self._handle_overlay_home_change(event.value)
         self._sync_config_from_ui()
         self._update_preview()
 
@@ -309,12 +333,51 @@ class BubblewrapTUI(
     def on_input_changed(self, event: Input.Changed) -> None:
         """Handle input changes."""
         self._sync_config_from_ui()
+
+        # Show/hide username field when UID changes (overlay options always visible when unshare_user)
+        if event.input.id == ids.OPT_UID:
+            try:
+                username_opts = self.query_one(css(ids.USERNAME_OPTIONS))
+                uid_str = event.value.strip()
+                uid = int(uid_str) if uid_str.isdigit() else 0
+                # Username field only for non-root (uid > 0)
+                if self.config.user.unshare_user and uid > 0:
+                    username_opts.remove_class("hidden")
+                else:
+                    username_opts.add_class("hidden")
+                # Update home overlay label
+                self._update_home_overlay_label()
+            except (NoMatches, ValueError):
+                log.debug("Username options container not found or invalid UID")
+
+        # Update home overlay label when username changes
+        if event.input.id == ids.OPT_USERNAME:
+            self._update_home_overlay_label()
+
         self._update_preview()
 
     def _on_dev_mode_change(self, mode: str) -> None:
         """Handle /dev mode change."""
         self.config.filesystem.dev_mode = mode
-        self._update_preview()
+
+    def _update_home_overlay_label(self) -> None:
+        """Update the home overlay checkbox label and explanation based on uid/username."""
+        try:
+            checkbox = self.query_one(css(ids.OPT_OVERLAY_HOME), Checkbox)
+            explanation = self.query_one(f"#{ids.OPT_OVERLAY_HOME}-explanation", Static)
+            uid = self.config.user.uid
+            username = self.config.user.username
+            if uid == 0:
+                checkbox.label = "Overlay /root"
+                explanation.update("Ephemeral /root directory")
+            elif username:
+                checkbox.label = f"Overlay /home/{username}"
+                explanation.update(f"Ephemeral /home/{username} directory")
+            else:
+                checkbox.label = "Overlay /home/{user}"
+                explanation.update("Ephemeral home directory")
+        except NoMatches:
+            pass
 
     def _handle_quick_shortcut_change(self, field, enabled: bool) -> None:
         """Handle quick shortcut checkbox toggle - sync with bound dirs list.
@@ -362,6 +425,69 @@ class BubblewrapTUI(
         except NoMatches:
             log.debug("Bound dirs list not found for quick shortcut sync")
 
+    def _handle_overlay_home_change(self, enabled: bool) -> None:
+        """Handle overlay home checkbox toggle - sync with overlays list.
+
+        When enabled, creates an empty overlay for the user's home directory.
+        - uid=0: /root
+        - uid>0: /home/{username}
+        Also sets HOME environment variable.
+        """
+        from textual.containers import VerticalScroll
+
+        uid = self.config.user.uid
+        username = self.config.user.username
+
+        # Determine home path based on uid
+        if uid == 0:
+            dest = "/root"
+        elif username:
+            dest = f"/home/{username}"
+        else:
+            return  # uid > 0 but no username yet
+
+        try:
+            overlays_list = self.query_one(css(ids.OVERLAYS_LIST), VerticalScroll)
+
+            if enabled:
+                # Check if already exists
+                if any(ov.dest == dest for ov in self.config.overlays):
+                    return
+
+                # Create overlay - source="" (empty, fresh home), mode=tmpfs
+                overlay = OverlayConfig(source="", dest=dest, mode="tmpfs")
+                self.config.overlays.append(overlay)
+                overlays_list.mount(OverlayItem(overlay, self._update_preview, self._remove_overlay))
+                # Show header if hidden
+                try:
+                    self.query_one(css(ids.OVERLAY_HEADER)).remove_class("hidden")
+                except NoMatches:
+                    pass
+                # Set HOME environment variable
+                self.config.environment.custom_env_vars["HOME"] = dest
+            else:
+                # Remove overlay for either /root or /home/{username}
+                for ov in list(self.config.overlays):
+                    if ov.dest == dest or (ov.dest.startswith("/home/") and not ov.source):
+                        self.config.overlays.remove(ov)
+                        for item in overlays_list.query(OverlayItem):
+                            if item.overlay is ov:
+                                item.remove()
+                                break
+                        break
+                # Remove HOME if it matches
+                home_val = self.config.environment.custom_env_vars.get("HOME")
+                if home_val == dest or (home_val and home_val.startswith("/home/")):
+                    del self.config.environment.custom_env_vars["HOME"]
+                # Hide header if no overlays left
+                if not self.config.overlays:
+                    try:
+                        self.query_one(css(ids.OVERLAY_HEADER)).add_class("hidden")
+                    except NoMatches:
+                        pass
+        except NoMatches:
+            log.debug("Overlays list not found for home overlay sync")
+
     # =========================================================================
     # Callbacks for Event Mixins
     # =========================================================================
@@ -377,8 +503,23 @@ class BubblewrapTUI(
     def _remove_overlay(self, item: OverlayItem) -> None:
         """Remove an overlay from the list."""
         if item.overlay in self.config.overlays:
-            self.config.overlays.remove(item.overlay)
+            overlay = item.overlay
+            self.config.overlays.remove(overlay)
             item.remove()
+
+            # Bi-directional sync: uncheck User card checkbox if this was a managed home overlay
+            if overlay.dest.startswith("/home/") and not overlay.source:
+                # Home overlay: /home/{username} with empty source
+                try:
+                    checkbox = self.query_one(css(ids.OPT_OVERLAY_HOME), Checkbox)
+                    checkbox.value = False
+                    self.config.user._group.set("overlay_home", False)
+                    # Remove HOME env var if it matched this path
+                    if self.config.environment.custom_env_vars.get("HOME") == overlay.dest:
+                        del self.config.environment.custom_env_vars["HOME"]
+                except NoMatches:
+                    pass
+
             # Hide header when no overlays left
             if not self.config.overlays:
                 try:

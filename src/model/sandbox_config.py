@@ -105,6 +105,7 @@ class SandboxConfig:
     # Internal group storage
     _vfs_group: ConfigGroup = field(default=None, repr=False)
     _system_paths_group: ConfigGroup = field(default=None, repr=False)
+    _user_group: ConfigGroup = field(default=None, repr=False)
     _isolation_group: ConfigGroup = field(default=None, repr=False)
     _process_group: ConfigGroup = field(default=None, repr=False)
     _network_group: ConfigGroup = field(default=None, repr=False)
@@ -121,11 +122,12 @@ class SandboxConfig:
             self._vfs_group = _copy_group(groups.vfs_group)
         if self._system_paths_group is None:
             self._system_paths_group = _copy_group(groups.system_paths_group)
+        if self._user_group is None:
+            self._user_group = _copy_group(groups.user_group)
         if self._isolation_group is None:
             self._isolation_group = _copy_group(groups.isolation_group)
         if self._process_group is None:
             self._process_group = _copy_group(groups.process_group)
-            # uid/gid default to 0 (root inside sandbox) - set in groups.py
         if self._network_group is None:
             self._network_group = _copy_group(groups.network_group)
         if self._desktop_group is None:
@@ -144,8 +146,13 @@ class SandboxConfig:
         return FilesystemProxy(self._vfs_group, self._system_paths_group)
 
     @property
+    def user(self) -> GroupProxy:
+        """Access user identity settings (unshare_user, uid, gid, username)."""
+        return GroupProxy(self._user_group)
+
+    @property
     def namespace(self) -> GroupProxy:
-        """Access namespace isolation settings."""
+        """Access namespace isolation settings (PID, IPC, UTS, cgroup)."""
         return NamespaceProxy(self._isolation_group)
 
     @property
@@ -173,6 +180,7 @@ class SandboxConfig:
         return [
             self._vfs_group,
             self._system_paths_group,
+            self._user_group,
             self._isolation_group,
             self._process_group,
             self._network_group,
@@ -180,10 +188,22 @@ class SandboxConfig:
             self._environment_group,
         ]
 
-    def build_command(self) -> list[str]:
-        """Build the complete bwrap command."""
+    def build_command(self, fd_map: dict[str, int] | None = None) -> list[str]:
+        """Build the complete bwrap command.
+
+        Args:
+            fd_map: Optional mapping of dest_path -> FD number for virtual user files
+        """
         from bwrap import BubblewrapSerializer
-        return BubblewrapSerializer(self).serialize()
+        return BubblewrapSerializer(self).serialize(fd_map)
+
+    def get_virtual_user_data(self) -> list[tuple[str, str]]:
+        """Get virtual user file data that needs to be passed via FDs.
+
+        Returns list of (content, dest_path) tuples for files to inject.
+        """
+        from bwrap import BubblewrapSerializer
+        return BubblewrapSerializer(self).get_virtual_user_data()
 
     def get_explanation(self) -> str:
         """Generate a human-readable explanation of the sandbox."""

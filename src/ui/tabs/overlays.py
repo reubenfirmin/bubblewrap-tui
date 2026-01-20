@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Static
@@ -14,14 +16,15 @@ def compose_overlays_tab() -> ComposeResult:
         Textual widgets for the overlays tab
     """
     with Vertical(id="overlays-tab-content"):
+        home = str(Path.home())
         yield Static(
-            "Overlays make directories appear writable without changing originals.\n\n"
-            "  Source     Real directory providing the read-only base\n"
-            "  Mount      Where it appears in the sandbox\n"
-            "  Write dir  Separate directory to store changes (persistent only)\n\n"
-            "  tmpfs      Changes stored in RAM, discarded on exit\n"
-            "  persistent Changes saved to write dir, persist across runs\n\n"
-            "Example: source=/usr, mount=/usr, mode=tmpfs → sandbox can 'install' packages",
+            "Click mode button to cycle: tmpfs → overlay → persist\n\n"
+            "  tmpfs      Empty writable directory (no source needed)\n"
+            "  overlay    Writable layer on existing dir, changes in RAM\n"
+            "  persist    Writable layer on existing dir, changes saved to disk\n\n"
+            "Examples:\n"
+            f"  tmpfs, mount={home} → isolated home, starts empty\n"
+            "  overlay, source=/etc, mount=/etc → writable /etc, real files as base",
             id="overlay-hint",
         )
         yield Button("+ Add Overlay", id="add-overlay-btn", variant="success")
