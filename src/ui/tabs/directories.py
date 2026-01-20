@@ -51,14 +51,15 @@ def compose_directories_tab(
             # Quick shortcuts card
             with Container(classes="options-section", id="quick-shortcuts-section"):
                 yield Label("Quick Shortcuts", classes="section-label")
-                for field in QUICK_SHORTCUTS:
-                    # Use field's default, except disable if path doesn't exist
-                    path = getattr(field, "shortcut_path", None)
-                    if path and not path.exists():
-                        default = False
-                    else:
-                        default = field.default
-                    yield OptionCard(field, default=default)
+                with VerticalScroll(id="quick-shortcuts-list"):
+                    for field in QUICK_SHORTCUTS:
+                        # Use field's default, except disable if path doesn't exist
+                        path = getattr(field, "shortcut_path", None)
+                        if path and not path.exists():
+                            default = False
+                        else:
+                            default = field.default
+                        yield OptionCard(field, default=default)
         with Vertical(id="bound-dirs-container"):
             yield Label("Bound Directories (click ro/rw to toggle)")
             yield VerticalScroll(*dir_items, id="bound-dirs-list")

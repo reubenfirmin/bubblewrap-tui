@@ -137,6 +137,11 @@ BoundDirItem .remove-btn {
     min-width: 5;
 }
 
+#quick-shortcuts-list {
+    height: auto;
+    max-height: 15;
+}
+
 /* Overlay Items */
 OverlayItem {
     height: auto;
