@@ -24,7 +24,7 @@ def print_execution_header(
     """
     print("=" * 60)
 
-    if network_filter and network_filter.requires_slirp4netns():
+    if network_filter and network_filter.requires_pasta():
         print("Executing (with network filtering):")
     else:
         print("Executing:")
@@ -37,14 +37,13 @@ def print_execution_header(
         for d in overlay_dirs:
             print(f"  {d}/")
 
-    if network_filter and network_filter.requires_slirp4netns():
-        # Show slirp4netns command template
+    if network_filter and network_filter.requires_pasta():
+        # Show pasta command template
         print()
-        slirp_parts = ["slirp4netns", "--configure", "--mtu=65520", "--userns-path", "<userns>"]
+        pasta_parts = ["pasta", "--config-net", "--quiet", "--netns", "<netns>"]
         for port in network_filter.localhost_access.ports:
-            slirp_parts.extend(["-p", f"{port}:127.0.0.1:{port}"])
-        slirp_parts.extend(["<pid>", "tap0"])
-        print(" ".join(slirp_parts))
+            pasta_parts.extend(["-T", str(port)])
+        print(" ".join(pasta_parts))
 
         print("\nNetwork filtering:")
         if network_filter.hostname_filter.mode.value != "off":

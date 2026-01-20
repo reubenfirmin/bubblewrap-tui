@@ -38,7 +38,10 @@ MODULE_ORDER = [
     "model/groups.py",                # Depends on config, config_group, ui_field
     "model/sandbox_config.py",        # Depends on config_group, groups, network_filter
     "commandoutput.py",               # Command output formatting
-    "netfilter.py",                   # Network filtering utilities (slirp4netns, iptables)
+    "net/utils.py",                   # Network utilities (resolve hostname, validate, etc.)
+    "net/iptables.py",                # iptables rule generation
+    "net/pasta.py",                   # pasta network namespace wrapper
+    "net/__init__.py",                # Network module exports
     "bwrap.py",                       # Depends on detection, model (serialization/summary)
     "profiles.py",                    # Depends on model (JSON serialization)
     "ui/ids.py",                      # No dependencies - widget ID constants (needed early for ids.X refs)
@@ -49,7 +52,7 @@ MODULE_ORDER = [
     "ui/tabs/environment.py",         # Depends on ui.widgets
     "ui/tabs/overlays.py",            # No widget dependencies
     "ui/tabs/sandbox.py",             # Depends on ui.widgets, model, detection
-    "ui/tabs/network.py",             # Depends on ui.widgets, netfilter
+    "ui/tabs/network.py",             # Depends on ui.widgets, net
     "ui/tabs/summary.py",             # No dependencies
     "ui/tabs/profiles.py",            # No dependencies
     "ui/modals.py",                   # Profile modals - depends on profiles
@@ -59,13 +62,14 @@ MODULE_ORDER = [
     "controller/environment.py",      # Event handler - depends on ui
     "controller/network.py",          # Event handler - network filtering
     "app.py",                         # Depends on ui, model, profiles, controller, detection
-    "cli.py",                         # Depends on app, model, profiles, installer, netfilter
+    "cli.py",                         # Depends on app, model, profiles, installer, net
 ]
 
 # Local modules (imports to filter out)
 LOCAL_MODULES = {
     "detection", "environment", "installer", "sandbox", "profiles", "app", "cli", "styles", "bwrap",
-    "commandoutput", "netfilter",
+    "commandoutput",
+    "net", "net.utils", "net.iptables", "net.pasta",
     "model",
     "model.ui_field", "model.bound_directory", "model.overlay_config", "model.network_filter",
     "model.config_group", "model.config", "model.groups", "model.sandbox_config",

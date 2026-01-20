@@ -259,9 +259,14 @@ src/
 ├── cli.py              # Entry point, argument parsing
 ├── app.py              # Main Textual App (composes UI, orchestrates mixins)
 ├── bwrap.py            # bwrap command generation and execution
-├── netfilter.py        # Network filtering (slirp4netns, iptables)
 ├── profiles.py         # Profile save/load
 ├── detection.py        # Path detection and resolution
+│
+├── net/                # Network filtering module
+│   ├── __init__.py     # Module exports
+│   ├── pasta.py        # pasta network namespace wrapper
+│   ├── iptables.py     # iptables rule generation
+│   └── utils.py        # Hostname resolution, validation, etc.
 │
 ├── model/              # Data models (what gets configured)
 │   ├── config.py       # SandboxConfig - the main configuration object

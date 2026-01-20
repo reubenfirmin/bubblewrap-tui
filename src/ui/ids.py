@@ -148,7 +148,7 @@ QUICK_SHORTCUTS_SECTION = "quick-shortcuts-section"
 # Network filtering tab IDs
 NETWORK_TAB_CONTENT = "network-tab-content"
 NETWORK_ENABLED = "network-enabled"
-SLIRP_STATUS = "slirp-status"
+PASTA_STATUS = "pasta-status"
 HOSTNAME_MODE_RADIO = "hostname-mode-radio"
 HOSTNAME_LIST = "hostname-list"
 HOSTNAME_INPUT = "hostname-input"

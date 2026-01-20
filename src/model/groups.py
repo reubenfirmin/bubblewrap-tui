@@ -343,20 +343,17 @@ def _network_to_args(group: ConfigGroup, network_filter: "NetworkFilter | None" 
 
     Args:
         group: The network ConfigGroup
-        network_filter: Optional NetworkFilter config for slirp4netns filtering
+        network_filter: Optional NetworkFilter config for pasta filtering
     """
     from detection import find_dns_paths, find_ssl_cert_paths
 
     args = []
 
-    # Check if network filtering is active (uses slirp4netns)
-    filtering_active = network_filter and network_filter.requires_slirp4netns()
+    # Check if network filtering is active (uses pasta)
+    filtering_active = network_filter and network_filter.requires_pasta()
 
     if filtering_active:
-        # Network filtering requires isolated network namespace (slirp4netns provides filtered network)
-        # NOTE: We cannot use --unshare-user with network filtering because slirp4netns
-        # cannot join a user namespace from outside (setns requires CAP_SYS_ADMIN in the
-        # target namespace, which you only get when CREATING a namespace, not JOINING one)
+        # Network filtering requires isolated network namespace (pasta provides filtered network)
         args.append("--unshare-net")
     elif group.get("share_net"):
         # Full network access

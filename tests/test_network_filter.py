@@ -92,18 +92,18 @@ class TestNetworkFilter:
         assert nf.ip_filter.mode == FilterMode.OFF
         assert nf.localhost_access.ports == []
 
-    def test_requires_slirp4netns_disabled(self):
-        """requires_slirp4netns returns False when disabled."""
+    def test_requires_pasta_disabled(self):
+        """requires_pasta returns False when disabled."""
         nf = NetworkFilter(enabled=False)
-        assert nf.requires_slirp4netns() is False
+        assert nf.requires_pasta() is False
 
-    def test_requires_slirp4netns_enabled_no_rules(self):
-        """requires_slirp4netns returns False when enabled but no rules."""
+    def test_requires_pasta_enabled_no_rules(self):
+        """requires_pasta returns False when enabled but no rules."""
         nf = NetworkFilter(enabled=True)
-        assert nf.requires_slirp4netns() is False
+        assert nf.requires_pasta() is False
 
-    def test_requires_slirp4netns_with_hostname_filter(self):
-        """requires_slirp4netns returns True with hostname filter."""
+    def test_requires_pasta_with_hostname_filter(self):
+        """requires_pasta returns True with hostname filter."""
         nf = NetworkFilter(
             enabled=True,
             hostname_filter=HostnameFilter(
@@ -111,10 +111,10 @@ class TestNetworkFilter:
                 hosts=["github.com"],
             ),
         )
-        assert nf.requires_slirp4netns() is True
+        assert nf.requires_pasta() is True
 
-    def test_requires_slirp4netns_with_ip_filter(self):
-        """requires_slirp4netns returns True with IP filter."""
+    def test_requires_pasta_with_ip_filter(self):
+        """requires_pasta returns True with IP filter."""
         nf = NetworkFilter(
             enabled=True,
             ip_filter=IPFilter(
@@ -122,15 +122,15 @@ class TestNetworkFilter:
                 cidrs=["10.0.0.0/8"],
             ),
         )
-        assert nf.requires_slirp4netns() is True
+        assert nf.requires_pasta() is True
 
-    def test_requires_slirp4netns_with_ports(self):
-        """requires_slirp4netns returns True with localhost ports."""
+    def test_requires_pasta_with_ports(self):
+        """requires_pasta returns True with localhost ports."""
         nf = NetworkFilter(
             enabled=True,
             localhost_access=LocalhostAccess(ports=[5432]),
         )
-        assert nf.requires_slirp4netns() is True
+        assert nf.requires_pasta() is True
 
     def test_has_any_rules_false(self):
         """has_any_rules returns False when no filters active."""

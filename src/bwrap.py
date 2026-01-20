@@ -241,21 +241,20 @@ class BubblewrapSerializer:
 
         result = " ".join(parts)
 
-        # Add slirp4netns command if network filtering is active
+        # Add pasta command if network filtering is active
         nf = self.config.network_filter
-        if nf.requires_slirp4netns():
+        if nf.requires_pasta():
             color = COLORS[color_idx % len(COLORS)]
-            slirp_parts = [f"[bold {color}]slirp4netns[/]"]
-            slirp_args = ["--configure", "--mtu=65520", "--userns-path", "[dim]<userns>[/]"]
+            pasta_parts = [f"[bold {color}]pasta[/]"]
+            pasta_args = ["--config-net", "--quiet", "--netns", "[dim]<netns>[/]"]
             for port in nf.localhost_access.ports:
-                slirp_args.extend(["-p", f"{port}:127.0.0.1:{port}"])
-            slirp_args.extend(["[dim]<pid>[/]", "tap0"])
-            for arg in slirp_args:
+                pasta_args.extend(["-T", str(port)])
+            for arg in pasta_args:
                 if arg.startswith("[dim]"):
-                    slirp_parts.append(arg)
+                    pasta_parts.append(arg)
                 else:
-                    slirp_parts.append(f"[{color}]{arg}[/]")
-            result += "\n\n" + " ".join(slirp_parts)
+                    pasta_parts.append(f"[{color}]{arg}[/]")
+            result += "\n\n" + " ".join(pasta_parts)
 
         return result
 
@@ -316,8 +315,8 @@ class BubblewrapSummarizer:
 
         # Network filtering
         nf = self.config.network_filter
-        if nf.enabled and nf.requires_slirp4netns():
-            lines.append("• Network filtering (slirp4netns):")
+        if nf.enabled and nf.requires_pasta():
+            lines.append("• Network filtering (pasta):")
             if nf.hostname_filter.mode.value != "off":
                 mode = nf.hostname_filter.mode.value
                 hosts = ", ".join(nf.hostname_filter.hosts) if nf.hostname_filter.hosts else "none"
@@ -409,10 +408,10 @@ class BubblewrapSummarizer:
 
         # Network filtering
         nf = self.config.network_filter
-        if nf.enabled and nf.requires_slirp4netns():
+        if nf.enabled and nf.requires_pasta():
             color = COLORS[color_idx % len(COLORS)]
             color_idx += 1
-            lines.append(f"[{color}]• Network filtering (slirp4netns):[/]")
+            lines.append(f"[{color}]• Network filtering (pasta):[/]")
             if nf.hostname_filter.mode.value != "off":
                 mode = nf.hostname_filter.mode.value
                 hosts = ", ".join(nf.hostname_filter.hosts) if nf.hostname_filter.hosts else "none"

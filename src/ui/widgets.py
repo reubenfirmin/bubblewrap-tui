@@ -501,8 +501,8 @@ class ProfileItem(Container):
 # =============================================================================
 
 
-class SlirpStatus(Container):
-    """Shows slirp4netns installation status and install command if missing."""
+class PastaStatus(Container):
+    """Shows pasta installation status and install command if missing."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -510,15 +510,15 @@ class SlirpStatus(Container):
         self._message = ""
 
     def compose(self) -> ComposeResult:
-        from netfilter import get_slirp4netns_status
+        from net import get_pasta_status
 
-        self._installed, self._message = get_slirp4netns_status()
+        self._installed, self._message = get_pasta_status()
         if self._installed:
-            yield Static("slirp4netns: [green]installed[/green]", id="slirp-status")
+            yield Static("pasta: [green]installed[/green]", id="pasta-status")
         else:
             yield Static(
-                f"slirp4netns: [red]not found[/red] - {self._message}",
-                id="slirp-status",
+                f"pasta: [red]not found[/red] - {self._message}",
+                id="pasta-status",
             )
 
     @property
@@ -754,7 +754,7 @@ class PortList(Container):
 
     def _add_port(self) -> None:
         """Add port from input field."""
-        from netfilter import validate_port
+        from net import validate_port
 
         try:
             input_widget = self.query_one(f"#{self._input_id}", Input)

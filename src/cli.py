@@ -15,7 +15,7 @@ from app import BubblewrapTUI
 from commandoutput import print_execution_header
 from installer import check_for_updates, do_install, do_update, show_update_notice
 from model import BoundDirectory, SandboxConfig
-from netfilter import check_slirp4netns, execute_with_network_filter, get_install_instructions
+from net import check_pasta, execute_with_network_filter, get_install_instructions
 from profiles import BUI_PROFILES_DIR, Profile
 from sandbox import (
     BUI_STATE_DIR,
@@ -329,12 +329,12 @@ def validate_network_filter(config: SandboxConfig) -> bool:
     Returns True if network filtering can proceed, False if there's an error.
     """
     nf = config.network_filter
-    if not nf.requires_slirp4netns():
+    if not nf.requires_pasta():
         return True
 
-    if not check_slirp4netns():
+    if not check_pasta():
         print("=" * 60, file=sys.stderr)
-        print("Error: Network filtering requires slirp4netns", file=sys.stderr)
+        print("Error: Network filtering requires pasta", file=sys.stderr)
         print("", file=sys.stderr)
         print(f"Install with: {get_install_instructions()}", file=sys.stderr)
         print("", file=sys.stderr)
@@ -398,7 +398,7 @@ def main() -> None:
         fd_map = setup_virtual_user_fds(config)
 
         # Print execution info
-        if config.network_filter.requires_slirp4netns():
+        if config.network_filter.requires_pasta():
             # Network filtering execution - header printed by execute_with_network_filter
             execute_with_network_filter(
                 config,
@@ -431,7 +431,7 @@ def main() -> None:
 
         fd_map = setup_virtual_user_fds(app.config)
 
-        if app.config.network_filter.requires_slirp4netns():
+        if app.config.network_filter.requires_pasta():
             # Network filtering execution - header printed by execute_with_network_filter
             execute_with_network_filter(
                 app.config,

@@ -1,4 +1,4 @@
-"""Tests for netfilter utilities."""
+"""Tests for net module utilities."""
 
 from unittest.mock import patch, MagicMock
 
@@ -11,14 +11,14 @@ from model.network_filter import (
     LocalhostAccess,
     NetworkFilter,
 )
-from netfilter import (
-    check_slirp4netns,
+from net import (
+    check_pasta,
     detect_distro,
     generate_iptables_rules,
     generate_init_script,
-    generate_slirp4netns_args,
+    generate_pasta_args,
     get_install_instructions,
-    get_slirp4netns_status,
+    get_pasta_status,
     get_www_variant,
     is_ipv6,
     resolve_hostname,
@@ -27,25 +27,25 @@ from netfilter import (
 )
 
 
-class TestCheckSlirp4netns:
-    """Test check_slirp4netns function."""
+class TestCheckPasta:
+    """Test check_pasta function."""
 
     def test_returns_bool(self):
-        """check_slirp4netns returns a boolean."""
-        result = check_slirp4netns()
+        """check_pasta returns a boolean."""
+        result = check_pasta()
         assert isinstance(result, bool)
 
     @patch("shutil.which")
     def test_returns_true_when_installed(self, mock_which):
-        """check_slirp4netns returns True when installed."""
-        mock_which.return_value = "/usr/bin/slirp4netns"
-        assert check_slirp4netns() is True
+        """check_pasta returns True when installed."""
+        mock_which.return_value = "/usr/bin/pasta"
+        assert check_pasta() is True
 
     @patch("shutil.which")
     def test_returns_false_when_not_installed(self, mock_which):
-        """check_slirp4netns returns False when not installed."""
+        """check_pasta returns False when not installed."""
         mock_which.return_value = None
-        assert check_slirp4netns() is False
+        assert check_pasta() is False
 
 
 class TestDetectDistro:
@@ -81,7 +81,7 @@ class TestGetInstallInstructions:
         """get_install_instructions returns a string."""
         result = get_install_instructions()
         assert isinstance(result, str)
-        assert "slirp4netns" in result
+        assert "passt" in result
 
 
 class TestIsIPv6:
@@ -273,7 +273,7 @@ class TestGenerateIptablesRules:
         v4, v6 = generate_iptables_rules(nf)
         assert any("2001:db8::/32" in r for r in v6)
 
-    @patch("netfilter.resolve_hostname")
+    @patch("net.utils.resolve_hostname")
     def test_hostname_resolution(self, mock_resolve):
         """Hostnames are resolved to IPs."""
         mock_resolve.return_value = (["93.184.216.34"], [])
@@ -325,67 +325,53 @@ class TestGenerateInitScript:
         assert "/usr/bin/xtables-nft-multi ip6tables" in script
 
 
-class TestGenerateSlirp4netnsArgs:
-    """Test generate_slirp4netns_args function."""
+class TestGeneratePastaArgs:
+    """Test generate_pasta_args function."""
 
     def test_basic_args(self):
-        """generate_slirp4netns_args returns basic arguments."""
+        """generate_pasta_args returns basic arguments for spawn mode."""
         nf = NetworkFilter()
-        args = generate_slirp4netns_args(nf, 12345)
-        assert args[0] == "slirp4netns"
-        assert "--configure" in args
-        assert "12345" in args
-        assert "tap0" in args
-
-    def test_disable_host_loopback_without_ports(self):
-        """Host loopback is disabled when no port forwards."""
-        nf = NetworkFilter()
-        args = generate_slirp4netns_args(nf, 12345)
-        assert "--disable-host-loopback" in args
+        args = generate_pasta_args(nf)
+        assert args[0] == "pasta"
+        assert "--config-net" in args
+        assert "--quiet" in args
+        # Spawn mode doesn't use --netns
+        assert "--netns" not in args
 
     def test_port_forwarding(self):
-        """Port forwards are included."""
+        """Port forwards are included with -T flag."""
         nf = NetworkFilter(
             localhost_access=LocalhostAccess(ports=[5432, 6379]),
         )
-        args = generate_slirp4netns_args(nf, 12345)
-        assert "-p" in args
-        assert "5432:127.0.0.1:5432" in args
-        assert "6379:127.0.0.1:6379" in args
+        args = generate_pasta_args(nf)
+        assert "-T" in args
+        assert "5432" in args
+        assert "6379" in args
 
-    def test_host_loopback_enabled_with_ports(self):
-        """Host loopback is NOT disabled when port forwards exist."""
-        nf = NetworkFilter(
-            localhost_access=LocalhostAccess(ports=[5432]),
-        )
-        args = generate_slirp4netns_args(nf, 12345)
-        assert "--disable-host-loopback" not in args
-
-    def test_userns_path(self):
-        """User namespace path is included when provided."""
+    def test_no_ports_no_T_flag(self):
+        """No -T flag when no ports configured."""
         nf = NetworkFilter()
-        args = generate_slirp4netns_args(nf, 12345, userns_path="/proc/12345/ns/user")
-        assert "--userns-path" in args
-        assert "/proc/12345/ns/user" in args
+        args = generate_pasta_args(nf)
+        assert "-T" not in args
 
 
-class TestGetSlirp4netnsStatus:
-    """Test get_slirp4netns_status function."""
+class TestGetPastaStatus:
+    """Test get_pasta_status function."""
 
-    @patch("netfilter.check_slirp4netns")
+    @patch("net.pasta.check_pasta")
     def test_installed(self, mock_check):
         """Returns installed status when installed."""
         mock_check.return_value = True
-        installed, message = get_slirp4netns_status()
+        installed, message = get_pasta_status()
         assert installed is True
         assert "installed" in message
 
-    @patch("netfilter.check_slirp4netns")
-    @patch("netfilter.get_install_instructions")
+    @patch("net.pasta.check_pasta")
+    @patch("net.pasta.get_install_instructions")
     def test_not_installed(self, mock_instructions, mock_check):
         """Returns install instructions when not installed."""
         mock_check.return_value = False
-        mock_instructions.return_value = "sudo apt install slirp4netns"
-        installed, message = get_slirp4netns_status()
+        mock_instructions.return_value = "sudo apt install passt"
+        installed, message = get_pasta_status()
         assert installed is False
         assert "apt" in message

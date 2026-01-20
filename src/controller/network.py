@@ -6,7 +6,7 @@ import logging
 from typing import Any, Callable
 
 from model import FilterMode
-from netfilter import get_www_variant
+from net import get_www_variant
 import ui.ids as ids
 
 log = logging.getLogger(__name__)

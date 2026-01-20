@@ -39,7 +39,7 @@ class LocalhostAccess:
 class NetworkFilter:
     """Top-level network filtering config for a profile.
 
-    Network filtering uses slirp4netns to provide user-space networking
+    Network filtering uses pasta to provide user-space networking
     with iptables rules for filtering. This allows true enforcement at
     the network level that applications cannot bypass.
     """
@@ -49,8 +49,8 @@ class NetworkFilter:
     ip_filter: IPFilter = field(default_factory=IPFilter)
     localhost_access: LocalhostAccess = field(default_factory=LocalhostAccess)
 
-    def requires_slirp4netns(self) -> bool:
-        """Returns True if any filtering is configured that needs slirp4netns."""
+    def requires_pasta(self) -> bool:
+        """Returns True if any filtering is configured that needs pasta."""
         return self.enabled and (
             self.hostname_filter.mode != FilterMode.OFF
             or self.ip_filter.mode != FilterMode.OFF

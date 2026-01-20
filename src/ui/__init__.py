@@ -15,7 +15,7 @@ from ui.widgets import (
     PortList,
     PortListItem,
     ProfileItem,
-    SlirpStatus,
+    PastaStatus,
     is_user_owned,
 )
 from ui.tabs import (
@@ -46,7 +46,7 @@ __all__ = [
     "PortList",
     "PortListItem",
     "ProfileItem",
-    "SlirpStatus",
+    "PastaStatus",
     "is_user_owned",
     # Tab composers
     "compose_directories_tab",

@@ -9,8 +9,8 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Checkbox, Label, RadioButton, RadioSet, Static
 
 from model import groups
-from netfilter import validate_cidr
-from ui.widgets import FilterList, FilterModeRadio, OptionCard, PortList, SlirpStatus
+from net import validate_cidr
+from ui.widgets import FilterList, FilterModeRadio, OptionCard, PastaStatus, PortList
 import ui.ids as ids
 
 if TYPE_CHECKING:
@@ -67,11 +67,11 @@ def compose_network_tab(
                 with Container(classes="options-section"):
                     yield Label("Network Filtering", classes="section-label")
                     yield Checkbox(
-                        "Enable filtering (slirp4netns)",
+                        "Enable filtering (pasta)",
                         value=network_filter.enabled,
                         id=ids.NETWORK_ENABLED,
                     )
-                    yield SlirpStatus()
+                    yield PastaStatus()
                     yield Static(
                         "Isolated network namespace with iptables rules.",
                         classes="network-hint",
