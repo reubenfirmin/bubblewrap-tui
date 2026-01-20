@@ -4,6 +4,19 @@ A terminal user interface for configuring and launching [bubblewrap](https://git
 
 Instead of memorizing dozens of `bwrap` flags, visually configure your sandbox and see the generated command before execution.
 
+## Contents
+
+- [Status](#status)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Profiles](#profiles)
+- [Managed Sandboxes](#managed-sandboxes)
+  - [Safe Curl|Bash - Installing Deno](#safe-curlbash---installing-deno)
+  - [Constraining Agents - Sandboxing Claude Code](#constraining-agents---sandboxing-claude-code)
+- [Development](#development)
+- [License](#license)
+
 ## Status
 
 - Beta quality, moderately tested. That said it doesn't do anything except generate (and run, on demand) a bwrap command, so is mostly harmless. Do your own diligence before trusting the security of critical data to it, and also review bubblewrap CVEs / known issues.
@@ -40,7 +53,7 @@ The TUI lets you:
 - Enable/disable network access
 - Save configurations as reusable profiles
 
-Press `x` to execute with your configuration, or `q` to quit.
+Press `x` or `Enter` to execute, `q` or `Esc` to quit.
 
 ## Profiles
 
@@ -59,8 +72,8 @@ This is useful for:
 
 Running `bui --install` creates a built-in `untrusted` profile designed for running untrusted code safely:
 
+- Isolated home directory (your real home is not accessible)
 - Read-only system paths (`/usr`, `/bin`, `/lib`, etc.)
-- Home directory via overlay (changes are isolated, not written to your real home)
 - Network access enabled (for downloads)
 - Strong isolation (new session, PID namespace, dropped capabilities)
 
@@ -82,7 +95,7 @@ For applications you want to install and run repeatedly in isolation, bui provid
 - Isolating development tools from your system
 - Running AI coding assistants with restricted access
 
-### Example: Installing Deno
+### Safe Curl|Bash - Installing Deno
 
 Install Deno in an isolated sandbox:
 
@@ -92,10 +105,9 @@ bui --profile untrusted --sandbox deno -- 'curl -fsSL https://deno.land/install.
 ```
 
 This runs the install script with:
+- Isolated home directory (`~/.local/state/bui/overlays/deno/`) - your real home is not accessible
 - Read-only access to system paths
-- Home directory changes captured in an overlay (`~/.local/state/bui/overlays/deno/`)
 - Network access for downloads
-- Full isolation from your real home directory
 
 After installation, create a wrapper script so you can use `deno` normally:
 
@@ -119,7 +131,7 @@ deno run server.ts
 deno compile main.ts
 ```
 
-### Example: Running Claude Code in a Sandbox
+### Constraining Agents - Sandboxing Claude Code
 
 AI coding assistants like Claude Code can execute arbitrary shell commands and modify files. Running them in a sandbox provides defense in depth - even if the AI makes a mistake or is manipulated, it can only affect files you explicitly allow.
 
@@ -129,7 +141,7 @@ AI coding assistants like Claude Code can execute arbitrary shell commands and m
 - Each project directory is explicitly granted access via `--bind-cwd`
 - All of Claude's installed files (npm packages, config) live in an isolated overlay
 
-**The tradeoff:** You need `--bind` and `--bind-env` flags to expose tools and configure the environment, rather than creating a custom profile. This is intentional - the generic `untrusted` profile works for many use cases without per-tool maintenance.
+**The tradeoff:** You need `--bind` and `--bind-env` flags to expose tools and set environment variables.
 
 #### Installation
 
@@ -166,18 +178,6 @@ The wrapper script automatically:
 
 Because the wrapper uses `--bind-cwd`, Claude can read and write files in your current directory. It cannot access other directories, your home directory, or sensitive dotfiles.
 
-#### Terminal colors
-
-If the terminal looks basic (no colors), add TERM to your sandbox:
-
-```bash
-# One-time fix
-bui --sandbox claude --bind-env "TERM=$TERM" -- claude
-
-# Or regenerate the default profile which now includes TERM
-bui --install
-```
-
 ### Managing Sandboxes
 
 List installed sandboxes:
@@ -194,6 +194,8 @@ Sandboxes:
   claude
     profile: untrusted
     scripts: claude
+    bind: /home/user/.nvm/versions/node/v20.0.0/bin
+    bind-env: NPM_CONFIG_PREFIX=/home/sandbox/.npm-global
 ```
 
 List overlay directories (including orphaned ones):
@@ -223,9 +225,26 @@ Removed: /home/user/.local/bin/deno
 Removed: /home/user/.local/state/bui/overlays/deno/
 ```
 
+### Tips
+
+**Terminal colors**: If the terminal looks basic (no colors), pass through TERM:
+
+```bash
+bui --sandbox myapp --bind-env "TERM=$TERM" -- myapp
+```
+
 ## Development
 
 ```bash
+# Run directly from source
+uv run python src/cli.py -- bash
+
+# Build single-file executable
+./build.py
+
+# Run built version
+./bui -- bash
+
 # Run tests
 uv run --with pytest --with pytest-cov --with pytest-asyncio --with textual pytest tests/ -v
 
