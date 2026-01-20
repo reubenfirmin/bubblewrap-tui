@@ -1,5 +1,6 @@
 """Command-line interface for bui."""
 
+import argparse
 import os
 import shlex
 import sys
@@ -10,11 +11,16 @@ from app import BubblewrapTUI
 from installer import check_for_updates, do_install, do_update, show_update_notice
 from model import BoundDirectory, SandboxConfig
 from profiles import BUI_PROFILES_DIR, Profile
+from sandbox import (
+    BUI_STATE_DIR,
+    find_executables,
+    install_sandbox_binary,
+    list_overlays,
+    list_sandboxes,
+    uninstall_sandbox,
+)
 
 BUI_VERSION = "0.3.5"
-
-# Base directory for overlay storage
-BUI_STATE_DIR = Path.home() / ".local" / "state" / "bui"
 
 # Global to store update message for display after TUI exits
 _update_available: str | None = None
@@ -72,78 +78,78 @@ def needs_shell_wrap(command: list[str]) -> bool:
     return False
 
 
-def show_help() -> None:
-    """Print help message and exit."""
-    print(__doc__ or "Bubblewrap TUI - A visual interface for configuring bubblewrap sandboxes.")
-    print(f"Version: {BUI_VERSION}")
-    print("\nUsage:")
-    print("  bui -- <command> [args...]            Configure and run a sandboxed command")
-    print("  bui --profile <name> -- <command>     Load profile and run command")
-    print("  bui --sandbox <name>                  Name for overlay storage (use with --profile)")
-    print("  bui --bind-cwd                        Bind CWD read-write (use with --profile)")
-    print("  bui --sandbox <name> --generate       Generate shell alias for sandbox binary")
-    print("  bui --install                         Install bui to ~/.local/bin")
-    print("  bui --update                          Download latest version and install")
-    print("\nExamples:")
-    print("  bui -- /bin/bash")
-    print("  bui -- python script.py arg1 arg2")
-    print('  bui -- "curl foo.sh | bash"           (pipes and redirects auto-handled)')
-    print("  bui --profile myprofile -- code       (load from ~/.config/bui/profiles/)")
-    print("  bui --profile untrusted --sandbox deno -- ./install.sh")
-    print("                                        (writes go to ~/.local/state/bui/overlays/deno/)")
-    print("  bui --sandbox deno --generate         (generate alias for installed binary)")
-    print("\nBuilt-in Profiles:")
-    print("  untrusted    Safe sandbox for running untrusted code (curl|bash scripts)")
-    print("               - Read-only system paths, isolated namespaces")
-    print("               - Home directory overlay (isolated per --sandbox or UUID)")
-    print("               - Network enabled for downloads")
-    print("\n  Example: bui --profile untrusted --sandbox myapp -- bash")
-    sys.exit(0)
+class BuiHelpFormatter(argparse.RawDescriptionHelpFormatter):
+    """Custom formatter that shows our structured help."""
+
+    def format_help(self) -> str:
+        lines = [
+            "Bubblewrap TUI - A visual interface for configuring bubblewrap sandboxes.",
+            f"Version: {BUI_VERSION}",
+            "",
+            "Core:",
+            "  bui -- <command> [args...]            Configure and run a sandboxed command",
+            "",
+            "Bui Install/Update:",
+            "  bui --install                         Install bui to ~/.local/bin",
+            "  bui --update                          Download latest version and install",
+            "",
+            "Profile Options:",
+            "  bui --profile <name> -- <command>     Load profile and run command",
+            "  bui --sandbox <name>                  Name for overlay storage (use with --profile)",
+            "  bui --bind-cwd                        Bind CWD read-write (use with --profile)",
+            "",
+            "Sandbox Management:",
+            "  bui --sandbox <name> --install [--profile <p>]",
+            "                                        Create wrapper script in ~/.local/bin",
+            "                                        (uses 'untrusted' profile by default)",
+            "  bui --sandbox <name> --uninstall      Remove sandbox and wrapper scripts",
+            "  bui --list-sandboxes                  List installed sandboxes",
+            "  bui --list-overlays                   List overlay directories",
+            "",
+            "Examples:",
+            "  bui -- /bin/bash",
+            "  bui -- python script.py arg1 arg2",
+            "  bui --profile untrusted --sandbox deno -- 'curl -fsSL https://deno.land/install.sh | sh'",
+            "  bui --sandbox deno --install",
+            "  bui --list-sandboxes",
+            "",
+            "Built-in Profiles:",
+            "  untrusted    Safe sandbox for running untrusted code (curl|bash scripts)",
+            "               - Read-only system paths, isolated namespaces",
+            "               - Home directory overlay (isolated per --sandbox or UUID)",
+            "               - Network enabled for downloads",
+            "",
+            "  Example: bui --profile untrusted --sandbox myapp -- bash",
+        ]
+        return "\n".join(lines) + "\n"
 
 
-def find_executables(overlay_dir: Path) -> list[Path]:
-    """Find executable files in overlay directory, excluding caches."""
-    skip_prefixes = (".cache/", ".local/share/", ".npm/", ".cargo/registry/")
-    executables = []
-    for path in overlay_dir.rglob("*"):
-        if not path.is_file() or not os.access(path, os.X_OK):
-            continue
-        rel = str(path.relative_to(overlay_dir))
-        if any(rel.startswith(p) for p in skip_prefixes):
-            continue
-        executables.append(path)
-    return sorted(executables)
+def create_parser() -> argparse.ArgumentParser:
+    """Create argument parser for bui CLI."""
+    parser = argparse.ArgumentParser(
+        prog="bui",
+        formatter_class=BuiHelpFormatter,
+        add_help=True,
+    )
 
+    # Bui install/update (mutually exclusive standalone actions)
+    parser.add_argument("--install", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--update", action="store_true", help=argparse.SUPPRESS)
 
-def generate_sandbox_alias(sandbox_name: str) -> None:
-    """Scan sandbox for executables and output shell alias."""
-    overlay_dir = Path.home() / ".local" / "state" / "bui" / "overlays" / sandbox_name
+    # Profile options
+    parser.add_argument("--profile", metavar="NAME", help=argparse.SUPPRESS)
+    parser.add_argument("--sandbox", metavar="NAME", help=argparse.SUPPRESS)
+    parser.add_argument("--bind-cwd", action="store_true", help=argparse.SUPPRESS)
 
-    if not overlay_dir.exists():
-        print(f"Sandbox '{sandbox_name}' not found", file=sys.stderr)
-        sys.exit(1)
+    # Sandbox management
+    parser.add_argument("--uninstall", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--list-sandboxes", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--list-overlays", action="store_true", help=argparse.SUPPRESS)
 
-    executables = find_executables(overlay_dir)
-    if not executables:
-        print(f"No executables found in sandbox '{sandbox_name}'", file=sys.stderr)
-        sys.exit(1)
+    # Command to run (everything after --)
+    parser.add_argument("command", nargs="*", help=argparse.SUPPRESS)
 
-    print(f"Executables in sandbox '{sandbox_name}':")
-    for i, exe in enumerate(executables, 1):
-        print(f"  {i}. {exe.relative_to(overlay_dir)}")
-
-    try:
-        choice = input("\nSelect binary (number): ")
-        selected = executables[int(choice) - 1]
-    except (ValueError, IndexError, EOFError):
-        print("Invalid selection", file=sys.stderr)
-        sys.exit(1)
-
-    binary_name = selected.name
-    home_path = Path("~") / selected.relative_to(overlay_dir)
-
-    print(f"\nAdd to your shell rc file:")
-    print(f"  alias {binary_name}='bui --profile untrusted --sandbox {sandbox_name} --bind-cwd -- {home_path}'")
+    return parser
 
 
 def parse_args() -> tuple[list[str], str | None, str | None, bool]:
@@ -151,80 +157,73 @@ def parse_args() -> tuple[list[str], str | None, str | None, bool]:
 
     Returns: (command, profile_path, sandbox_name, bind_cwd)
     """
-    args = sys.argv[1:]
+    parser = create_parser()
 
-    if not args or "--help" in args or "-h" in args:
-        show_help()
+    # Handle -- separator: argparse treats it specially, but we want to capture
+    # everything after -- as the command, including things that look like flags
+    argv = sys.argv[1:]
+    if "--" in argv:
+        sep_idx = argv.index("--")
+        bui_args = argv[:sep_idx]
+        command_args = argv[sep_idx + 1 :]
+    else:
+        bui_args = argv
+        command_args = []
 
-    if "--install" in args:
+    # Parse bui's own arguments
+    args = parser.parse_args(bui_args)
+
+    # Handle standalone actions first (these exit immediately)
+
+    # bui --install (self-install, only when --sandbox is NOT present)
+    if args.install and not args.sandbox:
         do_install(BUI_VERSION)
         sys.exit(0)
 
-    if "--update" in args:
+    if args.update:
         do_update(BUI_VERSION)
         sys.exit(0)
 
-    # Check for --profile flag
-    profile_path = None
-    if "--profile" in args:
-        try:
-            profile_idx = args.index("--profile")
-            if profile_idx + 1 >= len(args) or args[profile_idx + 1].startswith("-"):
-                print("Error: --profile requires a file path", file=sys.stderr)
-                sys.exit(1)
-            profile_path = args[profile_idx + 1]
-            # Remove --profile and its argument from args
-            args = args[:profile_idx] + args[profile_idx + 2 :]
-        except (IndexError, ValueError):
-            pass
-
-    # Check for --sandbox flag (optional name for overlay isolation)
-    sandbox_name = None
-    if "--sandbox" in args:
-        try:
-            sandbox_idx = args.index("--sandbox")
-            if sandbox_idx + 1 >= len(args) or args[sandbox_idx + 1].startswith("-"):
-                print("Error: --sandbox requires a name", file=sys.stderr)
-                sys.exit(1)
-            sandbox_name = args[sandbox_idx + 1]
-            # Remove --sandbox and its argument from args
-            args = args[:sandbox_idx] + args[sandbox_idx + 2 :]
-        except (IndexError, ValueError):
-            pass
-
-    # Check for --bind-cwd flag
-    bind_cwd = "--bind-cwd" in args
-    if bind_cwd:
-        args.remove("--bind-cwd")
-
-    # Check for --generate flag
-    if "--generate" in args:
-        args.remove("--generate")
-        if sandbox_name is None:
-            print("--generate requires --sandbox <name>", file=sys.stderr)
-            sys.exit(1)
-        generate_sandbox_alias(sandbox_name)
+    if args.list_sandboxes:
+        list_sandboxes()
         sys.exit(0)
 
-    try:
-        sep_idx = args.index("--")
-        command = args[sep_idx + 1 :]
-        if not command:
-            print("Error: No command specified after '--'", file=sys.stderr)
-            print("Usage: bui -- <command> [args...]", file=sys.stderr)
-            sys.exit(1)
-    except ValueError:
-        command = args
+    if args.list_overlays:
+        list_overlays()
+        sys.exit(0)
 
+    # Sandbox management actions (require --sandbox)
+    if args.install and args.sandbox:
+        profile = args.profile if args.profile else "untrusted"
+        install_sandbox_binary(args.sandbox, profile)
+        sys.exit(0)
+
+    if args.uninstall:
+        if not args.sandbox:
+            print("Error: --uninstall requires --sandbox <name>", file=sys.stderr)
+            sys.exit(1)
+        uninstall_sandbox(args.sandbox)
+        sys.exit(0)
+
+    # Build the command to run
+    # Command can come from after -- or from positional args
+    command = command_args if command_args else args.command
+
+    if not command:
+        # No command specified - show help
+        parser.print_help()
+        sys.exit(0)
+
+    # Wrap in shell if needed
     if needs_shell_wrap(command):
         if len(command) == 1:
             # Single string with shell metacharacters - pass directly to -c
-            # (user already quoted it as a single argument)
-            return ["/bin/bash", "-c", command[0]], profile_path, sandbox_name, bind_cwd
+            command = ["/bin/bash", "-c", command[0]]
         else:
             # Multiple arguments with shell metacharacters - join them
-            return ["/bin/bash", "-c", shlex.join(command)], profile_path, sandbox_name, bind_cwd
-    return command, profile_path, sandbox_name, bind_cwd
+            command = ["/bin/bash", "-c", shlex.join(command)]
+
+    return command, args.profile, args.sandbox, args.bind_cwd
 
 
 def apply_sandbox_to_overlays(config: SandboxConfig, sandbox_name: str) -> list[Path]:

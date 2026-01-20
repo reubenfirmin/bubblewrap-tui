@@ -6,8 +6,8 @@ Instead of memorizing dozens of `bwrap` flags, visually configure your sandbox a
 
 ## Status
 
-- This is both beta quality and lightly tested. That said it doesn't do anything except generate (and run, on demand) a bwrap command, so is mostly harmless. 
-- PRs and bug reports are welcomed. Feature requests will be considered. :) 
+- This is both beta quality and lightly tested. That said it doesn't do anything except generate (and run, on demand) a bwrap command, so is mostly harmless.
+- PRs and bug reports are welcomed. Feature requests will be considered. :)
 
 ## Requirements
 
@@ -27,8 +27,11 @@ See [uv installation docs](https://docs.astral.sh/uv/getting-started/installatio
 curl -LO https://github.com/reubenfirmin/bubblewrap-tui/releases/latest/download/bui
 chmod +x bui
 
-# Optionally install to PATH
+# Install to PATH
 ./bui --install
+
+# Update to latest version
+bui --update
 ```
 
 ## Usage
@@ -67,27 +70,11 @@ Add `--sandbox <name>` to isolate installations from each other:
 bui --profile untrusted --sandbox deno -- "curl -fsSL https://deno.land/install.sh | sh"
 ```
 
-### Generating Shell Aliases
-
-After installing software in a sandbox, use `--generate` to create a shell alias:
+Use `--bind-cwd` to allow read-write access to your current directory:
 
 ```bash
-bui --sandbox deno --generate
+bui --profile untrusted --sandbox deno --bind-cwd -- deno run script.ts
 ```
-
-This scans the sandbox for executables and outputs an alias you can add to your shell rc file:
-
-```
-Executables in sandbox 'deno':
-  1. .deno/bin/deno
-
-Select binary (number): 1
-
-Add to your shell rc file:
-  alias deno='bui --profile untrusted --sandbox deno --bind-cwd -- ~/.deno/bin/deno'
-```
-
-The `--bind-cwd` flag binds your current working directory read-write into the sandbox, allowing the sandboxed binary to read and write files in whichever directory you run it from.
 
 ### Customizing Profiles
 
@@ -99,6 +86,67 @@ To create a custom profile based on `untrusted`:
 4. Press `s` and save with a new name (e.g., `my-profile`)
 
 Your custom profile will be saved to `~/.config/bui/profiles/my-profile.json`.
+
+## Sandbox Management
+
+### Installing Binaries
+
+After installing software in a sandbox, use `--install` to create a wrapper script in `~/.local/bin`:
+
+```bash
+bui --sandbox deno --install
+```
+
+This scans the sandbox for executables and installs a wrapper script:
+
+```
+Executables in sandbox 'deno':
+  1. .deno/bin/deno
+
+Select binary (number): 1
+Installed: /home/user/.local/bin/deno
+```
+
+Now you can use `deno` from any directory (no shell rc changes needed):
+
+```bash
+cd ~/projects/myapp
+deno compile main.ts
+```
+
+The wrapper script automatically runs the binary in its sandbox with `--bind-cwd`, allowing it to read and write files in your current directory.
+
+### Listing Sandboxes
+
+List all sandboxes and their installed binaries:
+
+```bash
+bui --list-sandboxes
+```
+
+Output:
+
+```
+Sandboxes:
+  deno     (installed: deno)
+  node     (installed: node, npm, npx)
+  rust     (no binaries installed)
+```
+
+### Uninstalling Sandboxes
+
+Remove a sandbox and all its installed binaries:
+
+```bash
+bui --sandbox deno --uninstall
+```
+
+Output:
+
+```
+Removed: /home/user/.local/bin/deno
+Removed: /home/user/.local/state/bui/overlays/deno/
+```
 
 ## Development
 

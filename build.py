@@ -28,6 +28,7 @@ MODULE_ORDER = [
     "detection.py",                   # No dependencies (system detection)
     "environment.py",                 # No dependencies (env var utilities)
     "installer.py",                   # No dependencies (install/update)
+    "sandbox.py",                     # Sandbox lifecycle management
     "model/ui_field.py",              # No dependencies - UIField, Field, ConfigBase
     "model/bound_directory.py",       # No dependencies
     "model/overlay_config.py",        # No dependencies
@@ -58,7 +59,7 @@ MODULE_ORDER = [
 
 # Local modules (imports to filter out)
 LOCAL_MODULES = {
-    "detection", "environment", "installer", "profiles", "app", "cli", "styles", "bwrap",
+    "detection", "environment", "installer", "sandbox", "profiles", "app", "cli", "styles", "bwrap",
     "model",
     "model.ui_field", "model.bound_directory", "model.overlay_config",
     "model.config_group", "model.config", "model.groups", "model.sandbox_config",
