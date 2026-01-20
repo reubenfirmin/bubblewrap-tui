@@ -68,14 +68,15 @@ class TestParseArgs:
     def test_command_after_separator(self):
         """Command after -- is parsed correctly."""
         with patch.object(sys, "argv", ["bui", "--", "bash"]):
-            command, profile = parse_args()
+            command, profile, sandbox = parse_args()
             assert command == ["bash"]
             assert profile is None
+            assert sandbox is None
 
     def test_command_with_args(self):
         """Command with arguments after --."""
         with patch.object(sys, "argv", ["bui", "--", "python", "script.py", "-v"]):
-            command, profile = parse_args()
+            command, profile, sandbox = parse_args()
             assert command == ["python", "script.py", "-v"]
 
     def test_profile_flag(self):
@@ -83,7 +84,7 @@ class TestParseArgs:
         with patch.object(
             sys, "argv", ["bui", "--profile", "test.json", "--", "bash"]
         ):
-            command, profile = parse_args()
+            command, profile, sandbox = parse_args()
             assert command == ["bash"]
             assert profile == "test.json"
 
@@ -92,23 +93,33 @@ class TestParseArgs:
         with patch.object(
             sys, "argv", ["bui", "--profile", "/home/user/profiles/dev.json", "--", "bash"]
         ):
-            command, profile = parse_args()
+            command, profile, sandbox = parse_args()
             assert profile == "/home/user/profiles/dev.json"
 
     def test_no_separator(self):
         """Command without -- separator."""
         with patch.object(sys, "argv", ["bui", "bash"]):
-            command, profile = parse_args()
+            command, profile, sandbox = parse_args()
             assert command == ["bash"]
 
     def test_shell_wrap_applied(self):
         """Shell metacharacters trigger shell wrap."""
         with patch.object(sys, "argv", ["bui", "--", "cat foo | grep bar"]):
-            command, profile = parse_args()
+            command, profile, sandbox = parse_args()
             # shlex.join quotes the argument
             assert command[0] == "/bin/bash"
             assert command[1] == "-c"
             assert "cat foo | grep bar" in command[2]
+
+    def test_sandbox_flag(self):
+        """--sandbox flag is parsed."""
+        with patch.object(
+            sys, "argv", ["bui", "--profile", "untrusted", "--sandbox", "test", "--", "bash"]
+        ):
+            command, profile, sandbox = parse_args()
+            assert command == ["bash"]
+            assert profile == "untrusted"
+            assert sandbox == "test"
 
     def test_help_flag_exits(self):
         """--help flag shows help and exits."""

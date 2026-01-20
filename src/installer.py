@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
@@ -92,6 +93,113 @@ def check_for_updates(current_version: str) -> str | None:
     return None
 
 
+def get_config_dir() -> Path:
+    """Get the config directory for bui."""
+    config_dir = Path.home() / ".config" / "bui"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return config_dir
+
+
+def get_profiles_dir() -> Path:
+    """Get the profiles directory for bui."""
+    profiles_dir = get_config_dir() / "profiles"
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+    return profiles_dir
+
+
+def create_default_profiles() -> None:
+    """Create default profiles if they don't exist."""
+    profiles_dir = get_profiles_dir()
+    untrusted_profile = profiles_dir / "untrusted.json"
+
+    home = str(Path.home())
+    overlay_write_dir = Path.home() / ".local" / "state" / "bui" / "overlays"
+    overlay_work_dir = Path.home() / ".local" / "state" / "bui" / ".overlay-work"
+
+    # Always create overlay directories
+    overlay_write_dir.mkdir(parents=True, exist_ok=True)
+    overlay_work_dir.mkdir(parents=True, exist_ok=True)
+
+    # Always create/overwrite default profiles
+    # User customizations should be saved under different names
+    overlay_write_dir = str(overlay_write_dir)
+
+    # Build bound_dirs for system paths that exist
+    bound_dirs = []
+    for path_str in ["/usr", "/bin", "/lib", "/lib64", "/sbin", "/etc"]:
+        if Path(path_str).exists():
+            bound_dirs.append({"path": path_str, "readonly": True})
+
+    profile_data = {
+        "bound_dirs": bound_dirs,
+        "overlays": [
+            {
+                "source": home,
+                "dest": home,
+                "mode": "persistent",
+                "write_dir": overlay_write_dir,
+            }
+        ],
+        "drop_caps": [],
+        "_vfs_group": {
+            "_values": {
+                "dev_mode": "minimal",
+                "mount_proc": True,
+                "mount_tmp": True,
+                "tmpfs_size": "",
+            }
+        },
+        # Note: _system_paths_group is NOT included - it's UI-only state
+        # Checkbox states are derived from bound_dirs when loading a profile
+        "_isolation_group": {
+            "_values": {
+                "unshare_user": True,
+                "unshare_pid": True,
+                "unshare_ipc": True,
+                "unshare_uts": True,
+                "unshare_cgroup": True,
+                "disable_userns": True,
+            }
+        },
+        "_process_group": {
+            "_values": {
+                "die_with_parent": True,
+                "new_session": True,
+                "as_pid_1": False,
+                "chdir": "",
+                "uid": 0,
+                "gid": 0,
+            }
+        },
+        "_network_group": {
+            "_values": {
+                "share_net": True,
+                "bind_resolv_conf": True,
+                "bind_ssl_certs": True,
+            }
+        },
+        "_desktop_group": {
+            "_values": {
+                "allow_dbus": False,
+                "allow_display": False,
+                "bind_user_config": False,
+            }
+        },
+        "_environment_group": {
+            "_values": {
+                "clear_env": True,
+                "custom_hostname": "sandbox",
+                "keep_env_vars": ["PATH", "HOME"],
+                "unset_env_vars": [],
+                "custom_env_vars": {},
+            }
+        },
+    }
+
+    untrusted_profile.write_text(json.dumps(profile_data, indent=2))
+    print(f"Created default profile: {untrusted_profile}")
+
+
 def do_install(version: str, source_path: Path | None = None) -> None:
     """Install bui to ~/.local/bin.
 
@@ -118,6 +226,9 @@ def do_install(version: str, source_path: Path | None = None) -> None:
     install_path.chmod(0o755)
 
     print(f"Installed bui v{version} to {install_path}")
+
+    # Create default profiles
+    create_default_profiles()
 
 
 def get_latest_version() -> str | None:

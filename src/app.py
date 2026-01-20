@@ -453,6 +453,9 @@ class BubblewrapTUI(
 
     def _on_profile_loaded(self) -> None:
         """Called when a profile is loaded (sync UI)."""
+        # First, derive checkbox states from bound_dirs (inverse sync)
+        # This ensures Quick Shortcuts checkboxes reflect what's in the profile's bound_dirs
+        self._get_sync_manager().sync_shortcuts_from_bound_dirs()
         self._sync_ui_from_config()
         self._update_preview()
 

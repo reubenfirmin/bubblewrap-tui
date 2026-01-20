@@ -154,6 +154,32 @@ class ConfigSyncManager:
             except (ValueError, AttributeError) as e:
                 log.debug(f"Error syncing {mapping.widget_id}: {e}")
 
+    def sync_shortcuts_from_bound_dirs(self) -> None:
+        """Derive shortcut checkbox states from existing bound_dirs.
+
+        This is the inverse of the normal sync flow. When loading a profile,
+        the bound_dirs list is the source of truth. This method sets the
+        checkbox states to match which system paths are already bound.
+        """
+        from model.groups import QUICK_SHORTCUTS
+
+        # Get resolved paths from bound_dirs
+        bound_paths = {bd.path.resolve() for bd in self.config.bound_dirs}
+
+        for field in QUICK_SHORTCUTS:
+            shortcut_path = getattr(field, "shortcut_path", None)
+            if shortcut_path is None:
+                continue
+
+            # Check if this shortcut's path is in bound_dirs
+            enabled = shortcut_path.resolve() in bound_paths
+
+            # Set the config value (checkbox will sync from this)
+            if field.name in ("bind_usr", "bind_bin", "bind_lib", "bind_lib64", "bind_sbin", "bind_etc"):
+                setattr(self.config.filesystem, field.name, enabled)
+            elif field.name == "bind_user_config":
+                setattr(self.config.desktop, field.name, enabled)
+
     def sync_ui_from_config(self) -> None:
         """Read config and update all UI widgets."""
         for mapping in FIELD_MAPPINGS:
