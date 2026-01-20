@@ -6,6 +6,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from profiles import BUI_PROFILES_DIR, Profile
+
 # Base directory for overlay storage
 BUI_STATE_DIR = Path.home() / ".local" / "state" / "bui"
 
@@ -29,11 +31,38 @@ def _save_installed(installed: dict[str, dict]) -> None:
     INSTALLED_SCRIPTS_FILE.write_text(json.dumps(installed, indent=2))
 
 
-def _add_installed(sandbox_name: str, script_name: str, profile: str) -> None:
+def register_sandbox(
+    sandbox_name: str,
+    profile: str,
+    bind_paths: list[str] | None = None,
+    bind_env: list[str] | None = None,
+) -> None:
+    """Register a sandbox in metadata (before installing scripts)."""
+    installed = _load_installed()
+    if sandbox_name not in installed:
+        installed[sandbox_name] = {"scripts": [], "profile": profile}
+        if bind_paths:
+            installed[sandbox_name]["bind_paths"] = bind_paths
+        if bind_env:
+            installed[sandbox_name]["bind_env"] = bind_env
+        _save_installed(installed)
+
+
+def _add_installed(
+    sandbox_name: str,
+    script_name: str,
+    profile: str,
+    bind_paths: list[str] | None = None,
+    bind_env: list[str] | None = None,
+) -> None:
     """Record that a script was installed for a sandbox."""
     installed = _load_installed()
     if sandbox_name not in installed:
         installed[sandbox_name] = {"scripts": [], "profile": profile}
+        if bind_paths:
+            installed[sandbox_name]["bind_paths"] = bind_paths
+        if bind_env:
+            installed[sandbox_name]["bind_env"] = bind_env
     if script_name not in installed[sandbox_name]["scripts"]:
         installed[sandbox_name]["scripts"].append(script_name)
     _save_installed(installed)
@@ -64,7 +93,12 @@ def find_executables(overlay_dir: Path) -> list[Path]:
     return sorted(executables)
 
 
-def install_sandbox_binary(sandbox_name: str, profile: str = "untrusted") -> None:
+def install_sandbox_binary(
+    sandbox_name: str,
+    profile: str = "untrusted",
+    bind_paths: list[str] | None = None,
+    bind_env: list[str] | None = None,
+) -> None:
     """Install selected binary from sandbox to ~/.local/bin."""
     overlay_dir = BUI_STATE_DIR / "overlays" / sandbox_name
     bin_dir = Path.home() / ".local" / "bin"
@@ -72,6 +106,17 @@ def install_sandbox_binary(sandbox_name: str, profile: str = "untrusted") -> Non
     if not overlay_dir.exists():
         print(f"Sandbox '{sandbox_name}' not found", file=sys.stderr)
         sys.exit(1)
+
+    # Read existing metadata to get binds if not provided
+    installed = _load_installed()
+    if sandbox_name in installed:
+        entry = installed[sandbox_name]
+        if profile == "untrusted" and entry.get("profile"):
+            profile = entry["profile"]
+        if bind_paths is None:
+            bind_paths = entry.get("bind_paths")
+        if bind_env is None:
+            bind_env = entry.get("bind_env")
 
     executables = find_executables(overlay_dir)
     if not executables:
@@ -90,17 +135,28 @@ def install_sandbox_binary(sandbox_name: str, profile: str = "untrusted") -> Non
         sys.exit(1)
 
     binary_name = selected.name
-    home_path = Path("~") / selected.relative_to(overlay_dir)
+    # Path inside sandbox - overlay is bound to /home/sandbox
+    sandbox_home = "/home/sandbox"
+    home_path = f"{sandbox_home}/{selected.relative_to(overlay_dir)}"
     script_path = bin_dir / binary_name
 
     bin_dir.mkdir(parents=True, exist_ok=True)
 
+    # Build extra flags for bind paths and env vars
+    extra_flags = ""
+    if bind_paths:
+        for p in bind_paths:
+            extra_flags += f" --bind {p}"
+    if bind_env:
+        for env_spec in bind_env:
+            extra_flags += f" --bind-env '{env_spec}'"
+
     script_content = f"""#!/bin/sh
-exec bui --profile {profile} --sandbox {sandbox_name} --bind-cwd -- {home_path} "$@"
+exec bui --profile {profile} --sandbox {sandbox_name} --bind-cwd{extra_flags} -- {home_path} "$@"
 """
     script_path.write_text(script_content)
     script_path.chmod(0o755)
-    _add_installed(sandbox_name, binary_name, profile)
+    _add_installed(sandbox_name, binary_name, profile, bind_paths, bind_env)
     print(f"Installed: {script_path}")
 
 
@@ -146,10 +202,18 @@ def list_sandboxes() -> None:
         entry = installed[name]
         scripts = entry.get("scripts", []) if isinstance(entry, dict) else entry
         profile = entry.get("profile", "untrusted") if isinstance(entry, dict) else "untrusted"
+        bind_paths = entry.get("bind_paths", []) if isinstance(entry, dict) else []
+        bind_env = entry.get("bind_env", []) if isinstance(entry, dict) else []
+        print(f"  {name}")
+        print(f"    profile: {profile}")
         if scripts:
-            print(f"  {name}")
-            print(f"    profile: {profile}")
             print(f"    scripts: {', '.join(sorted(scripts))}")
+        else:
+            print(f"    scripts: (none - run: bui --sandbox {name} --install)")
+        if bind_paths:
+            print(f"    bind: {', '.join(bind_paths)}")
+        if bind_env:
+            print(f"    bind-env: {', '.join(bind_env)}")
 
 
 def list_overlays() -> None:
@@ -185,3 +249,18 @@ def list_overlays() -> None:
             print(f"    To remove: bui --sandbox {name} --uninstall")
         else:
             print("    No sandbox installed (safe to delete)")
+
+
+def list_profiles() -> None:
+    """List available profiles."""
+    profiles = Profile.list_profiles(BUI_PROFILES_DIR)
+
+    if not profiles:
+        print("No profiles found")
+        print(f"(profiles are stored in {BUI_PROFILES_DIR})")
+        return
+
+    print("Profiles:")
+    for profile in profiles:
+        print(f"  {profile.name}")
+    print(f"\nProfile directory: {BUI_PROFILES_DIR}")

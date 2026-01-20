@@ -6,6 +6,10 @@ import shlex
 import sys
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from model import SandboxConfig
 
 from app import BubblewrapTUI
 from installer import check_for_updates, do_install, do_update, show_update_notice
@@ -16,7 +20,9 @@ from sandbox import (
     find_executables,
     install_sandbox_binary,
     list_overlays,
+    list_profiles,
     list_sandboxes,
+    register_sandbox,
     uninstall_sandbox,
 )
 
@@ -96,7 +102,10 @@ class BuiHelpFormatter(argparse.RawDescriptionHelpFormatter):
             "Profile Options:",
             "  bui --profile <name> -- <command>     Load profile and run command",
             "  bui --sandbox <name>                  Name for overlay storage (use with --profile)",
-            "  bui --bind-cwd                        Bind CWD read-write (use with --profile)",
+            "  bui --bind <path>                     Bind path read-only (repeatable)",
+            "  bui --bind-cwd                        Bind CWD read-write",
+            "  bui --bind-env <VAR=VALUE>            Set env var in sandbox (repeatable)",
+            "  bui --list-profiles                   List available profiles",
             "",
             "Sandbox Management:",
             "  bui --sandbox <name> --install [--profile <p>]",
@@ -107,11 +116,20 @@ class BuiHelpFormatter(argparse.RawDescriptionHelpFormatter):
             "  bui --list-overlays                   List overlay directories",
             "",
             "Examples:",
+            "",
+            "  # Launch TUI to configure a sandbox interactively",
             "  bui -- /bin/bash",
             "  bui -- python script.py arg1 arg2",
+            "",
+            "  # Install deno in an isolated sandbox (curl|bash pattern)",
             "  bui --profile untrusted --sandbox deno -- 'curl -fsSL https://deno.land/install.sh | sh'",
             "  bui --sandbox deno --install",
-            "  bui --list-sandboxes",
+            "",
+            "  # Install claude-code - requires binding npm dir and setting NPM_CONFIG_PREFIX",
+            "  # (Potentially cleaner: fork 'untrusted' in TUI with npm dir + NPM_CONFIG_PREFIX)",
+            "  bui --profile untrusted --sandbox claude --bind $(dirname $(which npm)) \\",
+            "       --bind-env NPM_CONFIG_PREFIX=/home/sandbox/.npm-global \\",
+            "       -- npm install -g @anthropic-ai/claude-code",
             "",
             "Built-in Profiles:",
             "  untrusted    Safe sandbox for running untrusted code (curl|bash scripts)",
@@ -139,12 +157,15 @@ def create_parser() -> argparse.ArgumentParser:
     # Profile options
     parser.add_argument("--profile", metavar="NAME", help=argparse.SUPPRESS)
     parser.add_argument("--sandbox", metavar="NAME", help=argparse.SUPPRESS)
+    parser.add_argument("--bind", metavar="PATH", action="append", default=[], help=argparse.SUPPRESS)
     parser.add_argument("--bind-cwd", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--bind-env", metavar="VAR=VALUE", action="append", default=[], help=argparse.SUPPRESS)
 
     # Sandbox management
     parser.add_argument("--uninstall", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--list-sandboxes", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--list-overlays", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--list-profiles", action="store_true", help=argparse.SUPPRESS)
 
     # Command to run (everything after --)
     parser.add_argument("command", nargs="*", help=argparse.SUPPRESS)
@@ -152,10 +173,10 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def parse_args() -> tuple[list[str], str | None, str | None, bool]:
+def parse_args() -> tuple[list[str], str | None, str | None, bool, list[Path], list[str]]:
     """Parse command line arguments.
 
-    Returns: (command, profile_path, sandbox_name, bind_cwd)
+    Returns: (command, profile_path, sandbox_name, bind_cwd, bind_paths, bind_env)
     """
     parser = create_parser()
 
@@ -192,10 +213,16 @@ def parse_args() -> tuple[list[str], str | None, str | None, bool]:
         list_overlays()
         sys.exit(0)
 
+    if args.list_profiles:
+        list_profiles()
+        sys.exit(0)
+
     # Sandbox management actions (require --sandbox)
     if args.install and args.sandbox:
         profile = args.profile if args.profile else "untrusted"
-        install_sandbox_binary(args.sandbox, profile)
+        bind_paths = [str(Path(p).expanduser().resolve()) for p in args.bind] if args.bind else None
+        bind_env = args.bind_env if args.bind_env else None
+        install_sandbox_binary(args.sandbox, profile, bind_paths, bind_env)
         sys.exit(0)
 
     if args.uninstall:
@@ -223,7 +250,54 @@ def parse_args() -> tuple[list[str], str | None, str | None, bool]:
             # Multiple arguments with shell metacharacters - join them
             command = ["/bin/bash", "-c", shlex.join(command)]
 
-    return command, args.profile, args.sandbox, args.bind_cwd
+    # Resolve bind paths
+    bind_paths = [Path(p).expanduser().resolve() for p in args.bind]
+
+    return command, args.profile, args.sandbox, args.bind_cwd, bind_paths, args.bind_env
+
+
+def setup_virtual_user_fds(config: SandboxConfig) -> dict[str, int]:
+    """Set up file descriptors for virtual user files.
+
+    Creates pipes and writes passwd/group content to them. The read ends
+    are kept open for bwrap to read from.
+
+    Args:
+        config: The sandbox configuration
+
+    Returns:
+        Mapping of dest_path -> FD number for use with --ro-bind-data
+    """
+    virtual_user_data = config.get_virtual_user_data()
+    if not virtual_user_data:
+        return {}
+
+    fd_map = {}
+    for content, dest_path in virtual_user_data:
+        # Create a pipe
+        read_fd, write_fd = os.pipe()
+
+        # Write content to the pipe
+        os.write(write_fd, content.encode())
+        os.close(write_fd)
+
+        # Make the read FD inheritable (Python 3.4+ creates non-inheritable FDs by default)
+        os.set_inheritable(read_fd, True)
+
+        # Keep the read FD open for bwrap
+        fd_map[dest_path] = read_fd
+
+    return fd_map
+
+
+def execute_bwrap(config: SandboxConfig) -> None:
+    """Execute bwrap with virtual user support.
+
+    Sets up FDs for virtual user files if needed, then execs bwrap.
+    """
+    fd_map = setup_virtual_user_fds(config)
+    cmd = config.build_command(fd_map if fd_map else None)
+    os.execvp("bwrap", cmd)
 
 
 def apply_sandbox_to_overlays(config: SandboxConfig, sandbox_name: str) -> list[Path]:
@@ -250,7 +324,7 @@ def apply_sandbox_to_overlays(config: SandboxConfig, sandbox_name: str) -> list[
 def main() -> None:
     """Main entry point."""
     global _update_available
-    command, profile_path, sandbox_name, bind_cwd = parse_args()
+    command, profile_path, sandbox_name, bind_cwd, bind_paths, bind_env = parse_args()
 
     # Check for updates in background (non-blocking, cached for 1 day)
     _update_available = check_for_updates(BUI_VERSION)
@@ -259,20 +333,37 @@ def main() -> None:
     if profile_path:
         config = load_profile(profile_path, command)
 
+        # Apply --bind: add paths as read-only bound directories
+        for path in bind_paths:
+            config.bound_dirs.append(BoundDirectory(path=path, readonly=True))
+
         # Apply --bind-cwd: add current directory as read-write bound directory
         if bind_cwd:
             cwd = Path(os.getcwd())
             config.bound_dirs.append(BoundDirectory(path=cwd, readonly=False))
 
+        # Apply --bind-env: set environment variables in sandbox
+        for env_spec in bind_env:
+            if "=" in env_spec:
+                var, value = env_spec.split("=", 1)
+                config.environment.custom_env_vars[var] = value
+
         # Apply sandbox isolation to overlays
         overlay_dirs = []
+        user_provided_sandbox = sandbox_name is not None
         if config.overlays:
             # Generate UUID if no sandbox name specified
             if sandbox_name is None:
                 sandbox_name = str(uuid.uuid4())[:8]
             overlay_dirs = apply_sandbox_to_overlays(config, sandbox_name)
 
-        cmd = config.build_command()
+        # Register sandbox metadata (so --install can pick up binds later)
+        if user_provided_sandbox:
+            bind_paths_str = [str(p) for p in bind_paths] if bind_paths else None
+            register_sandbox(sandbox_name, profile_path, bind_paths_str, bind_env)
+
+        fd_map = setup_virtual_user_fds(config)
+        cmd = config.build_command(fd_map if fd_map else None)
         print("=" * 60)
         print("Executing:")
         print(" ".join(cmd))
@@ -293,7 +384,8 @@ def main() -> None:
         show_update_notice(BUI_VERSION, _update_available)
 
     if app._execute_command:
-        cmd = app.config.build_command()
+        fd_map = setup_virtual_user_fds(app.config)
+        cmd = app.config.build_command(fd_map if fd_map else None)
         print("=" * 60)
         print("Executing:")
         print(" ".join(cmd))

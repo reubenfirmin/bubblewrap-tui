@@ -23,6 +23,7 @@ def make_config(
     command=None,
     filesystem=None,
     network=None,
+    user=None,
     namespace=None,
     process=None,
     environment=None,
@@ -49,7 +50,12 @@ def make_config(
         for key, value in network.items():
             setattr(config.network, key, value)
 
-    # Apply namespace settings
+    # Apply user settings (unshare_user, uid, gid, username)
+    if user:
+        for key, value in user.items():
+            setattr(config.user, key, value)
+
+    # Apply namespace settings (pid, ipc, uts, cgroup)
     if namespace:
         for key, value in namespace.items():
             setattr(config.namespace, key, value)
@@ -195,24 +201,24 @@ class TestDeserialize:
     def test_deserialize_nested_configs(self):
         """Nested configs are deserialized."""
         data = {
-            "_isolation_group": {
+            "_user_group": {
                 "_values": {
                     "unshare_user": True,
-                    "unshare_ipc": True,
-                },
-            },
-            "_process_group": {
-                "_values": {
                     "uid": 1000,
                     "gid": 1000,
                 },
             },
+            "_isolation_group": {
+                "_values": {
+                    "unshare_ipc": True,
+                },
+            },
         }
         config = deserialize(SandboxConfig, data, command=["bash"])
-        assert config.namespace.unshare_user is True
+        assert config.user.unshare_user is True
         assert config.namespace.unshare_ipc is True
-        assert config.process.uid == 1000
-        assert config.process.gid == 1000
+        assert config.user.uid == 1000
+        assert config.user.gid == 1000
 
 
 class TestRoundTrip:
@@ -239,14 +245,16 @@ class TestRoundTrip:
         assert restored.filesystem.mount_tmp == full_config.filesystem.mount_tmp
         assert restored.filesystem.tmpfs_size == full_config.filesystem.tmpfs_size
 
+        # Compare user
+        assert restored.user.unshare_user == full_config.user.unshare_user
+        assert restored.user.uid == full_config.user.uid
+        assert restored.user.gid == full_config.user.gid
+
         # Compare namespace
-        assert restored.namespace.unshare_user == full_config.namespace.unshare_user
         assert restored.namespace.unshare_pid == full_config.namespace.unshare_pid
         assert restored.namespace.unshare_ipc == full_config.namespace.unshare_ipc
 
         # Compare process
-        assert restored.process.uid == full_config.process.uid
-        assert restored.process.gid == full_config.process.gid
         assert restored.process.chdir == full_config.process.chdir
 
         # Compare environment
@@ -291,7 +299,7 @@ class TestValidateConfig:
 
     def test_invalid_uid_raises(self):
         """UID outside 0-65535 raises ProfileValidationError."""
-        config = make_config(process={"uid": 70000})
+        config = make_config(user={"uid": 70000})
         with pytest.raises(ProfileValidationError) as exc_info:
             validate_config(config)
         assert "Invalid UID" in str(exc_info.value)
@@ -299,7 +307,7 @@ class TestValidateConfig:
 
     def test_invalid_gid_raises(self):
         """GID outside 0-65535 raises ProfileValidationError."""
-        config = make_config(process={"gid": -1})
+        config = make_config(user={"gid": -1})
         with pytest.raises(ProfileValidationError) as exc_info:
             validate_config(config)
         assert "Invalid GID" in str(exc_info.value)
@@ -307,12 +315,12 @@ class TestValidateConfig:
     def test_valid_uid_gid_edge_cases(self):
         """Valid edge case UIDs/GIDs don't raise."""
         # UID 0 (root)
-        config = make_config(process={"uid": 0, "gid": 0})
+        config = make_config(user={"uid": 0, "gid": 0})
         warnings = validate_config(config)
         assert warnings == []
 
         # UID 65535 (max)
-        config = make_config(process={"uid": 65535, "gid": 65535})
+        config = make_config(user={"uid": 65535, "gid": 65535})
         warnings = validate_config(config)
         assert warnings == []
 
@@ -417,7 +425,7 @@ class TestProfile:
         profile_path = tmp_profile / "invalid.json"
         # Write invalid JSON directly
         data = {
-            "_process_group": {"_values": {"uid": 999999}},  # Invalid UID
+            "_user_group": {"_values": {"uid": 999999}},  # Invalid UID
         }
         profile_path.write_text(json.dumps(data))
 

@@ -111,15 +111,39 @@ bind_etc.shortcut_path = Path("/etc")
 
 
 # =============================================================================
-# UIField Definitions - Isolation Group (Namespaces)
+# UIField Definitions - User Group
 # =============================================================================
 
 unshare_user = _named("unshare_user", UIField(
     bool, False, "opt-unshare-user",
-    "User namespace", "Appear as different user inside",
+    "Mask user identity", "Appear as different user inside sandbox",
     bwrap_flag="--unshare-user",
     summary="Isolated user IDs — sandbox sees different UID/GID than host",
 ))
+
+# Virtual user options (shown when unshare_user is enabled)
+# synthetic_passwd is in the model - controls passwd/group generation
+synthetic_passwd = _named("synthetic_passwd", UIField(
+    bool, True, "opt-synthetic-passwd",
+    "Synthetic /etc/passwd", "Generate passwd/group for virtual user",
+))
+
+# overlay_home is UI-only (like directory shortcuts) - adds/removes from overlays list
+overlay_home = _named("overlay_home", UIField(
+    bool, False, "opt-overlay-home",
+    "Overlay /root", "Ephemeral home directory",
+))
+
+# UID/GID/Username fields (data fields, not standard checkboxes)
+# Default to 0 (root inside sandbox) since that's the common use case
+uid_field = Field(int, default=0)
+gid_field = Field(int, default=0)
+username_field = Field(str, default="")
+
+
+# =============================================================================
+# UIField Definitions - Isolation Group (Namespaces)
+# =============================================================================
 
 unshare_pid = _named("unshare_pid", UIField(
     bool, False, "opt-unshare-pid",
@@ -184,11 +208,6 @@ chdir = _named("chdir", UIField(
     "Working dir", "Directory to start in",
     bwrap_args=lambda v: ["--chdir", v] if v else [],
 ))
-
-# UID/GID fields (data fields, not standard checkboxes)
-# Default to 0 (root inside sandbox) since that's the common use case
-uid_field = Field(int, default=0)
-gid_field = Field(int, default=0)
 
 
 # =============================================================================
@@ -391,11 +410,45 @@ def _desktop_to_summary(group: ConfigGroup) -> str | None:
     return "\n".join(lines) if lines else None
 
 
+def _user_to_args(group: ConfigGroup) -> list[str]:
+    """Custom to_args for user identity.
+
+    Note: Virtual user (passwd/group generation) is handled separately in bwrap.py
+    via FD-based injection. This only handles the basic --unshare-user and --uid/--gid.
+    """
+    args = []
+
+    if group.get("unshare_user"):
+        args.append("--unshare-user")
+        args.extend(["--uid", str(group.get("uid"))])
+        args.extend(["--gid", str(group.get("gid"))])
+
+    return args
+
+
+def _user_to_summary(group: ConfigGroup) -> str | None:
+    """Custom summary for user identity."""
+    if not group.get("unshare_user"):
+        return None
+
+    lines = []
+    uid = group.get("uid")
+    gid = group.get("gid")
+    username = group.get("username")
+
+    if username and uid > 0:
+        lines.append(f"Identity: {username} (UID {uid}, GID {gid}) with generated /etc/passwd")
+    else:
+        lines.append(f"Identity: Runs as UID {uid}, GID {gid} inside sandbox")
+
+    return "\n".join(lines) if lines else None
+
+
 def _isolation_to_summary(group: ConfigGroup) -> str | None:
     """Custom summary for isolation namespaces."""
     items = []
+    # Note: unshare_user is now in user_group, not here
     ns_items = [
-        ("unshare_user", unshare_user),
         ("unshare_pid", unshare_pid),
         ("unshare_ipc", unshare_ipc),
         ("unshare_uts", unshare_uts),
@@ -419,7 +472,7 @@ def _isolation_to_summary(group: ConfigGroup) -> str | None:
 
 
 def _process_to_args(group: ConfigGroup, isolation_group: ConfigGroup) -> list[str]:
-    """Custom to_args for process (needs isolation group for user namespace)."""
+    """Custom to_args for process (needs isolation group for PID namespace check)."""
     args = []
 
     if group.get("die_with_parent"):
@@ -438,15 +491,12 @@ def _process_to_args(group: ConfigGroup, isolation_group: ConfigGroup) -> list[s
     if chdir_val:
         args.extend(["--chdir", chdir_val])
 
-    # User/group mapping (when using user namespace)
-    if isolation_group.get("unshare_user"):
-        args.extend(["--uid", str(group.get("uid"))])
-        args.extend(["--gid", str(group.get("gid"))])
+    # Note: uid/gid handling moved to user_group
 
     return args
 
 
-def _process_to_summary(group: ConfigGroup, isolation_group: ConfigGroup, env_group: ConfigGroup) -> str | None:
+def _process_to_summary(group: ConfigGroup, env_group: ConfigGroup) -> str | None:
     """Custom summary for process behavior."""
     lines = []
 
@@ -467,8 +517,7 @@ def _process_to_summary(group: ConfigGroup, isolation_group: ConfigGroup, env_gr
     if hostname:
         lines.append(f"Hostname: {hostname}")
 
-    if isolation_group.get("unshare_user"):
-        lines.append(f"Identity: Runs as UID {group.get('uid')}, GID {group.get('gid')} inside sandbox")
+    # Note: Identity summary moved to user_group
 
     return "\n".join(lines) if lines else None
 
@@ -551,10 +600,22 @@ system_paths_group = ConfigGroup(
 
 # --- Sandbox Tab Groups ---
 
+user_group = ConfigGroup(
+    name="user",
+    title="User",
+    items=[unshare_user, synthetic_passwd],
+    _to_args_fn=_user_to_args,
+    _to_summary_fn=_user_to_summary,
+)
+# Initialize uid/gid/username - default to 0 (root inside sandbox)
+user_group.set("uid", 0)
+user_group.set("gid", 0)
+user_group.set("username", "")
+
 isolation_group = ConfigGroup(
     name="isolation",
     title="Isolation",
-    items=[unshare_user, unshare_pid, unshare_ipc, unshare_uts, unshare_cgroup, disable_userns],
+    items=[unshare_pid, unshare_ipc, unshare_uts, unshare_cgroup, disable_userns],
     _to_summary_fn=_isolation_to_summary,
 )
 
@@ -563,9 +624,6 @@ process_group = ConfigGroup(
     title="Process",
     items=[die_with_parent, new_session, as_pid_1, chdir],
 )
-# Initialize uid/gid - default to 0 (root inside sandbox)
-process_group.set("uid", 0)
-process_group.set("gid", 0)
 
 network_group = ConfigGroup(
     name="network",
@@ -635,7 +693,7 @@ filesystem_config = Config(
 
 sandbox_config = Config(
     name="sandbox",
-    groups=[isolation_group, process_group, network_group, desktop_group],
+    groups=[user_group, isolation_group, process_group, network_group, desktop_group],
 )
 
 environment_config = Config(

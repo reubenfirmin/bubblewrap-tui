@@ -77,18 +77,23 @@ class TestOverlayConfigToArgs:
     """Test OverlayConfig to_args() method."""
 
     def test_to_args_tmpfs(self, overlay_tmpfs):
-        """Tmpfs overlay produces --overlay-src and --tmp-overlay."""
+        """Tmpfs mode produces simple --tmpfs (empty writable dir)."""
         args = overlay_tmpfs.to_args()
+        assert args == ["--tmpfs", "/data"]
+
+    def test_to_args_overlay(self, overlay_overlay):
+        """Overlay mode produces --overlay-src and --tmp-overlay."""
+        args = overlay_overlay.to_args()
         assert "--overlay-src" in args
         assert "--tmp-overlay" in args
         # Check structure
         src_idx = args.index("--overlay-src")
-        assert args[src_idx + 1] == overlay_tmpfs.source
+        assert args[src_idx + 1] == overlay_overlay.source
         tmp_idx = args.index("--tmp-overlay")
-        assert args[tmp_idx + 1] == overlay_tmpfs.dest
+        assert args[tmp_idx + 1] == overlay_overlay.dest
 
     def test_to_args_persistent(self, overlay_persistent):
-        """Persistent overlay produces --overlay-src and --overlay."""
+        """Persistent mode produces --overlay-src and --overlay."""
         args = overlay_persistent.to_args()
         assert "--overlay-src" in args
         assert "--overlay" in args
@@ -101,18 +106,26 @@ class TestOverlayConfigToArgs:
         assert args[overlay_idx + 2] == overlay_persistent.get_work_dir()
         assert args[overlay_idx + 3] == overlay_persistent.dest
 
-    def test_to_args_empty_source(self):
-        """Empty source returns empty args."""
-        ov = OverlayConfig(source="", dest="/dest", mode="tmpfs")
-        assert ov.to_args() == []
+    def test_to_args_overlay_without_source(self):
+        """Overlay mode without source returns empty args (invalid config)."""
+        ov = OverlayConfig(source="", dest="/dest", mode="overlay")
+        args = ov.to_args()
+        assert args == []
+
+    def test_to_args_persistent_without_source(self):
+        """Persistent mode without source binds write_dir directly."""
+        ov = OverlayConfig(source="", dest="/dest", mode="persistent", write_dir="/write")
+        args = ov.to_args()
+        # Without source, bind write_dir directly (no overlay layers needed)
+        assert args == ["--bind", "/write", "/dest"]
 
     def test_to_args_empty_dest(self):
         """Empty dest returns empty args."""
-        ov = OverlayConfig(source="/src", dest="", mode="tmpfs")
+        ov = OverlayConfig(source="/src", dest="", mode="overlay")
         assert ov.to_args() == []
 
     def test_to_args_persistent_without_write_dir(self):
-        """Persistent mode without write_dir returns incomplete args."""
+        """Persistent mode without write_dir returns no args (invalid config)."""
         ov = OverlayConfig(
             source="/src",
             dest="/dest",
@@ -120,14 +133,12 @@ class TestOverlayConfigToArgs:
             write_dir="",
         )
         args = ov.to_args()
-        # Should only have --overlay-src since persistent requires write_dir
-        assert "--overlay-src" in args
-        assert "--overlay" not in args
-        assert "--tmp-overlay" not in args
+        # Persistent requires write_dir, so no args generated
+        assert args == []
 
     def test_to_args_order(self):
-        """Args are in correct order: --overlay-src first."""
-        ov = OverlayConfig(source="/src", dest="/dest", mode="tmpfs")
+        """Args are in correct order: --overlay-src first for overlay mode."""
+        ov = OverlayConfig(source="/src", dest="/dest", mode="overlay")
         args = ov.to_args()
         assert args[0] == "--overlay-src"
         assert args[1] == "/src"

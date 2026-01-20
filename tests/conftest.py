@@ -75,8 +75,12 @@ def full_config():
     config.desktop.allow_display = False
     config.desktop.bind_user_config = False
 
-    # Configure namespace
-    config.namespace.unshare_user = True
+    # Configure user identity
+    config.user.unshare_user = True
+    config.user.uid = 1000
+    config.user.gid = 1000
+
+    # Configure namespace (without unshare_user - that's in user group now)
     config.namespace.unshare_pid = True
     config.namespace.unshare_ipc = True
 
@@ -85,8 +89,6 @@ def full_config():
     config.process.new_session = True
     config.process.as_pid_1 = False
     config.process.chdir = "/home/user"
-    config.process.uid = 1000
-    config.process.gid = 1000
 
     return config
 
@@ -113,8 +115,14 @@ def bound_dir_readwrite():
 
 @pytest.fixture
 def overlay_tmpfs():
-    """A tmpfs overlay configuration."""
-    return OverlayConfig(source="/home/user/data", dest="/data", mode="tmpfs")
+    """An empty tmpfs directory (no source needed)."""
+    return OverlayConfig(source="", dest="/data", mode="tmpfs")
+
+
+@pytest.fixture
+def overlay_overlay():
+    """An overlay with source (writable layer on existing dir, changes in RAM)."""
+    return OverlayConfig(source="/home/user/data", dest="/data", mode="overlay")
 
 
 @pytest.fixture

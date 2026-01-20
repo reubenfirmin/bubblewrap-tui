@@ -57,8 +57,83 @@ class BubblewrapSerializer:
     def __init__(self, config: SandboxConfig) -> None:
         self.config = config
 
-    def serialize(self) -> list[str]:
-        """Build the complete bwrap command."""
+    def get_virtual_user_data(self) -> list[tuple[str, str]]:
+        """Get virtual user file data that needs to be passed via FDs.
+
+        Returns list of (content, dest_path) tuples for files to inject.
+        """
+        synthetic_passwd = self.config._user_group.get("synthetic_passwd")
+        username = self.config._user_group.get("username")
+        uid = self.config._user_group.get("uid")
+        gid = self.config._user_group.get("gid")
+
+        # Only generate when synthetic_passwd enabled, username set, and uid > 0
+        if not synthetic_passwd or not username or uid == 0:
+            return []
+
+        home = f"/home/{username}"
+
+        # Generate passwd: username:x:uid:gid::{home}:/bin/sh
+        passwd_content = f"{username}:x:{uid}:{gid}::{home}:/bin/sh\n"
+        # Generate group: username:x:gid:
+        group_content = f"{username}:x:{gid}:\n"
+
+        return [
+            (passwd_content, "/etc/passwd"),
+            (group_content, "/etc/group"),
+        ]
+
+    def _has_home_overlay(self, home: str) -> bool:
+        """Check if there's an overlay for the home directory."""
+        for ov in self.config.overlays:
+            if ov.dest == home or ov.dest == "/root":
+                return True
+        return False
+
+    def _serialize_virtual_user_args(self, fd_map: dict[str, int]) -> list[str]:
+        """Serialize virtual user args using pre-created FDs.
+
+        Args:
+            fd_map: Mapping of dest_path -> FD number
+
+        Returns:
+            bwrap args for virtual user setup
+        """
+        synthetic_passwd = self.config._user_group.get("synthetic_passwd")
+        username = self.config._user_group.get("username")
+        uid = self.config._user_group.get("uid")
+
+        if not synthetic_passwd or not username or uid == 0:
+            return []
+
+        home = f"/home/{username}"
+        args = []
+
+        # Create /etc directory for passwd/group
+        args.extend(["--dir", "/etc"])
+
+        # Bind passwd/group from FDs
+        if "/etc/passwd" in fd_map:
+            args.extend(["--ro-bind-data", str(fd_map["/etc/passwd"]), "/etc/passwd"])
+        if "/etc/group" in fd_map:
+            args.extend(["--ro-bind-data", str(fd_map["/etc/group"]), "/etc/group"])
+
+        # If no home overlay exists, we need to create /home/{user}
+        # If there's an overlay for home, it handles creating the directory
+        if not self._has_home_overlay(home):
+            args.extend(["--dir", "/home"])
+            args.extend(["--dir", home])
+            # Set HOME environment variable
+            args.extend(["--setenv", "HOME", home])
+
+        return args
+
+    def serialize(self, fd_map: dict[str, int] | None = None) -> list[str]:
+        """Build the complete bwrap command.
+
+        Args:
+            fd_map: Optional mapping of dest_path -> FD number for virtual user files
+        """
         args = ["bwrap"]
 
         # Get args from all groups
@@ -69,9 +144,13 @@ class BubblewrapSerializer:
             else:
                 args.extend(group.to_args())
 
-        # Overlays
+        # Overlays (must come before virtual user FD bindings)
         for overlay in self.config.overlays:
             args.extend(overlay.to_args())
+
+        # Virtual user setup (must come AFTER overlays so FD bindings layer on top)
+        if fd_map:
+            args.extend(self._serialize_virtual_user_args(fd_map))
 
         # Capability drops
         for cap in self.config.drop_caps:
@@ -212,11 +291,10 @@ class BubblewrapSummarizer:
         return "\n".join(lines)
 
     def _get_process_summary(self) -> str | None:
-        """Get process summary (needs isolation and environment groups)."""
+        """Get process summary (needs environment group)."""
         from model.groups import _process_to_summary
         return _process_to_summary(
             self.config._process_group,
-            self.config._isolation_group,
             self.config._environment_group,
         )
 

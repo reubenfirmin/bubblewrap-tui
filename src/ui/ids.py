@@ -60,6 +60,10 @@ OPTIONS_GRID = "options-grid"
 # Sandbox tab IDs
 SANDBOX_TAB_CONTENT = "sandbox-tab-content"
 UID_GID_OPTIONS = "uid-gid-options"
+USERNAME_OPTIONS = "username-options"
+VIRTUAL_USER_OPTIONS = "virtual-user-options"
+OPT_SYNTHETIC_PASSWD = "opt-synthetic-passwd"
+OPT_OVERLAY_HOME = "opt-overlay-home"
 
 # Summary tab IDs
 SUMMARY_TAB_CONTENT = "summary-tab-content"
@@ -119,6 +123,7 @@ OPT_CHDIR = "opt-chdir"
 OPT_HOSTNAME = "opt-hostname"
 OPT_UID = "opt-uid"
 OPT_GID = "opt-gid"
+OPT_USERNAME = "opt-username"
 
 # Dev mode widget IDs
 DEV_MODE_BTN = "dev-mode-btn"

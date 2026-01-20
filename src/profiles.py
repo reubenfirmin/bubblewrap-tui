@@ -31,16 +31,16 @@ def validate_config(config: SandboxConfig) -> list[str]:
     warnings = []
 
     # Validate UID/GID range (0-65535)
-    if config.process.uid is not None:
-        if not (0 <= config.process.uid <= MAX_UID_GID):
+    if config.user.uid is not None:
+        if not (0 <= config.user.uid <= MAX_UID_GID):
             raise ProfileValidationError(
-                f"Invalid UID: {config.process.uid} (must be 0-{MAX_UID_GID})"
+                f"Invalid UID: {config.user.uid} (must be 0-{MAX_UID_GID})"
             )
 
-    if config.process.gid is not None:
-        if not (0 <= config.process.gid <= MAX_UID_GID):
+    if config.user.gid is not None:
+        if not (0 <= config.user.gid <= MAX_UID_GID):
             raise ProfileValidationError(
-                f"Invalid GID: {config.process.gid} (must be 0-{MAX_UID_GID})"
+                f"Invalid GID: {config.user.gid} (must be 0-{MAX_UID_GID})"
             )
 
     # Validate dev_mode is a known value
@@ -338,6 +338,7 @@ def _restore_group_values(config: SandboxConfig, data: dict) -> None:
     # Checkbox states are derived from bound_dirs when loading a profile
     group_fields = [
         ("_vfs_group", config._vfs_group),
+        ("_user_group", config._user_group),
         ("_isolation_group", config._isolation_group),
         ("_process_group", config._process_group),
         ("_network_group", config._network_group),

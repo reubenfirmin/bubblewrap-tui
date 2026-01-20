@@ -6,7 +6,7 @@ Instead of memorizing dozens of `bwrap` flags, visually configure your sandbox a
 
 ## Status
 
-- Beta quality, lightly tested. That said it doesn't do anything except generate (and run, on demand) a bwrap command, so is mostly harmless.
+- Beta quality, moderately tested. That said it doesn't do anything except generate (and run, on demand) a bwrap command, so is mostly harmless. Do your own diligence before trusting the security of critical data to it, and also review bubblewrap CVEs / known issues.
 - PRs and bug reports welcome. Feature requests will be considered.
 
 ## Requirements
@@ -44,7 +44,16 @@ Press `x` to execute with your configuration, or `q` to quit.
 
 ## Profiles
 
-Profiles are saved sandbox configurations that can be reused from the command line.
+Profiles are saved sandbox configurations. Once you have a profile, you can skip the TUI and run commands directly:
+
+```bash
+bui --profile <name> -- <command>
+```
+
+This is useful for:
+- Scripting and automation
+- Running the same sandbox configuration repeatedly
+- Sharing configurations with others
 
 ### The `untrusted` Profile
 
@@ -112,22 +121,62 @@ deno compile main.ts
 
 ### Example: Running Claude Code in a Sandbox
 
-Run Claude Code with restricted filesystem access:
+AI coding assistants like Claude Code can execute arbitrary shell commands and modify files. Running them in a sandbox provides defense in depth - even if the AI makes a mistake or is manipulated, it can only affect files you explicitly allow.
+
+**What the sandbox provides:**
+- Claude cannot read `~/.ssh`, `~/.aws`, `~/.gnupg`, browser data, or other sensitive dotfiles
+- Claude cannot modify system files or install packages globally on your system
+- Each project directory is explicitly granted access via `--bind-cwd`
+- All of Claude's installed files (npm packages, config) live in an isolated overlay
+
+**The tradeoff:** You need `--bind` and `--bind-env` flags to expose tools and configure the environment, rather than creating a custom profile. This is intentional - the generic `untrusted` profile works for many use cases without per-tool maintenance.
+
+#### Installation
+
+The `untrusted` profile only exposes system paths (`/usr`, `/bin`, `/lib`). If npm/node are installed in your home directory (e.g., via nvm), bind them explicitly:
 
 ```bash
 # Install Claude Code in a sandbox
-bui --profile untrusted --sandbox claude -- 'npm install -g @anthropic-ai/claude-code'
+# --bind: expose the directory containing npm (needed for installation)
+# --bind-env: set NPM_CONFIG_PREFIX so npm installs to the sandbox home, not /usr
+bui --profile untrusted --sandbox claude \
+    --bind $(dirname $(which npm)) \
+    --bind-env 'NPM_CONFIG_PREFIX=/home/sandbox/.npm-global' \
+    -- npm install -g @anthropic-ai/claude-code
+```
 
-# Create wrapper script
+Create a wrapper script so you can run `claude` from anywhere:
+
+```bash
 bui --sandbox claude --install
 # Select: claude
+```
 
-# Use it - your current directory is accessible read-write
+#### Usage
+
+```bash
 cd ~/projects/myapp
 claude
 ```
 
-Claude Code runs isolated from your system, but can read and write files in whatever directory you run it from.
+The wrapper script automatically:
+- Runs Claude in the sandbox with your saved profile
+- Binds your current directory read-write (`--bind-cwd`)
+- Passes through the bind paths and environment from installation
+
+Because the wrapper uses `--bind-cwd`, Claude can read and write files in your current directory. It cannot access other directories, your home directory, or sensitive dotfiles.
+
+#### Terminal colors
+
+If the terminal looks basic (no colors), add TERM to your sandbox:
+
+```bash
+# One-time fix
+bui --sandbox claude --bind-env "TERM=$TERM" -- claude
+
+# Or regenerate the default profile which now includes TERM
+bui --install
+```
 
 ### Managing Sandboxes
 

@@ -11,7 +11,9 @@ from sandbox import (
     find_executables,
     install_sandbox_binary,
     list_overlays,
+    list_profiles,
     list_sandboxes,
+    register_sandbox,
     uninstall_sandbox,
 )
 
@@ -76,16 +78,17 @@ class TestParseArgs:
     def test_command_after_separator(self):
         """Command after -- is parsed correctly."""
         with patch.object(sys, "argv", ["bui", "--", "bash"]):
-            command, profile, sandbox, bind_cwd = parse_args()
+            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
             assert command == ["bash"]
             assert profile is None
             assert sandbox is None
             assert bind_cwd is False
+            assert bind_paths == []
 
     def test_command_with_args(self):
         """Command with arguments after --."""
         with patch.object(sys, "argv", ["bui", "--", "python", "script.py", "-v"]):
-            command, profile, sandbox, bind_cwd = parse_args()
+            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
             assert command == ["python", "script.py", "-v"]
 
     def test_profile_flag(self):
@@ -93,7 +96,7 @@ class TestParseArgs:
         with patch.object(
             sys, "argv", ["bui", "--profile", "test.json", "--", "bash"]
         ):
-            command, profile, sandbox, bind_cwd = parse_args()
+            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
             assert command == ["bash"]
             assert profile == "test.json"
 
@@ -102,19 +105,19 @@ class TestParseArgs:
         with patch.object(
             sys, "argv", ["bui", "--profile", "/home/user/profiles/dev.json", "--", "bash"]
         ):
-            command, profile, sandbox, bind_cwd = parse_args()
+            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
             assert profile == "/home/user/profiles/dev.json"
 
     def test_no_separator(self):
         """Command without -- separator."""
         with patch.object(sys, "argv", ["bui", "bash"]):
-            command, profile, sandbox, bind_cwd = parse_args()
+            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
             assert command == ["bash"]
 
     def test_shell_wrap_applied(self):
         """Shell metacharacters trigger shell wrap."""
         with patch.object(sys, "argv", ["bui", "--", "cat foo | grep bar"]):
-            command, profile, sandbox, bind_cwd = parse_args()
+            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
             # shlex.join quotes the argument
             assert command[0] == "/bin/bash"
             assert command[1] == "-c"
@@ -125,7 +128,7 @@ class TestParseArgs:
         with patch.object(
             sys, "argv", ["bui", "--profile", "untrusted", "--sandbox", "test", "--", "bash"]
         ):
-            command, profile, sandbox, bind_cwd = parse_args()
+            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
             assert command == ["bash"]
             assert profile == "untrusted"
             assert sandbox == "test"
@@ -135,7 +138,7 @@ class TestParseArgs:
         with patch.object(
             sys, "argv", ["bui", "--profile", "untrusted", "--bind-cwd", "--", "bash"]
         ):
-            command, profile, sandbox, bind_cwd = parse_args()
+            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
             assert command == ["bash"]
             assert bind_cwd is True
 
@@ -144,9 +147,60 @@ class TestParseArgs:
         with patch.object(
             sys, "argv", ["bui", "--profile", "untrusted", "--sandbox", "test", "--bind-cwd", "--", "bash"]
         ):
-            command, profile, sandbox, bind_cwd = parse_args()
+            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
             assert sandbox == "test"
             assert bind_cwd is True
+
+    def test_single_bind_path(self):
+        """Single --bind path is parsed and resolved."""
+        with patch.object(
+            sys, "argv", ["bui", "--profile", "untrusted", "--bind", "/tmp/test", "--", "bash"]
+        ):
+            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
+            assert command == ["bash"]
+            assert len(bind_paths) == 1
+            assert bind_paths[0] == Path("/tmp/test")
+
+    def test_multiple_bind_paths(self):
+        """Multiple --bind paths are parsed."""
+        with patch.object(
+            sys, "argv", ["bui", "--profile", "untrusted", "--bind", "/tmp/a", "--bind", "/tmp/b", "--", "bash"]
+        ):
+            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
+            assert len(bind_paths) == 2
+            assert bind_paths[0] == Path("/tmp/a")
+            assert bind_paths[1] == Path("/tmp/b")
+
+    def test_bind_path_expansion(self, tmp_path):
+        """--bind expands ~ in paths."""
+        with patch.object(
+            sys, "argv", ["bui", "--profile", "untrusted", "--bind", "~/.nvm", "--", "bash"]
+        ):
+            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
+            assert len(bind_paths) == 1
+            # Path should be expanded (not contain ~)
+            assert "~" not in str(bind_paths[0])
+            assert bind_paths[0].is_absolute()
+
+    def test_bind_with_bind_cwd(self):
+        """--bind can be combined with --bind-cwd."""
+        with patch.object(
+            sys, "argv", ["bui", "--profile", "untrusted", "--bind", "/tmp/test", "--bind-cwd", "--", "bash"]
+        ):
+            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
+            assert bind_cwd is True
+            assert len(bind_paths) == 1
+            assert bind_paths[0] == Path("/tmp/test")
+
+    def test_bind_with_sandbox(self):
+        """--bind can be combined with --sandbox."""
+        with patch.object(
+            sys, "argv", ["bui", "--profile", "untrusted", "--sandbox", "test", "--bind", "/tmp/tools", "--", "bash"]
+        ):
+            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
+            assert sandbox == "test"
+            assert len(bind_paths) == 1
+            assert bind_paths[0] == Path("/tmp/tools")
 
     def test_help_flag_exits(self):
         """--help flag shows help and exits."""
@@ -199,7 +253,7 @@ class TestParseArgs:
                 mock_install.side_effect = SystemExit(0)
                 with pytest.raises(SystemExit):
                     parse_args()
-                mock_install.assert_called_once_with("test", "untrusted")
+                mock_install.assert_called_once_with("test", "untrusted", None, None)
 
     def test_install_without_sandbox_installs_bui(self):
         """--install without --sandbox installs bui itself."""
@@ -341,7 +395,9 @@ class TestInstallSandboxBinary:
         assert "#!/bin/sh" in content
         assert "--sandbox deno" in content
         assert "--bind-cwd" in content
-        assert "~/.deno/bin/deno" in content
+        # Path should be sandbox home, not host home
+        assert "/home/sandbox/.deno/bin/deno" in content
+        assert "~/.deno/bin/deno" not in content
         assert script_path.stat().st_mode & 0o755
 
         # Verify metadata was saved
@@ -350,6 +406,84 @@ class TestInstallSandboxBinary:
         assert "deno" in metadata
         assert "deno" in metadata["deno"]["scripts"]
         assert metadata["deno"]["profile"] == "untrusted"
+
+    def test_installs_script_with_binds(self, tmp_path, capsys):
+        """Installs script with --bind and --bind-env flags."""
+        state_dir = tmp_path / ".local" / "state" / "bui"
+        overlay_dir = state_dir / "overlays" / "myapp"
+        overlay_dir.mkdir(parents=True)
+        bin_dir = tmp_path / ".local" / "bin"
+        installed_file = state_dir / "installed.json"
+
+        # Create executable
+        exe = overlay_dir / "bin" / "myapp"
+        exe.parent.mkdir(parents=True)
+        exe.write_text("#!/bin/bash")
+        exe.chmod(0o755)
+
+        with patch("sandbox.BUI_STATE_DIR", state_dir):
+            with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                with patch("sandbox.Path.home", return_value=tmp_path):
+                    with patch("builtins.input", return_value="1"):
+                        install_sandbox_binary(
+                            "myapp",
+                            profile="untrusted",
+                            bind_paths=["/usr/bin", "/opt/tools"],
+                            bind_env=["FOO=bar", "BAZ=qux"],
+                        )
+
+        # Verify script has bind flags
+        script_path = bin_dir / "myapp"
+        content = script_path.read_text()
+        assert "--bind /usr/bin" in content
+        assert "--bind /opt/tools" in content
+        assert "--bind-env 'FOO=bar'" in content
+        assert "--bind-env 'BAZ=qux'" in content
+
+        # Verify metadata has binds
+        import json
+        metadata = json.loads(installed_file.read_text())
+        assert metadata["myapp"]["bind_paths"] == ["/usr/bin", "/opt/tools"]
+        assert metadata["myapp"]["bind_env"] == ["FOO=bar", "BAZ=qux"]
+
+    def test_reads_binds_from_metadata(self, tmp_path, capsys):
+        """Reads bind paths and env from existing metadata if not provided."""
+        state_dir = tmp_path / ".local" / "state" / "bui"
+        overlay_dir = state_dir / "overlays" / "cached"
+        overlay_dir.mkdir(parents=True)
+        bin_dir = tmp_path / ".local" / "bin"
+        installed_file = state_dir / "installed.json"
+
+        # Pre-populate metadata (as if register_sandbox was called earlier)
+        import json
+        installed_file.parent.mkdir(parents=True, exist_ok=True)
+        installed_file.write_text(json.dumps({
+            "cached": {
+                "scripts": [],
+                "profile": "myprofile",
+                "bind_paths": ["/pre/bound"],
+                "bind_env": ["CACHED=value"],
+            }
+        }))
+
+        # Create executable
+        exe = overlay_dir / "app"
+        exe.write_text("#!/bin/bash")
+        exe.chmod(0o755)
+
+        with patch("sandbox.BUI_STATE_DIR", state_dir):
+            with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                with patch("sandbox.Path.home", return_value=tmp_path):
+                    with patch("builtins.input", return_value="1"):
+                        # Don't pass bind_paths or bind_env - should read from metadata
+                        install_sandbox_binary("cached")
+
+        # Verify script uses metadata values
+        script_path = bin_dir / "app"
+        content = script_path.read_text()
+        assert "--profile myprofile" in content
+        assert "--bind /pre/bound" in content
+        assert "--bind-env 'CACHED=value'" in content
 
     def test_invalid_selection_exits(self, tmp_path):
         """Exits with error on invalid selection."""
@@ -431,6 +565,73 @@ class TestInstallSandboxBinary:
         # Verify correct script was created
         assert (bin_dir / "beta").exists()
         assert not (bin_dir / "alpha").exists()
+
+
+class TestRegisterSandbox:
+    """Test register_sandbox() function."""
+
+    def test_registers_new_sandbox(self, tmp_path):
+        """Registers a new sandbox with metadata."""
+        state_dir = tmp_path / ".local" / "state" / "bui"
+        installed_file = state_dir / "installed.json"
+
+        with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+            register_sandbox("mysandbox", "untrusted")
+
+        import json
+        metadata = json.loads(installed_file.read_text())
+        assert "mysandbox" in metadata
+        assert metadata["mysandbox"]["profile"] == "untrusted"
+        assert metadata["mysandbox"]["scripts"] == []
+
+    def test_registers_with_binds(self, tmp_path):
+        """Registers sandbox with bind_paths and bind_env."""
+        state_dir = tmp_path / ".local" / "state" / "bui"
+        installed_file = state_dir / "installed.json"
+
+        with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+            register_sandbox(
+                "myapp",
+                "custom-profile",
+                bind_paths=["/usr/bin", "/opt"],
+                bind_env=["FOO=bar", "BAZ=123"],
+            )
+
+        import json
+        metadata = json.loads(installed_file.read_text())
+        assert metadata["myapp"]["profile"] == "custom-profile"
+        assert metadata["myapp"]["bind_paths"] == ["/usr/bin", "/opt"]
+        assert metadata["myapp"]["bind_env"] == ["FOO=bar", "BAZ=123"]
+
+    def test_does_not_overwrite_existing(self, tmp_path):
+        """Does not overwrite existing sandbox metadata."""
+        state_dir = tmp_path / ".local" / "state" / "bui"
+        installed_file = state_dir / "installed.json"
+
+        # Pre-populate with existing sandbox
+        import json
+        installed_file.parent.mkdir(parents=True, exist_ok=True)
+        installed_file.write_text(json.dumps({
+            "existing": {
+                "scripts": ["mybin"],
+                "profile": "old-profile",
+                "bind_paths": ["/old/path"],
+            }
+        }))
+
+        with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+            # Try to register same sandbox with different values
+            register_sandbox(
+                "existing",
+                "new-profile",
+                bind_paths=["/new/path"],
+            )
+
+        # Should keep original values
+        metadata = json.loads(installed_file.read_text())
+        assert metadata["existing"]["profile"] == "old-profile"
+        assert metadata["existing"]["bind_paths"] == ["/old/path"]
+        assert metadata["existing"]["scripts"] == ["mybin"]
 
 
 class TestFindExecutablesEdgeCases:
@@ -731,3 +932,55 @@ class TestListOverlays:
         captured = capsys.readouterr()
         assert "deno" in captured.out
         assert ".hidden" not in captured.out
+
+
+class TestListProfiles:
+    """Test list_profiles() function."""
+
+    def test_no_profiles_dir(self, tmp_path, capsys):
+        """Shows message when no profiles directory exists."""
+        profiles_dir = tmp_path / ".config" / "bui" / "profiles"
+        # Don't create the directory
+
+        with patch("sandbox.BUI_PROFILES_DIR", profiles_dir):
+            list_profiles()
+
+        captured = capsys.readouterr()
+        assert "No profiles found" in captured.out
+
+    def test_empty_profiles_dir(self, tmp_path, capsys):
+        """Shows message when profiles directory is empty."""
+        profiles_dir = tmp_path / ".config" / "bui" / "profiles"
+        profiles_dir.mkdir(parents=True)
+
+        with patch("sandbox.BUI_PROFILES_DIR", profiles_dir):
+            list_profiles()
+
+        captured = capsys.readouterr()
+        assert "No profiles found" in captured.out
+
+    def test_lists_profiles(self, tmp_path, capsys):
+        """Lists available profiles."""
+        profiles_dir = tmp_path / ".config" / "bui" / "profiles"
+        profiles_dir.mkdir(parents=True)
+
+        # Create some profile files
+        (profiles_dir / "untrusted.json").write_text("{}")
+        (profiles_dir / "dev.json").write_text("{}")
+
+        with patch("sandbox.BUI_PROFILES_DIR", profiles_dir):
+            list_profiles()
+
+        captured = capsys.readouterr()
+        assert "Profiles:" in captured.out
+        assert "untrusted" in captured.out
+        assert "dev" in captured.out
+        assert "Profile directory:" in captured.out
+
+    def test_list_profiles_exits(self):
+        """--list-profiles flag exits."""
+        with patch.object(sys, "argv", ["bui", "--list-profiles"]):
+            with patch("cli.list_profiles") as mock_list:
+                with pytest.raises(SystemExit):
+                    parse_args()
+                mock_list.assert_called_once()

@@ -7,7 +7,7 @@ from typing import Callable
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Input, Label
+from textual.widgets import Input, Label, Static
 
 from detection import detect_dbus_session, detect_display_server
 from model import groups
@@ -25,16 +25,25 @@ def compose_sandbox_tab(on_dev_mode_change: Callable[[str], None]) -> ComposeRes
     """
     with VerticalScroll(id="sandbox-tab-content"):
         with Horizontal(id="options-grid"):
-            # Left column: Isolation + Process
+            # Left column: User + Isolation + Process
             with Vertical(classes="options-column"):
+                # User card - always visible with progressive disclosure
                 with Container(classes="options-section"):
-                    yield Label(groups.isolation_group.title, classes="section-label")
+                    yield Label(groups.user_group.title, classes="section-label")
                     yield OptionCard(groups.unshare_user)
                     with Container(id="uid-gid-options", classes="hidden"):
                         yield Label("UID:")
                         yield Input(value="0", id="opt-uid")
                         yield Label("GID:")
                         yield Input(value="0", id="opt-gid")
+                    with Container(id="username-options", classes="hidden"):
+                        yield Label("Username:")
+                        yield Input(value="", id="opt-username", placeholder="e.g., appuser")
+                    with Container(id="virtual-user-options", classes="hidden"):
+                        yield OptionCard(groups.synthetic_passwd)
+                        yield OptionCard(groups.overlay_home)
+                with Container(classes="options-section"):
+                    yield Label(groups.isolation_group.title, classes="section-label")
                     yield OptionCard(groups.unshare_pid)
                     yield OptionCard(groups.unshare_ipc)
                     yield OptionCard(groups.unshare_uts)

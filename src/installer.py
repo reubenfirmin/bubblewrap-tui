@@ -122,7 +122,6 @@ def create_default_profiles() -> None:
 
     # Always create/overwrite default profiles
     # User customizations should be saved under different names
-    overlay_write_dir = str(overlay_write_dir)
 
     # Build bound_dirs for system paths that exist
     # Note: /etc is NOT included - only specific files needed for networking/SSL
@@ -132,14 +131,15 @@ def create_default_profiles() -> None:
         if Path(path_str).exists():
             bound_dirs.append({"path": path_str, "readonly": True})
 
+    # Use a non-root virtual user so tools like npm install to home instead of system
     profile_data = {
         "bound_dirs": bound_dirs,
         "overlays": [
             {
-                "source": home,
-                "dest": home,
-                "mode": "persistent",
-                "write_dir": overlay_write_dir,
+                "source": "",
+                "dest": "/home/sandbox",  # Home for virtual user
+                "mode": "persistent",  # Persist changes to overlay dir (customized per --sandbox)
+                "write_dir": str(overlay_write_dir),
             }
         ],
         "drop_caps": [],
@@ -153,9 +153,18 @@ def create_default_profiles() -> None:
         },
         # Note: _system_paths_group is NOT included - it's UI-only state
         # Checkbox states are derived from bound_dirs when loading a profile
-        "_isolation_group": {
+        # Note: overlay_home is UI-only - derived from overlays list
+        "_user_group": {
             "_values": {
                 "unshare_user": True,
+                "uid": 1000,
+                "gid": 1000,
+                "username": "sandbox",
+                "synthetic_passwd": True,  # Generate /etc/passwd and /etc/group
+            }
+        },
+        "_isolation_group": {
+            "_values": {
                 "unshare_pid": True,
                 "unshare_ipc": True,
                 "unshare_uts": True,
@@ -169,8 +178,6 @@ def create_default_profiles() -> None:
                 "new_session": True,
                 "as_pid_1": False,
                 "chdir": "",
-                "uid": 0,
-                "gid": 0,
             }
         },
         "_network_group": {
@@ -191,9 +198,12 @@ def create_default_profiles() -> None:
             "_values": {
                 "clear_env": True,
                 "custom_hostname": "sandbox",
-                "keep_env_vars": ["PATH", "HOME"],
+                "keep_env_vars": ["TERM"],  # Needed for terminal colors
                 "unset_env_vars": [],
-                "custom_env_vars": {},
+                "custom_env_vars": {
+                    "HOME": "/home/sandbox",
+                    "PATH": "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin",
+                },
             }
         },
     }
