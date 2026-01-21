@@ -357,6 +357,29 @@ class BubblewrapTUI(
         # Handle home overlay - sync with overlays list (synthetic_passwd doesn't need overlay)
         if event.checkbox.id == ids.OPT_OVERLAY_HOME:
             self._handle_overlay_home_change(event.value)
+        # Bidirectional sync: Run as PID 1 requires PID namespace isolation
+        if event.checkbox.id == ids.OPT_AS_PID_1 and event.value:
+            try:
+                pid_ns = self.query_one(css(ids.OPT_UNSHARE_PID), Checkbox)
+                if not pid_ns.value:
+                    pid_ns.value = True
+            except NoMatches:
+                pass
+        if event.checkbox.id == ids.OPT_UNSHARE_PID and not event.value:
+            try:
+                as_pid_1 = self.query_one(css(ids.OPT_AS_PID_1), Checkbox)
+                if as_pid_1.value:
+                    as_pid_1.value = False
+            except NoMatches:
+                pass
+        # Disabling UTS namespace clears custom hostname (which requires it)
+        if event.checkbox.id == ids.OPT_UNSHARE_UTS and not event.value:
+            try:
+                hostname_input = self.query_one(css(ids.OPT_HOSTNAME), Input)
+                if hostname_input.value.strip():
+                    hostname_input.value = ""
+            except NoMatches:
+                pass
         self._sync_config_from_ui()
         self._update_preview()
 
@@ -398,6 +421,15 @@ class BubblewrapTUI(
         if event.input.id == ids.OPT_USERNAME:
             self._update_home_overlay_label()
 
+        # Custom hostname requires UTS namespace isolation
+        if event.input.id == ids.OPT_HOSTNAME and event.value.strip():
+            try:
+                uts_ns = self.query_one(css(ids.OPT_UNSHARE_UTS), Checkbox)
+                if not uts_ns.value:
+                    uts_ns.value = True
+            except NoMatches:
+                pass
+
         self._update_preview()
 
     def _on_dev_mode_change(self, mode: str) -> None:
@@ -411,16 +443,23 @@ class BubblewrapTUI(
     def _on_network_mode_change(self, mode: NetworkMode) -> None:
         """Handle network mode change (off/filter/audit)."""
         self.config.network_filter.mode = mode
-        # Toggle visibility of filter options (only shown in filter mode)
+        # Toggle visibility of filter/audit options based on mode
         try:
             filter_opts = self.query_one("#filter-options", Container)
             filter_opts_right = self.query_one("#filter-options-right", Container)
+            audit_opts_right = self.query_one("#audit-options-right", Container)
             if mode == NetworkMode.FILTER:
                 filter_opts.remove_class("hidden")
                 filter_opts_right.remove_class("hidden")
+                audit_opts_right.add_class("hidden")
+            elif mode == NetworkMode.AUDIT:
+                filter_opts.add_class("hidden")
+                filter_opts_right.add_class("hidden")
+                audit_opts_right.remove_class("hidden")
             else:
                 filter_opts.add_class("hidden")
                 filter_opts_right.add_class("hidden")
+                audit_opts_right.add_class("hidden")
         except NoMatches:
             pass
         self._update_preview()

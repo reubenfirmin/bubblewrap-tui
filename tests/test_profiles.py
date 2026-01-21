@@ -260,11 +260,13 @@ class TestRoundTrip:
         # Compare environment
         assert restored.environment.clear_env == full_config.environment.clear_env
         assert (
-            restored.environment.custom_hostname
-            == full_config.environment.custom_hostname
-        )
-        assert (
             restored.environment.keep_env_vars == full_config.environment.keep_env_vars
+        )
+
+        # Compare hostname
+        assert (
+            restored.hostname.custom_hostname
+            == full_config.hostname.custom_hostname
         )
         assert (
             restored.environment.custom_env_vars

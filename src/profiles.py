@@ -354,6 +354,7 @@ def _restore_group_values(config: SandboxConfig, data: dict) -> None:
         ("_vfs_group", config._vfs_group),
         ("_user_group", config._user_group),
         ("_isolation_group", config._isolation_group),
+        ("_hostname_group", config._hostname_group),
         ("_process_group", config._process_group),
         ("_network_group", config._network_group),
         ("_desktop_group", config._desktop_group),

@@ -367,7 +367,7 @@ class TestGeneratePastaArgs:
 class TestGetPastaStatus:
     """Test get_pasta_status function."""
 
-    @patch("net.pasta.check_pasta")
+    @patch("net.pasta_install.check_pasta")
     def test_installed(self, mock_check):
         """Returns installed status when installed."""
         mock_check.return_value = True
@@ -375,8 +375,8 @@ class TestGetPastaStatus:
         assert installed is True
         assert "installed" in message
 
-    @patch("net.pasta.check_pasta")
-    @patch("net.pasta.get_install_instructions")
+    @patch("net.pasta_install.check_pasta")
+    @patch("net.pasta_install.get_install_instructions")
     def test_not_installed(self, mock_instructions, mock_check):
         """Returns install instructions when not installed."""
         mock_check.return_value = False

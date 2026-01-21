@@ -1,25 +1,25 @@
 """Custom Textual widgets for bui.
 
-This module re-exports all widgets from the ui.widgets package for compatibility.
+This package contains all custom widgets organized by domain.
 """
 
-from ui.widgets import (
-    # Directory widgets
+from ui.widgets.directory import (
     FilteredDirectoryTree,
     BoundDirItem,
     is_user_owned,
-    # Overlay widgets
-    OverlayItem,
-    # Environment widgets
+)
+from ui.widgets.overlay import OverlayItem
+from ui.widgets.environment import (
     EnvVarItem,
     EnvVarRow,
     AddEnvDialog,
-    # Sandbox widgets
+)
+from ui.widgets.sandbox import (
     DevModeCard,
     OptionCard,
-    # Profile widgets
-    ProfileItem,
-    # Network widgets
+)
+from ui.widgets.profiles import ProfileItem
+from ui.widgets.network import (
     PastaStatus,
     FilterModeRadio,
     FilterListItem,

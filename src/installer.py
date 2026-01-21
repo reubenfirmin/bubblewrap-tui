@@ -167,9 +167,14 @@ def create_default_profiles() -> None:
             "_values": {
                 "unshare_pid": True,
                 "unshare_ipc": True,
-                "unshare_uts": True,
                 "unshare_cgroup": True,
                 "disable_userns": True,
+            }
+        },
+        "_hostname_group": {
+            "_values": {
+                "unshare_uts": True,
+                "custom_hostname": "sandbox",
             }
         },
         "_process_group": {
@@ -197,7 +202,6 @@ def create_default_profiles() -> None:
         "_environment_group": {
             "_values": {
                 "clear_env": True,
-                "custom_hostname": "sandbox",
                 "keep_env_vars": ["TERM"],  # Needed for terminal colors
                 "unset_env_vars": [],
                 "custom_env_vars": {

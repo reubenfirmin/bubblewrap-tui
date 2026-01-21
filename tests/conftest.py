@@ -56,9 +56,11 @@ def full_config():
     )
     # Configure environment
     config.environment.clear_env = True
-    config.environment.custom_hostname = "sandbox"
     config.environment.keep_env_vars = {"PATH", "HOME"}
     config.environment.custom_env_vars = {"MY_VAR": "my_value"}
+
+    # Configure hostname
+    config.hostname.custom_hostname = "sandbox"
 
     # Configure filesystem
     config.filesystem.dev_mode = "minimal"

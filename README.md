@@ -43,6 +43,10 @@ chmod +x bui
 
 Update to latest: `bui --update`
 
+### Compatibility
+- Intended to work on all modern Linux distros. Please file tickets with any issues
+- Will not work on OSX, which doesn't have Bubblewrap or equivalents (your best options would be something like Sandbox.app or Docker Desktop)
+
 ## Quick Start
 
 Launch the TUI to configure a sandbox interactively:

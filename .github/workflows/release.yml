@@ -20,7 +20,7 @@ jobs:
           python-version: '3.12'
 
       - name: Build bui
-        run: python build.py
+        run: python build.py --bundle
 
       - name: Create Release
         uses: softprops/action-gh-release@v1

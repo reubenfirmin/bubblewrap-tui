@@ -128,6 +128,7 @@ class SandboxConfig:
     _system_paths_group: ConfigGroup = field(default=None, repr=False)
     _user_group: ConfigGroup = field(default=None, repr=False)
     _isolation_group: ConfigGroup = field(default=None, repr=False)
+    _hostname_group: ConfigGroup = field(default=None, repr=False)
     _process_group: ConfigGroup = field(default=None, repr=False)
     _network_group: ConfigGroup = field(default=None, repr=False)
     _desktop_group: ConfigGroup = field(default=None, repr=False)
@@ -147,6 +148,8 @@ class SandboxConfig:
             self._user_group = _copy_group(groups.user_group)
         if self._isolation_group is None:
             self._isolation_group = _copy_group(groups.isolation_group)
+        if self._hostname_group is None:
+            self._hostname_group = _copy_group(groups.hostname_group)
         if self._process_group is None:
             self._process_group = _copy_group(groups.process_group)
         if self._network_group is None:
@@ -173,8 +176,13 @@ class SandboxConfig:
 
     @property
     def namespace(self) -> GroupProxy:
-        """Access namespace isolation settings (PID, IPC, UTS, cgroup)."""
+        """Access namespace isolation settings (PID, IPC, cgroup)."""
         return NamespaceProxy(self._isolation_group)
+
+    @property
+    def hostname(self) -> GroupProxy:
+        """Access hostname settings (UTS namespace + custom hostname)."""
+        return GroupProxy(self._hostname_group)
 
     @property
     def process(self) -> GroupProxy:
@@ -203,6 +211,7 @@ class SandboxConfig:
             self._system_paths_group,
             self._user_group,
             self._isolation_group,
+            self._hostname_group,
             self._process_group,
             self._network_group,
             self._desktop_group,
