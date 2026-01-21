@@ -5,7 +5,7 @@ import os
 import shlex
 from pathlib import Path
 
-from textual import on
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
@@ -668,3 +668,26 @@ class BubblewrapTUI(
         # Focus the tab bar for keyboard navigation
         from textual.widgets import Tabs
         self.query_one("#config-tabs").query_one(Tabs).focus()
+        # Initial check for shortcuts visibility (deferred until layout is ready)
+        self.call_after_refresh(self._update_shortcuts_visibility)
+
+    @on(events.Resize)
+    def handle_resize(self, event: events.Resize) -> None:
+        """Called when the terminal size changes."""
+        if getattr(self, "_mounted", False):
+            self._update_shortcuts_visibility(event.size.height)
+
+    def _update_shortcuts_visibility(self, height: int | None = None) -> None:
+        """Hide quick shortcuts on small terminals to prioritize the file picker."""
+        if height is None:
+            height = self.size.height
+        try:
+            shortcuts = self.query_one("#quick-shortcuts-section")
+            # Hide shortcuts if terminal height is under 40 lines
+            log.debug(f"Terminal height: {height}, hiding shortcuts: {height < 40}")
+            if height < 40:
+                shortcuts.add_class("hidden")
+            else:
+                shortcuts.remove_class("hidden")
+        except NoMatches:
+            log.debug("quick-shortcuts-section not found")

@@ -48,8 +48,8 @@ def compose_directories_tab(
             with Horizontal(id="path-input-row"):
                 yield Input(placeholder="/path/to/add", id="path-input")
                 yield Button("+", id="add-path-btn", variant="success")
-            # Quick shortcuts card
-            with Container(classes="options-section", id="quick-shortcuts-section"):
+            # Quick shortcuts card - scrollable, shrinks on small screens
+            with VerticalScroll(id="quick-shortcuts-section"):
                 yield Label("Quick Shortcuts", classes="section-label")
                 for field in QUICK_SHORTCUTS:
                     # Use field's default, except disable if path doesn't exist
