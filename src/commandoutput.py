@@ -40,22 +40,18 @@ def print_execution_header(
 
     if network_filter and network_filter.requires_pasta():
         # Show pasta command template
+        from net.pasta import generate_pasta_args
         print()
-        pasta_parts = ["pasta", "--config-net", "--quiet", "--netns", "<netns>"]
-        for port in network_filter.localhost_access.ports:
-            pasta_parts.extend(["-T", str(port)])
-        print(" ".join(pasta_parts))
+        pasta_args = generate_pasta_args(network_filter)
+        # Add placeholder for bwrap command
+        print(" ".join(pasta_args) + " -- <bwrap...>")
 
-        print("\nNetwork filtering:")
-        if network_filter.hostname_filter.mode.value != "off":
-            hosts = ", ".join(network_filter.hostname_filter.hosts) if network_filter.hostname_filter.hosts else "none"
-            print(f"  Hostname {network_filter.hostname_filter.mode.value}: {hosts}")
-        if network_filter.ip_filter.mode.value != "off":
-            cidrs = ", ".join(network_filter.ip_filter.cidrs) if network_filter.ip_filter.cidrs else "none"
-            print(f"  IP/CIDR {network_filter.ip_filter.mode.value}: {cidrs}")
-        if network_filter.localhost_access.ports:
-            ports = ", ".join(str(p) for p in network_filter.localhost_access.ports)
-            print(f"  Localhost ports: {ports}")
+        # Show filtering summary
+        summary_lines = network_filter.get_filtering_summary()
+        if summary_lines:
+            print("\nNetwork filtering:")
+            for line in summary_lines:
+                print(f"  {line}")
 
     print("=" * 60 + "\n")
 

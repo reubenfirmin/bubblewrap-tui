@@ -84,7 +84,13 @@ class BubblewrapSerializer:
         ]
 
     def _has_home_overlay(self, home: str) -> bool:
-        """Check if there's an overlay for the home directory."""
+        """Check if either the user's home or /root has an overlay.
+
+        /root is checked because it's the default home for UID 0.
+        When synthetic_passwd is enabled, we need to know if there's already
+        an overlay handling home directory creation to avoid creating duplicate
+        directories.
+        """
         for ov in self.config.overlays:
             if ov.dest == home or ov.dest == "/root":
                 return True
@@ -244,16 +250,16 @@ class BubblewrapSerializer:
         # Add pasta command if network filtering is active
         nf = self.config.network_filter
         if nf.requires_pasta():
+            from net.pasta import generate_pasta_args
             color = COLORS[color_idx % len(COLORS)]
             pasta_parts = [f"[bold {color}]pasta[/]"]
-            pasta_args = ["--config-net", "--quiet", "--netns", "[dim]<netns>[/]"]
-            for port in nf.localhost_access.ports:
-                pasta_args.extend(["-T", str(port)])
-            for arg in pasta_args:
-                if arg.startswith("[dim]"):
-                    pasta_parts.append(arg)
-                else:
-                    pasta_parts.append(f"[{color}]{arg}[/]")
+            pasta_args = generate_pasta_args(nf)
+            # Skip first element (pasta itself) since we handle it specially
+            for arg in pasta_args[1:]:
+                pasta_parts.append(f"[{color}]{arg}[/]")
+            # Add placeholder for the bwrap command
+            pasta_parts.append("[dim]--[/]")
+            pasta_parts.append("[dim]<bwrap...>[/]")
             result += "\n\n" + " ".join(pasta_parts)
 
         return result
@@ -315,19 +321,10 @@ class BubblewrapSummarizer:
 
         # Network filtering
         nf = self.config.network_filter
-        if nf.enabled and nf.requires_pasta():
+        if nf.requires_pasta():
             lines.append("• Network filtering (pasta):")
-            if nf.hostname_filter.mode.value != "off":
-                mode = nf.hostname_filter.mode.value
-                hosts = ", ".join(nf.hostname_filter.hosts) if nf.hostname_filter.hosts else "none"
-                lines.append(f"  - Hostname {mode}: {hosts}")
-            if nf.ip_filter.mode.value != "off":
-                mode = nf.ip_filter.mode.value
-                cidrs = ", ".join(nf.ip_filter.cidrs) if nf.ip_filter.cidrs else "none"
-                lines.append(f"  - IP/CIDR {mode}: {cidrs}")
-            if nf.localhost_access.ports:
-                ports = ", ".join(str(p) for p in nf.localhost_access.ports)
-                lines.append(f"  - Localhost ports: {ports}")
+            for summary_line in nf.get_filtering_summary():
+                lines.append(f"  - {summary_line}")
 
         # Command
         lines.append(f"• Running: {' '.join(self.config.command)}")
@@ -408,21 +405,12 @@ class BubblewrapSummarizer:
 
         # Network filtering
         nf = self.config.network_filter
-        if nf.enabled and nf.requires_pasta():
+        if nf.requires_pasta():
             color = COLORS[color_idx % len(COLORS)]
             color_idx += 1
             lines.append(f"[{color}]• Network filtering (pasta):[/]")
-            if nf.hostname_filter.mode.value != "off":
-                mode = nf.hostname_filter.mode.value
-                hosts = ", ".join(nf.hostname_filter.hosts) if nf.hostname_filter.hosts else "none"
-                lines.append(f"[{color}]  - Hostname {mode}: {hosts}[/]")
-            if nf.ip_filter.mode.value != "off":
-                mode = nf.ip_filter.mode.value
-                cidrs = ", ".join(nf.ip_filter.cidrs) if nf.ip_filter.cidrs else "none"
-                lines.append(f"[{color}]  - IP/CIDR {mode}: {cidrs}[/]")
-            if nf.localhost_access.ports:
-                ports = ", ".join(str(p) for p in nf.localhost_access.ports)
-                lines.append(f"[{color}]  - Localhost ports: {ports}[/]")
+            for summary_line in nf.get_filtering_summary():
+                lines.append(f"[{color}]  - {summary_line}[/]")
 
         # Command (white, not colored - it's what the user asked to run)
         lines.append(f"• Running: {' '.join(self.config.command)}")

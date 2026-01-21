@@ -133,9 +133,11 @@ synthetic_passwd = _named("synthetic_passwd", UIField(
 ))
 
 # overlay_home is UI-only (like directory shortcuts) - adds/removes from overlays list
+# Note: The label "Overlay home directory" is generic; the actual label is updated
+# at runtime by _update_home_overlay_label() based on uid/username (e.g., "/root" or "/home/user")
 overlay_home = _named("overlay_home", UIField(
     bool, False, "opt-overlay-home",
-    "Overlay /root", "Ephemeral home directory",
+    "Overlay home directory", "Ephemeral home directory",
 ))
 
 # UID/GID/Username fields (data fields, not standard checkboxes)
@@ -396,7 +398,7 @@ def _desktop_to_args(group: ConfigGroup) -> list[str]:
 
     if group.get("allow_display"):
         display_info = detect_display_server()
-        for display_path in display_info["paths"]:
+        for display_path in display_info.paths:
             args.extend(["--ro-bind", display_path, display_path])
 
     # Note: bind_user_config is now handled via Quick Shortcuts -> bound_dirs
@@ -412,7 +414,7 @@ def _desktop_to_summary(group: ConfigGroup) -> str | None:
 
     if group.get("allow_display"):
         display_info = detect_display_server()
-        display_type = display_info["type"]
+        display_type = display_info.type
         if display_type == "x11":
             lines.append("Display: X11 — WARNING: X11 provides NO isolation, sandbox can keylog other apps")
         elif display_type == "wayland":

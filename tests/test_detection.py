@@ -22,9 +22,9 @@ class TestDetectDisplayServer:
     def test_no_display_server(self, mock_env):
         """No display server when env vars unset."""
         result = detect_display_server()
-        assert result["type"] is None
-        assert result["paths"] == []
-        assert result["env_vars"] == []
+        assert result.type is None
+        assert result.paths == []
+        assert result.env_vars == []
 
     @patch("detection.Path.exists")
     @patch.dict(
@@ -36,10 +36,10 @@ class TestDetectDisplayServer:
         """Wayland detected when socket exists."""
         mock_exists.return_value = True
         result = detect_display_server()
-        assert result["type"] == "wayland"
-        assert "/run/user/1000/wayland-0" in result["paths"]
-        assert "WAYLAND_DISPLAY" in result["env_vars"]
-        assert "XDG_RUNTIME_DIR" in result["env_vars"]
+        assert result.type == "wayland"
+        assert "/run/user/1000/wayland-0" in result.paths
+        assert "WAYLAND_DISPLAY" in result.env_vars
+        assert "XDG_RUNTIME_DIR" in result.env_vars
 
     @patch("detection.Path.exists")
     @patch.dict(
@@ -51,7 +51,7 @@ class TestDetectDisplayServer:
         """Wayland not detected if socket doesn't exist."""
         mock_exists.return_value = False
         result = detect_display_server()
-        assert result["type"] is None
+        assert result.type is None
 
     @patch("detection.Path.exists")
     @patch.dict("os.environ", {"DISPLAY": ":0"}, clear=True)
@@ -59,9 +59,9 @@ class TestDetectDisplayServer:
         """X11 detected when socket exists."""
         mock_exists.return_value = True
         result = detect_display_server()
-        assert result["type"] == "x11"
-        assert "DISPLAY" in result["env_vars"]
-        assert "/tmp/.X11-unix" in result["paths"]
+        assert result.type == "x11"
+        assert "DISPLAY" in result.env_vars
+        assert "/tmp/.X11-unix" in result.paths
 
     @patch("detection.Path.exists")
     @patch.dict(
@@ -77,9 +77,9 @@ class TestDetectDisplayServer:
         """Both X11 and Wayland detected."""
         mock_exists.return_value = True
         result = detect_display_server()
-        assert result["type"] == "both"
-        assert "DISPLAY" in result["env_vars"]
-        assert "WAYLAND_DISPLAY" in result["env_vars"]
+        assert result.type == "both"
+        assert "DISPLAY" in result.env_vars
+        assert "WAYLAND_DISPLAY" in result.env_vars
 
     @patch("detection.Path.exists")
     @patch.dict(
@@ -91,8 +91,8 @@ class TestDetectDisplayServer:
         """XAUTHORITY path included when it exists."""
         mock_exists.return_value = True
         result = detect_display_server()
-        assert "/home/user/.Xauthority" in result["paths"]
-        assert "XAUTHORITY" in result["env_vars"]
+        assert "/home/user/.Xauthority" in result.paths
+        assert "XAUTHORITY" in result.env_vars
 
 
 class TestFindSslCertPaths:

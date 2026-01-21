@@ -166,9 +166,7 @@ class BubblewrapTUI(
         self.config.command[0] = str(resolved_path)
 
     def compose(self) -> ComposeResult:
-        log.info("compose() called")
-        log.info(f"bound_dirs: {self.config.bound_dirs}")
-        log.info(f"env vars count: {len(os.environ)}")
+        log.debug("compose() starting with %d bound_dirs", len(self.config.bound_dirs))
 
         yield Horizontal(
             Label(f"bui - {' '.join(self.config.command)}", id="header-title"),
@@ -311,15 +309,18 @@ class BubblewrapTUI(
         if event.checkbox.id == ids.OPT_NET:
             try:
                 full_net_opts = self.query_one("#full-network-options", Container)
+                network_mode_section = self.query_one("#network-mode-section", Container)
                 if event.value:
                     full_net_opts.remove_class("hidden")
+                    network_mode_section.remove_class("hidden")
                     # Auto-enable DNS and SSL certs
                     self.query_one(css(ids.OPT_RESOLV_CONF), Checkbox).value = True
                     self.query_one(css(ids.OPT_SSL_CERTS), Checkbox).value = True
                 else:
                     full_net_opts.add_class("hidden")
+                    network_mode_section.add_class("hidden")
             except NoMatches:
-                log.debug("Full network options container not found")
+                log.debug("Network options containers not found")
         # Show/hide UID/GID options when user namespace is toggled
         if event.checkbox.id == ids.OPT_UNSHARE_USER:
             try:
@@ -445,6 +446,13 @@ class BubblewrapTUI(
 
     def _handle_quick_shortcut_change(self, field, enabled: bool) -> None:
         """Handle quick shortcut checkbox toggle - sync with bound dirs list.
+
+        Quick shortcuts exist in two places:
+        1. Checkboxes in _system_paths_group (UI state)
+        2. Entries in bound_dirs list (data model)
+
+        These are kept in sync by this method (UI → data) and by
+        sync_shortcuts_from_bound_dirs() (data → UI, used when loading profiles).
 
         Args:
             field: UIField with shortcut_path attribute
@@ -657,7 +665,13 @@ class BubblewrapTUI(
         self._sync_manager = ConfigSyncManager(self, self.config)
 
     def _on_profile_loaded(self) -> None:
-        """Called when a profile is loaded (sync UI)."""
+        """Called when a profile is loaded (sync UI).
+
+        Guards against being called before widgets are mounted.
+        """
+        if not getattr(self, '_mounted', False):
+            self.call_later(self._on_profile_loaded)
+            return
         # First, derive checkbox states from bound_dirs (inverse sync)
         # This ensures Quick Shortcuts checkboxes reflect what's in the profile's bound_dirs
         self._get_sync_manager().sync_shortcuts_from_bound_dirs()

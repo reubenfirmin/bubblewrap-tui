@@ -25,6 +25,7 @@ Usage: bui -- <command> [args...]
 
 # Order matters - modules must be concatenated in dependency order
 MODULE_ORDER = [
+    "constants.py",                   # No dependencies - shared constants
     "detection.py",                   # No dependencies (system detection)
     "environment.py",                 # No dependencies (env var utilities)
     "installer.py",                   # No dependencies (install/update)
@@ -68,7 +69,7 @@ MODULE_ORDER = [
 
 # Local modules (imports to filter out)
 LOCAL_MODULES = {
-    "detection", "environment", "installer", "sandbox", "profiles", "app", "cli", "styles", "bwrap",
+    "constants", "detection", "environment", "installer", "sandbox", "profiles", "app", "cli", "styles", "bwrap",
     "commandoutput",
     "net", "net.utils", "net.iptables", "net.pasta", "net.audit",
     "model",

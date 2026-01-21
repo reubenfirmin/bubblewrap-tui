@@ -119,3 +119,22 @@ class NetworkFilter:
     def is_filter_mode(self) -> bool:
         """Returns True if filter mode is enabled."""
         return self.mode == NetworkMode.FILTER
+
+    def get_filtering_summary(self) -> list[str]:
+        """Get human-readable summary lines for network filtering config."""
+        lines = []
+        if self.hostname_filter.mode.value != "off":
+            mode = self.hostname_filter.mode.value
+            hosts = ", ".join(self.hostname_filter.hosts) if self.hostname_filter.hosts else "none"
+            lines.append(f"Hostname {mode}: {hosts}")
+        if self.ip_filter.mode.value != "off":
+            mode = self.ip_filter.mode.value
+            cidrs = ", ".join(self.ip_filter.cidrs) if self.ip_filter.cidrs else "none"
+            lines.append(f"IP/CIDR {mode}: {cidrs}")
+        if self.port_forwarding.expose_ports:
+            ports = ", ".join(str(p) for p in self.port_forwarding.expose_ports)
+            lines.append(f"Expose ports (sandbox->host): {ports}")
+        if self.port_forwarding.host_ports:
+            ports = ", ".join(str(p) for p in self.port_forwarding.host_ports)
+            lines.append(f"Host ports (host->sandbox): {ports}")
+        return lines

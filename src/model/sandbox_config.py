@@ -19,8 +19,27 @@ from model.overlay_config import OverlayConfig
 class GroupProxy:
     """Proxy that provides attribute access to a ConfigGroup's values.
 
-    This allows existing code like `config.filesystem.mount_proc` to work
-    while the actual data lives in ConfigGroup instances.
+    **Why this pattern exists:**
+    The application uses ConfigGroup instances to organize settings into logical
+    groups (filesystem, user, network, etc.). Each group stores its values in a
+    _values dict. However, existing code uses attribute-style access like
+    `config.filesystem.mount_proc` for readability.
+
+    **How it works:**
+    GroupProxy wraps a ConfigGroup and intercepts __getattr__/__setattr__ to
+    redirect attribute access to the underlying group's _values dict.
+
+    For example:
+        config.filesystem.mount_proc  # Reads _values["mount_proc"] from vfs_group
+        config.user.uid = 1000        # Writes to _values["uid"] in user_group
+
+    **How to use:**
+    - Read: `value = config.network.share_net`
+    - Write: `config.network.share_net = True`
+    - Access raw group: `config._network_group` (for serialization, iteration)
+
+    Subclasses (FilesystemProxy, NamespaceProxy, etc.) may span multiple groups
+    or add special behavior.
     """
 
     def __init__(self, group: ConfigGroup) -> None:
@@ -195,6 +214,10 @@ class SandboxConfig:
 
         Args:
             fd_map: Optional mapping of dest_path -> FD number for virtual user files
+
+        Note:
+            TODO: Consider dependency injection for testability.
+            Currently tightly coupled to BubblewrapSerializer for simplicity.
         """
         from bwrap import BubblewrapSerializer
         return BubblewrapSerializer(self).serialize(fd_map)

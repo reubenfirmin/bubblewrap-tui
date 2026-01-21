@@ -68,36 +68,37 @@ def compose_network_tab(
                         yield OptionCard(groups.bind_resolv_conf)
                         yield OptionCard(groups.bind_ssl_certs)
 
-                # Network mode section
-                with Container(classes="options-section"):
-                    yield Label("Network Mode", classes="section-label")
-                    with RadioSet(id=ids.NETWORK_MODE_RADIO):
-                        yield RadioButton(
-                            "Off",
-                            value=network_filter.mode == NetworkMode.OFF,
-                            id="network-mode-off",
+                # Network mode section (only when network access enabled)
+                with Container(id="network-mode-section", classes="" if share_net else "hidden"):
+                    with Container(classes="options-section"):
+                        yield Label("Network Mode", classes="section-label")
+                        with RadioSet(id=ids.NETWORK_MODE_RADIO):
+                            yield RadioButton(
+                                "Direct",
+                                value=network_filter.mode == NetworkMode.OFF,
+                                id="network-mode-off",
+                            )
+                            yield RadioButton(
+                                "Filter",
+                                value=network_filter.mode == NetworkMode.FILTER,
+                                id="network-mode-filter",
+                            )
+                            yield RadioButton(
+                                "Audit",
+                                value=network_filter.mode == NetworkMode.AUDIT,
+                                id="network-mode-audit",
+                            )
+                        yield PastaStatus()
+                        yield Static(
+                            "Filter: block/allow traffic with iptables",
+                            classes="network-hint",
+                            id="filter-hint",
                         )
-                        yield RadioButton(
-                            "Filter",
-                            value=network_filter.mode == NetworkMode.FILTER,
-                            id="network-mode-filter",
+                        yield Static(
+                            "Audit: capture traffic, show summary after exit",
+                            classes="network-hint",
+                            id="audit-hint",
                         )
-                        yield RadioButton(
-                            "Audit",
-                            value=network_filter.mode == NetworkMode.AUDIT,
-                            id="network-mode-audit",
-                        )
-                    yield PastaStatus()
-                    yield Static(
-                        "Filter: block/allow traffic with iptables",
-                        classes="network-hint",
-                        id="filter-hint",
-                    )
-                    yield Static(
-                        "Audit: capture traffic, show summary after exit",
-                        classes="network-hint",
-                        id="audit-hint",
-                    )
 
                 # Hostname filtering section (only for filter mode)
                 with Container(id="filter-options", classes="" if network_filter.is_filter_mode() else "hidden"):
@@ -157,7 +158,7 @@ def compose_network_tab(
                     with Container(classes="options-section"):
                         yield Label("Expose Ports (sandbox → host)", classes="section-label")
                         yield Static(
-                            "Make sandbox servers accessible from host:",
+                            "Make sandbox servers accessible to host:",
                             classes="network-hint",
                         )
                         yield PortList(

@@ -10,6 +10,7 @@ from textual.containers import VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import Button, Checkbox, Input
 
+from constants import MAX_UID_GID
 from ui.ids import css
 import ui.ids as ids
 
@@ -19,9 +20,6 @@ if TYPE_CHECKING:
     from model import SandboxConfig
 
 log = logging.getLogger(__name__)
-
-# Valid range for Unix UID/GID values
-MAX_UID_GID = 65535
 
 
 def _validate_uid_gid(value: str) -> int | None:
@@ -113,7 +111,32 @@ def _set_nested_attr(obj: Any, path: str, value: Any) -> None:
 
 
 class ConfigSyncManager:
-    """Manages bidirectional UI ↔ Config synchronization."""
+    """Manages bidirectional UI ↔ Config synchronization.
+
+    This class handles the two-way binding between Textual UI widgets and the
+    SandboxConfig model. It provides methods for:
+
+    1. **UI → Config** (sync_config_from_ui): Read values from UI widgets and
+       update the config model. Call this before saving a profile or executing.
+
+    2. **Config → UI** (sync_ui_from_config): Read values from the config model
+       and update UI widgets. Call this after loading a profile.
+
+    3. **Inverse sync** (sync_shortcuts_from_bound_dirs): Derive UI state from
+       data model. Used when bound_dirs is the source of truth (profile load).
+
+    Widget caching is used to avoid repeated DOM queries. Call clear_cache()
+    when widgets are remounted (e.g., after profile load triggers UI rebuild).
+
+    Example usage:
+        # After user edits UI, before saving:
+        sync_manager.sync_config_from_ui()
+        profile.save(config)
+
+        # After loading a profile:
+        sync_manager.clear_cache()
+        sync_manager.sync_ui_from_config()
+    """
 
     def __init__(self, app: App, config: Any) -> None:
         self.app = app

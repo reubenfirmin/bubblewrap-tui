@@ -2,13 +2,32 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from model import BoundDirectory
+
+log = logging.getLogger(__name__)
+
+
+@dataclass
+class DisplayServerInfo:
+    """Information about the detected display server.
+
+    Attributes:
+        type: Display server type ("wayland", "x11", "both", or None)
+        paths: Filesystem paths to bind for display access
+        env_vars: Environment variables to preserve for display access
+    """
+
+    type: str | None = None
+    paths: list[str] = field(default_factory=list)
+    env_vars: list[str] = field(default_factory=list)
 
 
 def find_ssl_cert_paths() -> list[str]:
@@ -36,10 +55,10 @@ def find_ssl_cert_paths() -> list[str]:
     return paths
 
 
-def detect_display_server() -> dict[str, list[str]]:
+def detect_display_server() -> DisplayServerInfo:
     """Detect what display server is running and return paths to bind.
 
-    Returns a dict with:
+    Returns DisplayServerInfo with:
         - type: "wayland", "x11", "both", or None
         - paths: list of filesystem paths to bind
         - env_vars: list of environment variable names to preserve
@@ -47,7 +66,7 @@ def detect_display_server() -> dict[str, list[str]]:
     Detection is based on both environment variables AND socket existence,
     avoiding false positives when env vars are set but display server isn't running.
     """
-    result = {"type": None, "paths": [], "env_vars": []}
+    result = DisplayServerInfo()
     uid = os.getuid()
     runtime_dir = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{uid}")
 
@@ -61,25 +80,25 @@ def detect_display_server() -> dict[str, list[str]]:
         socket_path = Path(runtime_dir) / wayland_display
         if socket_path.exists():
             wayland_detected = True
-            result["paths"].append(str(socket_path))
-            result["env_vars"].append("WAYLAND_DISPLAY")
+            result.paths.append(str(socket_path))
+            result.env_vars.append("WAYLAND_DISPLAY")
 
             # Some compositors create additional sockets (e.g., wayland-1.lock)
             lock_path = Path(runtime_dir) / f"{wayland_display}.lock"
             if lock_path.exists():
-                result["paths"].append(str(lock_path))
+                result.paths.append(str(lock_path))
 
             # Wayland apps need XDG_RUNTIME_DIR for the socket
-            if "XDG_RUNTIME_DIR" not in result["env_vars"]:
-                result["env_vars"].append("XDG_RUNTIME_DIR")
+            if "XDG_RUNTIME_DIR" not in result.env_vars:
+                result.env_vars.append("XDG_RUNTIME_DIR")
 
             # Session type helps apps choose correct backend
             if "XDG_SESSION_TYPE" in os.environ:
-                result["env_vars"].append("XDG_SESSION_TYPE")
+                result.env_vars.append("XDG_SESSION_TYPE")
 
             # Some Wayland apps check XDG_CURRENT_DESKTOP for theming/integration
             if "XDG_CURRENT_DESKTOP" in os.environ:
-                result["env_vars"].append("XDG_CURRENT_DESKTOP")
+                result.env_vars.append("XDG_CURRENT_DESKTOP")
 
     # Check X11
     display = os.environ.get("DISPLAY")
@@ -93,30 +112,30 @@ def detect_display_server() -> dict[str, list[str]]:
         socket_exists = x11_socket and x11_socket.exists() if x11_socket else x11_dir.exists()
         if socket_exists:
             x11_detected = True
-            result["env_vars"].append("DISPLAY")
+            result.env_vars.append("DISPLAY")
 
             # Bind the X11 socket directory
             if x11_dir.exists():
-                result["paths"].append(str(x11_dir))
+                result.paths.append(str(x11_dir))
 
             # Xauthority for authentication (required for most X11 connections)
             xauth = os.environ.get("XAUTHORITY")
             if xauth and Path(xauth).exists():
-                result["paths"].append(xauth)
-                result["env_vars"].append("XAUTHORITY")
+                result.paths.append(xauth)
+                result.env_vars.append("XAUTHORITY")
             else:
                 # Check default location
                 default_xauth = Path.home() / ".Xauthority"
                 if default_xauth.exists():
-                    result["paths"].append(str(default_xauth))
+                    result.paths.append(str(default_xauth))
 
     # Determine display type
     if wayland_detected and x11_detected:
-        result["type"] = "both"  # XWayland or mixed environment
+        result.type = "both"  # XWayland or mixed environment
     elif wayland_detected:
-        result["type"] = "wayland"
+        result.type = "wayland"
     elif x11_detected:
-        result["type"] = "x11"
+        result.type = "x11"
 
     return result
 
@@ -147,17 +166,20 @@ def find_dns_paths() -> list[str]:
     paths = []
     resolv = Path("/etc/resolv.conf")
     if resolv.exists():
-        # Get the real path (might be symlink to /run/systemd/resolve/stub-resolv.conf etc)
-        resolved = resolv.resolve()
-        paths.append(str(resolved))
-        # Also bind the symlink itself if different
-        if resolv.is_symlink():
-            paths.append("/etc/resolv.conf")
-        # On systemd, we might also need the parent dir for related files
-        if "systemd" in str(resolved):
-            parent = resolved.parent
-            if parent.exists() and str(parent) not in paths:
-                paths.append(str(parent))
+        try:
+            # Get the real path (might be symlink to /run/systemd/resolve/stub-resolv.conf etc)
+            resolved = resolv.resolve()
+            paths.append(str(resolved))
+            # Also bind the symlink itself if different
+            if resolv.is_symlink():
+                paths.append("/etc/resolv.conf")
+            # On systemd, we might also need the parent dir for related files
+            if "systemd" in str(resolved):
+                parent = resolved.parent
+                if parent.exists() and str(parent) not in paths:
+                    paths.append(str(parent))
+        except OSError as e:
+            log.debug(f"Failed to resolve {resolv}: {e}")
     # Also check nsswitch.conf for name resolution config
     nsswitch = Path("/etc/nsswitch.conf")
     if nsswitch.exists():

@@ -118,6 +118,178 @@ def generate_pasta_args(nf: NetworkFilter, pcap_path: Path | None = None) -> lis
     return args
 
 
+def _validate_filtering_requirements(nf: "NetworkFilter") -> tuple[str, str | None, bool, str]:
+    """Validate that all required tools are available for network filtering.
+
+    Args:
+        nf: NetworkFilter configuration
+
+    Returns:
+        Tuple of (iptables_path, ip6tables_path, is_multicall, cap_drop_template)
+
+    Raises:
+        SystemExit: If required tools are not found
+    """
+    import sys
+
+    from model.network_filter import FilterMode
+    from net.iptables import find_iptables
+
+    # Check iptables availability
+    iptables_path, ip6tables_path, is_multicall = find_iptables()
+    if iptables_path is None:
+        print("=" * 60, file=sys.stderr)
+        print("Error: iptables not found", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("Network filtering requires iptables.", file=sys.stderr)
+        print("Install with your package manager (e.g. iptables, nftables)", file=sys.stderr)
+        print("=" * 60, file=sys.stderr)
+        sys.exit(1)
+
+    # Check if IPv6 filtering is needed but ip6tables is unavailable
+    has_ipv6_filtering = False
+    if nf.hostname_filter.mode != FilterMode.OFF:
+        has_ipv6_filtering = True
+    if nf.ip_filter.mode != FilterMode.OFF:
+        from net.utils import is_ipv6
+        has_ipv6_filtering = has_ipv6_filtering or any(is_ipv6(cidr) for cidr in nf.ip_filter.cidrs)
+
+    if has_ipv6_filtering and ip6tables_path is None:
+        print("=" * 60, file=sys.stderr)
+        print("Error: ip6tables not found", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("IPv6 filtering rules cannot be applied.", file=sys.stderr)
+        print("Install ip6tables or disable IPv6 filtering.", file=sys.stderr)
+        print("=" * 60, file=sys.stderr)
+        sys.exit(1)
+
+    # Check for capability drop tool
+    cap_drop_tool, cap_drop_template = find_cap_drop_tool()
+    if cap_drop_tool is None:
+        print("=" * 60, file=sys.stderr)
+        print("Error: No capability drop tool found", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("Network filtering requires setpriv (util-linux) or capsh (libcap)", file=sys.stderr)
+        print("to drop CAP_NET_ADMIN after setting up iptables rules.", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("Install with:", file=sys.stderr)
+        print("  Fedora/RHEL: sudo dnf install util-linux  (for setpriv)", file=sys.stderr)
+        print("  Debian/Ubuntu: sudo apt install util-linux  (for setpriv)", file=sys.stderr)
+        print("  Or: sudo apt install libcap2-bin  (for capsh)", file=sys.stderr)
+        print("=" * 60, file=sys.stderr)
+        sys.exit(1)
+
+    return iptables_path, ip6tables_path, is_multicall, cap_drop_template
+
+
+def _create_init_script(
+    nf: "NetworkFilter",
+    user_command: list[str],
+    iptables_path: str,
+    ip6tables_path: str | None,
+    is_multicall: bool,
+    cap_drop_template: str,
+) -> Path:
+    """Create the init script that applies iptables rules then runs user command.
+
+    Args:
+        nf: NetworkFilter configuration
+        user_command: The user's command to run
+        iptables_path: Path to iptables binary
+        ip6tables_path: Path to ip6tables binary (or None)
+        is_multicall: Whether iptables is a multicall binary
+        cap_drop_template: Template for capability drop command
+
+    Returns:
+        Path to the created init script
+    """
+    import shlex
+    import tempfile
+
+    from net.iptables import generate_init_script
+
+    tmp_dir = tempfile.mkdtemp(prefix="bui-net-")
+    tmp_path = Path(tmp_dir)
+    init_script_path = tmp_path / "init.sh"
+
+    iptables_script = generate_init_script(nf, iptables_path, ip6tables_path, is_multicall)
+    user_cmd = " ".join(shlex.quote(arg) for arg in user_command)
+    exec_cmd = cap_drop_template.format(command=user_cmd)
+
+    init_wrapper = f'''#!/bin/sh
+set -e
+
+# Set up iptables rules
+{iptables_script}
+
+# Drop CAP_NET_ADMIN and run the user command
+# This prevents the sandboxed process from modifying iptables rules
+{exec_cmd}
+'''
+
+    init_script_path.write_text(init_wrapper)
+    init_script_path.chmod(0o755)
+
+    return init_script_path
+
+
+def _prepare_bwrap_command(cmd: list[str], tmp_dir: str) -> list[str]:
+    """Prepare bwrap command for pasta execution.
+
+    Modifies the command to:
+    - Remove --unshare-net (pasta provides the namespace)
+    - Add bind mount for temp directory
+    - Remove --cap-drop CAP_NET_ADMIN (needed for iptables)
+    - Add --cap-add CAP_NET_ADMIN
+
+    Args:
+        cmd: The bwrap command list
+        tmp_dir: Temp directory to bind mount
+
+    Returns:
+        Modified command list
+    """
+    import sys
+
+    # Remove --unshare-net since pasta provides the network namespace
+    original_len = len(cmd)
+    cmd = [arg for arg in cmd if arg != "--unshare-net"]
+    if len(cmd) == original_len:
+        logger.debug("--unshare-net not found in command, pasta may already handle namespace")
+
+    # Find the "--" separator and insert bind mount BEFORE it
+    try:
+        separator_idx = cmd.index("--")
+        cmd.insert(separator_idx, "--bind")
+        cmd.insert(separator_idx + 1, tmp_dir)
+        cmd.insert(separator_idx + 2, tmp_dir)
+    except ValueError:
+        cmd.extend(["--bind", tmp_dir, tmp_dir])
+
+    # Remove CAP_NET_ADMIN from drop_caps if present
+    new_cmd: list[str] = []
+    i = 0
+    while i < len(cmd):
+        if cmd[i] == "--cap-drop" and i + 1 < len(cmd) and cmd[i + 1] == "CAP_NET_ADMIN":
+            i += 2  # Skip both --cap-drop and CAP_NET_ADMIN
+        else:
+            new_cmd.append(cmd[i])
+            i += 1
+    cmd = new_cmd
+
+    # Add CAP_NET_ADMIN capability for iptables
+    try:
+        separator_idx = cmd.index("--")
+        cmd.insert(separator_idx, "--cap-add")
+        cmd.insert(separator_idx + 1, "CAP_NET_ADMIN")
+    except ValueError:
+        logger.error("No '--' separator found in bwrap command, cannot add CAP_NET_ADMIN")
+        print("Error: malformed bwrap command (missing '--' separator)", file=sys.stderr)
+        sys.exit(1)
+
+    return cmd
+
+
 def execute_with_pasta(
     config: "SandboxConfig",
     fd_map: dict[str, int] | None,
@@ -143,137 +315,26 @@ def execute_with_pasta(
         overlay_dirs: Optional list of overlay directories
     """
     import os
-    import shlex
-    import sys
-    import tempfile
-
-    from model.network_filter import FilterMode
-    from net.iptables import find_iptables, generate_init_script
 
     nf = config.network_filter
 
-    # Fail fast: check iptables availability
-    iptables_path, ip6tables_path, is_multicall = find_iptables()
-    if iptables_path is None:
-        print("=" * 60, file=sys.stderr)
-        print("Error: iptables not found", file=sys.stderr)
-        print("", file=sys.stderr)
-        print("Network filtering requires iptables.", file=sys.stderr)
-        print("Install with your package manager (e.g. iptables, nftables)", file=sys.stderr)
-        print("=" * 60, file=sys.stderr)
-        sys.exit(1)
+    # Validate all required tools are available
+    iptables_path, ip6tables_path, is_multicall, cap_drop_template = _validate_filtering_requirements(nf)
 
-    # Check if IPv6 filtering is needed but ip6tables is unavailable
-    has_ipv6_filtering = False
-    if nf.hostname_filter.mode != FilterMode.OFF:
-        # Hostname filter may resolve to IPv6 addresses
-        has_ipv6_filtering = True
-    if nf.ip_filter.mode != FilterMode.OFF:
-        from net.utils import is_ipv6
-        has_ipv6_filtering = has_ipv6_filtering or any(is_ipv6(cidr) for cidr in nf.ip_filter.cidrs)
+    # Create init script
+    init_script_path = _create_init_script(
+        nf, config.command, iptables_path, ip6tables_path, is_multicall, cap_drop_template
+    )
+    tmp_dir = str(init_script_path.parent)
 
-    if has_ipv6_filtering and ip6tables_path is None:
-        print("=" * 60, file=sys.stderr)
-        print("Warning: ip6tables not found", file=sys.stderr)
-        print("", file=sys.stderr)
-        print("IPv6 filtering rules will NOT be applied.", file=sys.stderr)
-        print("IPv6 traffic may bypass the filter.", file=sys.stderr)
-        print("Install ip6tables or ensure your iptables supports IPv6.", file=sys.stderr)
-        print("=" * 60, file=sys.stderr)
-
-    # Check for capability drop tool (setpriv or capsh)
-    cap_drop_tool, cap_drop_template = find_cap_drop_tool()
-    if cap_drop_tool is None:
-        print("=" * 60, file=sys.stderr)
-        print("Error: No capability drop tool found", file=sys.stderr)
-        print("", file=sys.stderr)
-        print("Network filtering requires setpriv (util-linux) or capsh (libcap)", file=sys.stderr)
-        print("to drop CAP_NET_ADMIN after setting up iptables rules.", file=sys.stderr)
-        print("", file=sys.stderr)
-        print("Install with:", file=sys.stderr)
-        print("  Fedora/RHEL: sudo dnf install util-linux  (for setpriv)", file=sys.stderr)
-        print("  Debian/Ubuntu: sudo apt install util-linux  (for setpriv)", file=sys.stderr)
-        print("  Or: sudo apt install libcap2-bin  (for capsh)", file=sys.stderr)
-        print("=" * 60, file=sys.stderr)
-        sys.exit(1)
-
-    # Create temp directory for scripts
-    tmp_dir = tempfile.mkdtemp(prefix="bui-net-")
-    tmp_path = Path(tmp_dir)
-    init_script_path = tmp_path / "init.sh"
-
-    # Generate iptables init script content
-    iptables_script = generate_init_script(nf, iptables_path, ip6tables_path, is_multicall)
-
-    # Build the user command as a shell-safe string
-    user_cmd = " ".join(shlex.quote(arg) for arg in config.command)
-
-    # Build the final exec command that drops CAP_NET_ADMIN before running user command
-    # This ensures the sandboxed process cannot modify/disable the iptables rules
-    exec_cmd = cap_drop_template.format(command=user_cmd)
-
-    # Create the init script that applies iptables rules then runs user command
-    # pasta --config-net already sets up the network interface before running bwrap
-    init_wrapper = f'''#!/bin/sh
-set -e
-
-# Set up iptables rules
-{iptables_script}
-
-# Drop CAP_NET_ADMIN and run the user command
-# This prevents the sandboxed process from modifying iptables rules
-{exec_cmd}
-'''
-
-    init_script_path.write_text(init_wrapper)
-    init_script_path.chmod(0o755)
-
-    # Build bwrap command - pasta provides network namespace, so remove --unshare-net
+    # Build bwrap command with init script as the command
     original_command = config.command
     config.command = [str(init_script_path)]
-
     cmd = build_command_fn(config, fd_map)
     config.command = original_command
 
-    # Remove --unshare-net since pasta provides the network namespace
-    # Use list filtering to handle multiple occurrences robustly
-    original_len = len(cmd)
-    cmd = [arg for arg in cmd if arg != "--unshare-net"]
-    if len(cmd) == original_len:
-        logger.debug("--unshare-net not found in command, pasta may already handle namespace")
-
-    # Find the "--" separator and insert bind mount BEFORE it
-    try:
-        separator_idx = cmd.index("--")
-        cmd.insert(separator_idx, "--bind")
-        cmd.insert(separator_idx + 1, tmp_dir)
-        cmd.insert(separator_idx + 2, tmp_dir)
-    except ValueError:
-        cmd.extend(["--bind", tmp_dir, tmp_dir])
-
-    # Remove CAP_NET_ADMIN from drop_caps if present
-    # Use proper iteration to handle the --cap-drop CAP_NET_ADMIN pair correctly
-    new_cmd: list[str] = []
-    i = 0
-    while i < len(cmd):
-        if cmd[i] == "--cap-drop" and i + 1 < len(cmd) and cmd[i + 1] == "CAP_NET_ADMIN":
-            i += 2  # Skip both --cap-drop and CAP_NET_ADMIN
-        else:
-            new_cmd.append(cmd[i])
-            i += 1
-    cmd = new_cmd
-
-    # Add CAP_NET_ADMIN capability for iptables
-    # The separator must exist (bwrap requires it), but handle defensively
-    try:
-        separator_idx = cmd.index("--")
-        cmd.insert(separator_idx, "--cap-add")
-        cmd.insert(separator_idx + 1, "CAP_NET_ADMIN")
-    except ValueError:
-        # Should never happen with valid bwrap commands, but fail gracefully
-        logger.error("No '--' separator found in bwrap command, cannot add CAP_NET_ADMIN")
-        print("Error: malformed bwrap command (missing '--' separator)", file=sys.stderr)
-        sys.exit(1)
+    # Prepare command for pasta execution
+    cmd = _prepare_bwrap_command(cmd, tmp_dir)
 
     # Print header
     from commandoutput import print_execution_header

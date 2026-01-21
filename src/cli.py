@@ -5,6 +5,7 @@ import os
 import shlex
 import sys
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -33,6 +34,33 @@ BUI_VERSION = "3.4.0"
 
 # Global to store update message for display after TUI exits
 _update_available: str | None = None
+
+
+@dataclass
+class ParsedArgs:
+    """Parsed command-line arguments."""
+
+    command: list[str]
+    profile_path: str | None
+    sandbox_name: str | None
+    bind_cwd: bool
+    bind_paths: list[Path]
+    bind_env: list[str]
+
+
+def print_error_box(title: str, *lines: str) -> None:
+    """Print a formatted error box to stderr.
+
+    Args:
+        title: The error title (will be prefixed with "Error: ")
+        *lines: Additional lines to print in the box
+    """
+    print("=" * 60, file=sys.stderr)
+    print(f"Error: {title}", file=sys.stderr)
+    print("", file=sys.stderr)
+    for line in lines:
+        print(line, file=sys.stderr)
+    print("=" * 60, file=sys.stderr)
 
 
 def load_profile(profile_name: str, command: list[str]) -> SandboxConfig:
@@ -178,10 +206,11 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def parse_args() -> tuple[list[str], str | None, str | None, bool, list[Path], list[str]]:
+def parse_args() -> ParsedArgs:
     """Parse command line arguments.
 
-    Returns: (command, profile_path, sandbox_name, bind_cwd, bind_paths, bind_env)
+    Returns:
+        ParsedArgs with command, profile, sandbox, and bind options.
     """
     parser = create_parser()
 
@@ -262,7 +291,26 @@ def parse_args() -> tuple[list[str], str | None, str | None, bool, list[Path], l
     # Resolve bind paths
     bind_paths = [Path(p).expanduser().resolve() for p in args.bind]
 
-    return command, args.profile, args.sandbox, args.bind_cwd, bind_paths, args.bind_env
+    return ParsedArgs(
+        command=command,
+        profile_path=args.profile,
+        sandbox_name=args.sandbox,
+        bind_cwd=args.bind_cwd,
+        bind_paths=bind_paths,
+        bind_env=args.bind_env,
+    )
+
+
+def cleanup_fds(fd_map: dict[str, int]) -> None:
+    """Close all file descriptors in the map.
+
+    Used to clean up FDs on error paths before exit.
+    """
+    for fd in fd_map.values():
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
 def setup_virtual_user_fds(config: SandboxConfig) -> dict[str, int]:
@@ -340,13 +388,12 @@ def validate_network_filter(config: SandboxConfig) -> bool:
         return True
 
     if not check_pasta():
-        print("=" * 60, file=sys.stderr)
-        print("Error: Network filtering requires pasta", file=sys.stderr)
-        print("", file=sys.stderr)
-        print(f"Install with: {get_install_instructions()}", file=sys.stderr)
-        print("", file=sys.stderr)
-        print("Or disable network filtering in the profile.", file=sys.stderr)
-        print("=" * 60, file=sys.stderr)
+        print_error_box(
+            "Network filtering requires pasta",
+            f"Install with: {get_install_instructions()}",
+            "",
+            "Or disable network filtering in the profile.",
+        )
         return False
 
     return True
@@ -360,32 +407,33 @@ def _build_bwrap_command(config: SandboxConfig, fd_map: dict[str, int] | None) -
 def main() -> None:
     """Main entry point."""
     global _update_available
-    command, profile_path, sandbox_name, bind_cwd, bind_paths, bind_env = parse_args()
+    args = parse_args()
 
     # Check for updates in background (non-blocking, cached for 1 day)
     _update_available = check_for_updates(BUI_VERSION)
 
     # If profile specified, run directly without TUI
-    if profile_path:
-        config = load_profile(profile_path, command)
+    if args.profile_path:
+        config = load_profile(args.profile_path, args.command)
 
         # Apply --bind: add paths as read-only bound directories
-        for path in bind_paths:
+        for path in args.bind_paths:
             config.bound_dirs.append(BoundDirectory(path=path, readonly=True))
 
         # Apply --bind-cwd: add current directory as read-write bound directory
-        if bind_cwd:
+        if args.bind_cwd:
             cwd = Path(os.getcwd())
             config.bound_dirs.append(BoundDirectory(path=cwd, readonly=False))
 
         # Apply --bind-env: set environment variables in sandbox
-        for env_spec in bind_env:
+        for env_spec in args.bind_env:
             if "=" in env_spec:
                 var, value = env_spec.split("=", 1)
                 config.environment.custom_env_vars[var] = value
 
         # Apply sandbox isolation to overlays
         overlay_dirs = []
+        sandbox_name = args.sandbox_name
         user_provided_sandbox = sandbox_name is not None
         if config.overlays:
             # Generate UUID if no sandbox name specified
@@ -395,8 +443,8 @@ def main() -> None:
 
         # Register sandbox metadata (so --install can pick up binds later)
         if user_provided_sandbox:
-            bind_paths_str = [str(p) for p in bind_paths] if bind_paths else None
-            register_sandbox(sandbox_name, profile_path, bind_paths_str, bind_env)
+            bind_paths_str = [str(p) for p in args.bind_paths] if args.bind_paths else None
+            register_sandbox(sandbox_name, args.profile_path, bind_paths_str, args.bind_env)
 
         # Validate network filtering requirements
         if not validate_network_filter(config):
@@ -434,7 +482,7 @@ def main() -> None:
             os.execvp("bwrap", cmd)
 
     # Otherwise show TUI for configuration
-    app = BubblewrapTUI(command, version=BUI_VERSION)
+    app = BubblewrapTUI(args.command, version=BUI_VERSION)
     app.run()
 
     # Show update notice after TUI exits

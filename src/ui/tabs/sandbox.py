@@ -53,11 +53,11 @@ def compose_sandbox_tab(on_dev_mode_change: Callable[[str], None]) -> ComposeRes
                         else "Not detected"
                     )
                     yield OptionCard(groups.allow_dbus, explanation=dbus_desc)
-                    if display_info["type"] == "wayland":
+                    if display_info.type == "wayland":
                         display_desc = "Wayland display access"
-                    elif display_info["type"] == "x11":
+                    elif display_info.type == "x11":
                         display_desc = "X11 display access"
-                    elif display_info["type"] == "both":
+                    elif display_info.type == "both":
                         display_desc = "X11 + Wayland display access"
                     else:
                         display_desc = "No display detected"
