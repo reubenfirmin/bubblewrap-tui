@@ -12,6 +12,7 @@ from model.network_filter import (
     PortForwarding,
 )
 from net import (
+    HostnameResolutionError,
     check_pasta,
     detect_distro,
     generate_iptables_rules,
@@ -195,13 +196,14 @@ class TestResolveHostname:
         assert "2606:2800:220:1:248:1893:25c8:1946" in ipv6
 
     @patch("socket.getaddrinfo")
-    def test_handles_resolution_failure(self, mock_getaddrinfo):
-        """resolve_hostname handles resolution failure."""
+    def test_raises_on_resolution_failure(self, mock_getaddrinfo):
+        """resolve_hostname raises HostnameResolutionError on failure."""
         import socket
+
         mock_getaddrinfo.side_effect = socket.gaierror("Name resolution failed")
-        ipv4, ipv6 = resolve_hostname("nonexistent.invalid")
-        assert ipv4 == []
-        assert ipv6 == []
+        with pytest.raises(HostnameResolutionError) as exc_info:
+            resolve_hostname("nonexistent.invalid")
+        assert "nonexistent.invalid" in str(exc_info.value)
 
 
 class TestGenerateIptablesRules:

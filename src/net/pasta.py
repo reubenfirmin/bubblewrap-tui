@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from model.network_filter import NetworkFilter
     from model.config import SandboxConfig
 
-from net.utils import detect_distro, find_cap_drop_tool
+from net.utils import HostnameResolutionError, detect_distro, find_cap_drop_tool
 
 logger = logging.getLogger(__name__)
 
@@ -321,10 +321,24 @@ def execute_with_pasta(
     # Validate all required tools are available
     iptables_path, ip6tables_path, is_multicall, cap_drop_template = _validate_filtering_requirements(nf)
 
-    # Create init script
-    init_script_path = _create_init_script(
-        nf, config.command, iptables_path, ip6tables_path, is_multicall, cap_drop_template
-    )
+    # Create init script (resolves hostnames to IPs)
+    try:
+        init_script_path = _create_init_script(
+            nf, config.command, iptables_path, ip6tables_path, is_multicall, cap_drop_template
+        )
+    except HostnameResolutionError as e:
+        import sys
+
+        print("=" * 60, file=sys.stderr)
+        print("Error: Hostname resolution failed", file=sys.stderr)
+        print("", file=sys.stderr)
+        print(str(e), file=sys.stderr)
+        print("", file=sys.stderr)
+        print("Network filtering requires all hostnames to resolve.", file=sys.stderr)
+        print("Check your spelling and network connectivity.", file=sys.stderr)
+        print("=" * 60, file=sys.stderr)
+        sys.exit(1)
+
     tmp_dir = str(init_script_path.parent)
 
     # Build bwrap command with init script as the command

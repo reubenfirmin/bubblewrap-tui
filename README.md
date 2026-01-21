@@ -59,7 +59,7 @@ The TUI lets you:
 - Enable/disable network access
 - Save configurations as reusable profiles
 
-Press `x` or `Enter` to execute, `q` or `Esc` to quit.
+Press `Enter` to execute or `Esc` to quit.
 
 ## Profiles
 
@@ -89,7 +89,7 @@ Create your own profiles:
 
 1. Run `bui -- /bin/bash`
 2. Configure settings in the TUI
-3. Press `s` to save with a name (e.g., `my-profile`)
+3. Click "Save" to save with a name (e.g., `my-profile`)
 
 Profiles are stored in `~/.config/bui/profiles/`.
 
@@ -263,6 +263,12 @@ Hostnames are resolved to IP addresses **at sandbox startup**. This is a fundame
 - Iptables rules are static - they don't support hostname-based filtering
 - DNS resolution is dynamic - `github.com` might resolve to different IPs over time
 - The sandbox's isolated namespace makes runtime DNS monitoring impractical without a proxy
+
+**If you're using hostname-based filtering:**
+
+- DNS lookups use your host machine's DNS before the sandbox starts
+- If a hostname fails to resolve, execution halts with an error
+- Services using CDNs or load balancers may rotate IPs during long-running sessions
 
 For most use cases this works fine. If a service changes IP during execution, traffic to the new IP won't match your rules. For strict security requirements, use IP/CIDR filters instead of hostnames.
 

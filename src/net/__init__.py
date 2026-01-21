@@ -30,6 +30,7 @@ from net.pasta import (
     get_pasta_status,
 )
 from net.utils import (
+    HostnameResolutionError,
     detect_distro,
     get_www_variant,
     is_ipv6,
@@ -60,6 +61,7 @@ __all__ = [
     "generate_init_script",
     "generate_iptables_rules",
     # utils
+    "HostnameResolutionError",
     "detect_distro",
     "get_www_variant",
     "is_ipv6",

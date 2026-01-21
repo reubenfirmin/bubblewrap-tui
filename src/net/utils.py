@@ -8,6 +8,12 @@ import socket
 from pathlib import Path
 
 
+class HostnameResolutionError(Exception):
+    """Raised when hostname resolution fails."""
+
+    pass
+
+
 def detect_distro() -> str | None:
     """Detect Linux distribution from /etc/os-release.
 
@@ -49,8 +55,8 @@ def resolve_hostname(host: str) -> tuple[list[str], list[str]]:
                 ipv4.append(ip)
             elif family == socket.AF_INET6:
                 ipv6.append(ip)
-    except socket.gaierror:
-        pass  # Host resolution failed
+    except socket.gaierror as e:
+        raise HostnameResolutionError(f"Failed to resolve hostname '{host}': {e}")
 
     return (list(set(ipv4)), list(set(ipv6)))  # Dedupe
 
