@@ -5,7 +5,7 @@ This package contains:
 - Event handler mixins for different UI areas
 """
 
-from controller.sync import ConfigSyncManager, FieldMapping, FIELD_MAPPINGS
+from controller.sync import ConfigSyncManager
 from controller.directories import DirectoryEventsMixin
 from controller.overlays import OverlayEventsMixin
 from controller.environment import EnvironmentEventsMixin
@@ -15,8 +15,6 @@ from controller.network import NetworkEventsMixin
 __all__ = [
     # Sync
     "ConfigSyncManager",
-    "FieldMapping",
-    "FIELD_MAPPINGS",
     # Event mixins
     "DirectoryEventsMixin",
     "EnvironmentEventsMixin",

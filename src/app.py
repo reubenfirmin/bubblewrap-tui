@@ -434,7 +434,7 @@ class BubblewrapTUI(
 
     def _on_dev_mode_change(self, mode: str) -> None:
         """Handle /dev mode change."""
-        self.config.filesystem.dev_mode = mode
+        self.config.vfs.dev_mode = mode
 
     # =========================================================================
     # Network Filtering Callbacks

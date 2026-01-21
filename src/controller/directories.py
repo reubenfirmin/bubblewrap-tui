@@ -38,9 +38,9 @@ class DirectoryEventsMixin:
     def _check_vfs_conflict(self, path: Path) -> str | None:
         """Check if path conflicts with VFS options. Returns warning message or None."""
         resolved = path.resolve()
-        if resolved == Path("/proc") and self.config.filesystem.mount_proc:
+        if resolved == Path("/proc") and self.config.vfs.mount_proc:
             return "/proc is already mounted via Virtual Filesystems"
-        if resolved == Path("/tmp") and self.config.filesystem.mount_tmp:
+        if resolved == Path("/tmp") and self.config.vfs.mount_tmp:
             return "/tmp is already mounted via Virtual Filesystems"
         return None
 

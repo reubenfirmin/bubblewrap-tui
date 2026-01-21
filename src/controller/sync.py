@@ -6,11 +6,9 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from textual.containers import VerticalScroll
-from textual.css.query import NoMatches
+from textual.css.query import NoMatches, WrongType
 from textual.widgets import Button, Checkbox, Input
 
-from controller.field_mappings import FieldMapping, FIELD_MAPPINGS
-from controller.validators import validate_uid_gid
 from ui.ids import css
 import ui.ids as ids
 
@@ -20,24 +18,6 @@ if TYPE_CHECKING:
     from model import SandboxConfig
 
 log = logging.getLogger(__name__)
-
-# Re-export for backwards compatibility
-_validate_uid_gid = validate_uid_gid
-
-
-def _get_nested_attr(obj: Any, path: str) -> Any:
-    """Get nested attribute like 'filesystem.mount_proc'."""
-    for part in path.split('.'):
-        obj = getattr(obj, part)
-    return obj
-
-
-def _set_nested_attr(obj: Any, path: str, value: Any) -> None:
-    """Set nested attribute like 'filesystem.mount_proc'."""
-    parts = path.split('.')
-    for part in parts[:-1]:
-        obj = getattr(obj, part)
-    setattr(obj, parts[-1], value)
 
 
 class ConfigSyncManager:
@@ -85,30 +65,36 @@ class ConfigSyncManager:
             widget = self.app.query_one(f"#{widget_id}", widget_type)
             self._widget_cache[widget_id] = widget
             return widget
-        except NoMatches:
+        except (NoMatches, WrongType):
+            # Widget not found or wrong type (e.g., dev_mode uses Button, not Input)
             return None
 
     def sync_config_from_ui(self) -> None:
         """Read all UI widgets and update config."""
-        for mapping in FIELD_MAPPINGS:
-            widget = self.get_widget(mapping.widget_id, mapping.widget_type)
-            if widget is None:
-                continue
+        for group in self.config.all_field_groups():
+            for field in group.items:
+                # Skip fields without UI widgets
+                if not hasattr(field, 'checkbox_id') or not field.checkbox_id:
+                    continue
 
-            try:
-                if mapping.widget_type == Checkbox:
+                widget = self.get_widget(field.checkbox_id, field.widget_type)
+                if widget is None:
+                    continue
+
+                try:
                     value = widget.value
-                else:  # Input
-                    value = widget.value
-                    if mapping.value_transform:
-                        transformed = mapping.value_transform(value)
+
+                    # Apply value transform if present (e.g., uid/gid validation)
+                    if hasattr(field, 'value_transform') and field.value_transform:
+                        transformed = field.value_transform(value)
                         if transformed is None:
                             continue  # Skip invalid values
                         value = transformed
 
-                _set_nested_attr(self.config, mapping.config_path, value)
-            except (ValueError, AttributeError) as e:
-                log.debug(f"Error syncing {mapping.widget_id}: {e}")
+                    # Set value directly on group
+                    group.set(field.name, value)
+                except (ValueError, AttributeError) as e:
+                    log.debug(f"Error syncing {field.checkbox_id}: {e}")
 
     def sync_shortcuts_from_bound_dirs(self) -> None:
         """Derive shortcut checkbox states from existing bound_dirs.
@@ -132,29 +118,37 @@ class ConfigSyncManager:
 
             # Set the config value (checkbox will sync from this)
             if field.name in ("bind_usr", "bind_bin", "bind_lib", "bind_lib64", "bind_sbin", "bind_etc"):
-                setattr(self.config.filesystem, field.name, enabled)
+                setattr(self.config.system_paths, field.name, enabled)
             elif field.name == "bind_user_config":
                 setattr(self.config.desktop, field.name, enabled)
 
     def sync_ui_from_config(self) -> None:
         """Read config and update all UI widgets."""
-        for mapping in FIELD_MAPPINGS:
-            widget = self.get_widget(mapping.widget_id, mapping.widget_type)
-            if widget is None:
-                continue
+        for group in self.config.all_field_groups():
+            for field in group.items:
+                # Skip fields without UI widgets
+                if not hasattr(field, 'checkbox_id') or not field.checkbox_id:
+                    continue
 
-            try:
-                value = _get_nested_attr(self.config, mapping.config_path)
+                widget = self.get_widget(field.checkbox_id, field.widget_type)
+                if widget is None:
+                    continue
 
-                if mapping.inverse_transform:
-                    value = mapping.inverse_transform(value)
+                try:
+                    # Get value from group (with fallback to field default)
+                    value = group._values.get(field.name, field.default)
 
-                if mapping.widget_type == Checkbox:
-                    widget.value = bool(value)
-                else:  # Input
-                    widget.value = str(value) if value is not None else ""
-            except (ValueError, AttributeError) as e:
-                log.debug(f"Error syncing UI {mapping.widget_id}: {e}")
+                    # Apply inverse transform if present
+                    if hasattr(field, 'inverse_transform') and field.inverse_transform:
+                        value = field.inverse_transform(value)
+
+                    # Set widget value
+                    if field.widget_type == Checkbox:
+                        widget.value = bool(value)
+                    else:  # Input
+                        widget.value = str(value) if value is not None else ""
+                except (ValueError, AttributeError) as e:
+                    log.debug(f"Error syncing UI {field.checkbox_id}: {e}")
 
     def clear_cache(self) -> None:
         """Clear the widget cache (call when widgets are remounted)."""
@@ -296,7 +290,7 @@ class ConfigSyncManager:
         """
         try:
             dev_card = self.app.query_one(dev_mode_card_class)
-            dev_card.set_mode(self.config.filesystem.dev_mode)
+            dev_card.set_mode(self.config.vfs.dev_mode)
         except NoMatches:
             log.debug("DevModeCard not found")
 
@@ -323,7 +317,7 @@ class ConfigSyncManager:
             for field in QUICK_SHORTCUTS:
                 # Get the checkbox state from config
                 if field.name in ("bind_usr", "bind_bin", "bind_lib", "bind_lib64", "bind_sbin", "bind_etc"):
-                    enabled = getattr(self.config.filesystem, field.name, False)
+                    enabled = getattr(self.config.system_paths, field.name, False)
                 elif field.name == "bind_user_config":
                     enabled = getattr(self.config.desktop, field.name, False)
                 else:

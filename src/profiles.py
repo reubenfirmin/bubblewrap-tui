@@ -49,11 +49,11 @@ def validate_config(config: SandboxConfig, profile_name: str | None = None) -> l
 
     # Validate dev_mode is a known value
     valid_dev_modes = {"none", "minimal", "full"}
-    if config.filesystem.dev_mode not in valid_dev_modes:
+    if config.vfs.dev_mode not in valid_dev_modes:
         warnings.append(
-            f"Unknown dev_mode '{config.filesystem.dev_mode}', defaulting to 'minimal'"
+            f"Unknown dev_mode '{config.vfs.dev_mode}', defaulting to 'minimal'"
         )
-        config.filesystem.dev_mode = "minimal"
+        config.vfs.dev_mode = "minimal"
 
     # Validate overlay configs
     for i, overlay in enumerate(config.overlays):
@@ -84,9 +84,9 @@ def validate_config(config: SandboxConfig, profile_name: str | None = None) -> l
     # Warn about VFS conflicts
     for bd in config.bound_dirs:
         resolved = bd.path.resolve()
-        if resolved == Path("/proc") and config.filesystem.mount_proc:
+        if resolved == Path("/proc") and config.vfs.mount_proc:
             warnings.append("/proc bound directory conflicts with VFS /proc option")
-        if resolved == Path("/tmp") and config.filesystem.mount_tmp:
+        if resolved == Path("/tmp") and config.vfs.mount_tmp:
             warnings.append("/tmp bound directory conflicts with VFS /tmp option")
 
     return warnings

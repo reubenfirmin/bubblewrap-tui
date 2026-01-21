@@ -20,6 +20,7 @@ from model.fields import (
     bind_usr, bind_bin, bind_lib, bind_lib64, bind_sbin, bind_etc,
     # User fields
     unshare_user, synthetic_passwd, overlay_home,
+    uid_field, gid_field, username_field,
     # Isolation fields
     unshare_pid, unshare_ipc, unshare_uts, unshare_cgroup, disable_userns,
     # Process fields
@@ -111,14 +112,10 @@ system_paths_group = ConfigGroup(
 user_group = ConfigGroup(
     name="user",
     title="User",
-    items=[unshare_user, synthetic_passwd],
+    items=[unshare_user, synthetic_passwd, uid_field, gid_field, username_field],
     _to_args_fn=_user_to_args,
     _to_summary_fn=_user_to_summary,
 )
-# Initialize uid/gid/username - default to 0 (root inside sandbox)
-user_group.set("uid", 0)
-user_group.set("gid", 0)
-user_group.set("username", "")
 
 isolation_group = ConfigGroup(
     name="isolation",

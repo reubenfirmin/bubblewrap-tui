@@ -165,8 +165,18 @@ class SandboxConfig:
 
     # Property accessors for backward compatibility
     @property
+    def vfs(self) -> GroupProxy:
+        """Access virtual filesystem settings (/dev, /proc, /tmp)."""
+        return GroupProxy(self._vfs_group)
+
+    @property
+    def system_paths(self) -> GroupProxy:
+        """Access system path bindings (/usr, /bin, /lib, etc.)."""
+        return GroupProxy(self._system_paths_group)
+
+    @property
     def filesystem(self) -> FilesystemProxy:
-        """Access filesystem settings."""
+        """Access filesystem settings (legacy - spans vfs and system_paths)."""
         return FilesystemProxy(self._vfs_group, self._system_paths_group)
 
     @property
@@ -203,6 +213,24 @@ class SandboxConfig:
     def environment(self) -> GroupProxy:
         """Access environment settings."""
         return GroupProxy(self._environment_group)
+
+    def all_field_groups(self) -> list[ConfigGroup]:
+        """Get all configuration groups with fields for UI sync.
+
+        This method returns all groups that contain UIField items, which is used
+        by ConfigSyncManager to iterate over all fields for bidirectional sync.
+        """
+        return [
+            self._vfs_group,
+            self._system_paths_group,
+            self._user_group,
+            self._isolation_group,
+            self._hostname_group,
+            self._process_group,
+            self._network_group,
+            self._desktop_group,
+            self._environment_group,
+        ]
 
     def get_all_groups(self) -> list[ConfigGroup]:
         """Get all groups in serialization order."""

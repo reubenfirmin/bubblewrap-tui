@@ -9,6 +9,12 @@ def _named(name: str, field: UIField) -> UIField:
     return field
 
 
+def _validate_uid_gid(value: str) -> int | None:
+    """Lazy import wrapper for validate_uid_gid to avoid circular imports."""
+    from controller.validators import validate_uid_gid
+    return validate_uid_gid(value)
+
+
 unshare_user = _named("unshare_user", UIField(
     bool, False, "opt-unshare-user",
     "Mask user identity", "Appear as different user inside sandbox",
@@ -31,8 +37,22 @@ overlay_home = _named("overlay_home", UIField(
     "Overlay home directory", "Ephemeral home directory",
 ))
 
-# UID/GID/Username fields (data fields, not standard checkboxes)
+# UID/GID/Username fields (Input fields with validation)
 # Default to 0 (root inside sandbox) since that's the common use case
-uid_field = Field(int, default=0)
-gid_field = Field(int, default=0)
-username_field = Field(str, default="")
+uid_field = _named("uid", UIField(
+    int, 0, "opt-uid",
+    "UID", "User ID inside sandbox (0 = root)",
+    value_transform=_validate_uid_gid,
+))
+
+gid_field = _named("gid", UIField(
+    int, 0, "opt-gid",
+    "GID", "Group ID inside sandbox",
+    value_transform=_validate_uid_gid,
+))
+
+username_field = _named("username", UIField(
+    str, "", "opt-username",
+    "Username", "Username inside sandbox",
+    value_transform=lambda v: v.strip(),
+))
