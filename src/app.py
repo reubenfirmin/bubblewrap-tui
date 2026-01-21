@@ -287,6 +287,7 @@ class BubblewrapTUI(
 
         # Handle special cases via controller methods
         sync.sync_uid_gid_visibility()
+        sync.sync_network_visibility()
         sync.sync_dev_mode(DevModeCard)
         sync.rebuild_bound_dirs_list(BoundDirItem, self._update_preview, self._remove_bound_dir)
         sync.rebuild_quick_shortcuts_bound_dirs(
@@ -316,9 +317,37 @@ class BubblewrapTUI(
                     # Auto-enable DNS and SSL certs
                     self.query_one(css(ids.OPT_RESOLV_CONF), Checkbox).value = True
                     self.query_one(css(ids.OPT_SSL_CERTS), Checkbox).value = True
+                    # Show filter/audit options based on current mode
+                    filter_opts = self.query_one("#filter-options", Container)
+                    filter_opts_right = self.query_one("#filter-options-right", Container)
+                    audit_opts_right = self.query_one("#audit-options-right", Container)
+                    mode = self.config.network_filter.mode
+                    if mode == NetworkMode.FILTER:
+                        filter_opts.remove_class("hidden")
+                        filter_opts_right.remove_class("hidden")
+                        audit_opts_right.add_class("hidden")
+                    elif mode == NetworkMode.AUDIT:
+                        filter_opts.add_class("hidden")
+                        filter_opts_right.add_class("hidden")
+                        audit_opts_right.remove_class("hidden")
+                    else:  # OFF
+                        filter_opts.add_class("hidden")
+                        filter_opts_right.add_class("hidden")
+                        audit_opts_right.add_class("hidden")
                 else:
+                    # Hide all network-related sections
                     full_net_opts.add_class("hidden")
                     network_mode_section.add_class("hidden")
+                    self.query_one("#filter-options", Container).add_class("hidden")
+                    self.query_one("#filter-options-right", Container).add_class("hidden")
+                    self.query_one("#audit-options-right", Container).add_class("hidden")
+
+                    # Turn off related settings
+                    self.query_one(css(ids.OPT_RESOLV_CONF), Checkbox).value = False
+                    self.query_one(css(ids.OPT_SSL_CERTS), Checkbox).value = False
+
+                    # Reset network mode to Direct/OFF
+                    self.query_one("#network-mode-radio", RadioSet).index = 0
             except NoMatches:
                 log.debug("Network options containers not found")
         # Show/hide UID/GID options when user namespace is toggled

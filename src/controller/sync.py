@@ -9,6 +9,7 @@ from textual.containers import VerticalScroll
 from textual.css.query import NoMatches, WrongType
 from textual.widgets import Button, Checkbox, Input
 
+from model import NetworkMode
 from ui.ids import css
 import ui.ids as ids
 
@@ -250,6 +251,52 @@ class ConfigSyncManager:
                 virtual_user_opts.add_class("hidden")
         except NoMatches:
             log.debug("username-options or virtual-user-options not found")
+
+    def sync_network_visibility(self) -> None:
+        """Sync network options visibility based on share_net checkbox state."""
+        from textual.containers import Container
+
+        try:
+            share_net_checkbox = self.get_widget(ids.OPT_NET, Checkbox)
+            if share_net_checkbox is None:
+                return
+
+            share_net = share_net_checkbox.value
+
+            # Get containers
+            full_net_opts = self.app.query_one("#full-network-options", Container)
+            network_mode_section = self.app.query_one("#network-mode-section", Container)
+            filter_opts = self.app.query_one("#filter-options", Container)
+            filter_opts_right = self.app.query_one("#filter-options-right", Container)
+            audit_opts_right = self.app.query_one("#audit-options-right", Container)
+
+            if share_net:
+                # Show network options
+                full_net_opts.remove_class("hidden")
+                network_mode_section.remove_class("hidden")
+                # Show/hide filter/audit based on mode
+                mode = self.config.network_filter.mode
+                if mode == NetworkMode.FILTER:
+                    filter_opts.remove_class("hidden")
+                    filter_opts_right.remove_class("hidden")
+                    audit_opts_right.add_class("hidden")
+                elif mode == NetworkMode.AUDIT:
+                    filter_opts.add_class("hidden")
+                    filter_opts_right.add_class("hidden")
+                    audit_opts_right.remove_class("hidden")
+                else:  # OFF
+                    filter_opts.add_class("hidden")
+                    filter_opts_right.add_class("hidden")
+                    audit_opts_right.add_class("hidden")
+            else:
+                # Hide all network options
+                full_net_opts.add_class("hidden")
+                network_mode_section.add_class("hidden")
+                filter_opts.add_class("hidden")
+                filter_opts_right.add_class("hidden")
+                audit_opts_right.add_class("hidden")
+        except NoMatches:
+            log.debug("Network containers not found for visibility sync")
 
     def sync_overlay_home_from_overlays(self) -> None:
         """Derive overlay_home checkbox state from existing overlays.
