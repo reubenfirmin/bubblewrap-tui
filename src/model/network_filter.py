@@ -82,7 +82,7 @@ class NetworkFilter:
 
     @enabled.setter
     def enabled(self, value: bool) -> None:
-        """Set filtering mode on/off (backwards compatibility)."""
+        """Set filtering mode on/off."""
         self.mode = NetworkMode.FILTER if value else NetworkMode.OFF
 
     def requires_pasta(self) -> bool:

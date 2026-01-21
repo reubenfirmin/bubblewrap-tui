@@ -127,7 +127,7 @@ def compose_network_tab(
                             add_btn_id=ids.ADD_HOSTNAME_BTN,
                         )
 
-            # Right column: IP/CIDR filtering + Localhost ports (only in filter mode)
+            # Right column: IP/CIDR filtering + Port forwarding (only in filter mode)
             with Vertical(classes="options-column"):
                 with Container(id="filter-options-right", classes="" if network_filter.is_filter_mode() else "hidden"):
                     # IP/CIDR filtering section

@@ -105,12 +105,12 @@ def generate_pasta_args(nf: NetworkFilter, pcap_path: Path | None = None) -> lis
         args.extend(["--pcap", str(pcap_path)])
 
     # Expose sandbox ports to host (for servers running in sandbox)
-    # -t forwards TCP ports from host to sandbox
+    # -t makes sandbox port accessible on host (host:8080 → sandbox:8080)
     for port in nf.port_forwarding.expose_ports:
         args.extend(["-t", str(port)])
 
     # Forward host ports into sandbox (for accessing host services)
-    # -T forwards TCP ports from sandbox to host localhost
+    # -T makes host port accessible in sandbox (sandbox:5432 → host:5432)
     for port in nf.port_forwarding.host_ports:
         args.extend(["-T", str(port)])
 
