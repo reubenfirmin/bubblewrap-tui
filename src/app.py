@@ -16,6 +16,7 @@ from textual.widgets import (
     Checkbox,
     Input,
     Label,
+    RadioSet,
     Static,
     TabbedContent,
     TabPane,
@@ -24,6 +25,7 @@ from textual.widgets import (
 from model import (
     BoundDirectory,
     FilterMode,
+    NetworkMode,
     OverlayConfig,
     SandboxConfig,
 )
@@ -352,11 +354,21 @@ class BubblewrapTUI(
         # Handle home overlay - sync with overlays list (synthetic_passwd doesn't need overlay)
         if event.checkbox.id == ids.OPT_OVERLAY_HOME:
             self._handle_overlay_home_change(event.value)
-        # Handle network filtering enabled
-        if event.checkbox.id == ids.NETWORK_ENABLED:
-            self._on_network_enabled_change(event.value)
         self._sync_config_from_ui()
         self._update_preview()
+
+    @on(RadioSet.Changed, f"#{ids.NETWORK_MODE_RADIO}")
+    def on_network_mode_changed(self, event: RadioSet.Changed) -> None:
+        """Handle network mode radio change."""
+        if event.pressed is None:
+            return
+        button_id = event.pressed.id
+        if button_id == "network-mode-off":
+            self._on_network_mode_change(NetworkMode.OFF)
+        elif button_id == "network-mode-filter":
+            self._on_network_mode_change(NetworkMode.FILTER)
+        elif button_id == "network-mode-audit":
+            self._on_network_mode_change(NetworkMode.AUDIT)
 
     @on(Input.Changed)
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -393,14 +405,14 @@ class BubblewrapTUI(
     # Network Filtering Callbacks
     # =========================================================================
 
-    def _on_network_enabled_change(self, enabled: bool) -> None:
-        """Handle network filtering enabled/disabled."""
-        self.config.network_filter.enabled = enabled
-        # Toggle visibility of filter options
+    def _on_network_mode_change(self, mode: NetworkMode) -> None:
+        """Handle network mode change (off/filter/audit)."""
+        self.config.network_filter.mode = mode
+        # Toggle visibility of filter options (only shown in filter mode)
         try:
             filter_opts = self.query_one("#filter-options", Container)
             filter_opts_right = self.query_one("#filter-options-right", Container)
-            if enabled:
+            if mode == NetworkMode.FILTER:
                 filter_opts.remove_class("hidden")
                 filter_opts_right.remove_class("hidden")
             else:

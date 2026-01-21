@@ -6,9 +6,10 @@ from typing import Callable, TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Checkbox, Label, RadioButton, RadioSet, Static
+from textual.widgets import Label, RadioButton, RadioSet, Static
 
 from model import groups
+from model.network_filter import NetworkMode
 from net import validate_cidr
 from ui.widgets import FilterList, FilterModeRadio, OptionCard, PastaStatus, PortList
 import ui.ids as ids
@@ -63,27 +64,49 @@ def compose_network_tab(
                         yield OptionCard(groups.bind_resolv_conf)
                         yield OptionCard(groups.bind_ssl_certs)
 
-                # Filtered network section
+                # Network mode section
                 with Container(classes="options-section"):
-                    yield Label("Network Filtering", classes="section-label")
-                    yield Checkbox(
-                        "Enable filtering (pasta)",
-                        value=network_filter.enabled,
-                        id=ids.NETWORK_ENABLED,
-                    )
+                    yield Label("Network Mode", classes="section-label")
+                    with RadioSet(id=ids.NETWORK_MODE_RADIO):
+                        yield RadioButton(
+                            "Off",
+                            value=network_filter.mode == NetworkMode.OFF,
+                            id="network-mode-off",
+                        )
+                        yield RadioButton(
+                            "Filter",
+                            value=network_filter.mode == NetworkMode.FILTER,
+                            id="network-mode-filter",
+                        )
+                        yield RadioButton(
+                            "Audit",
+                            value=network_filter.mode == NetworkMode.AUDIT,
+                            id="network-mode-audit",
+                        )
                     yield PastaStatus()
                     yield Static(
-                        "Isolated network namespace with iptables rules.",
+                        "Filter: block/allow traffic with iptables",
                         classes="network-hint",
+                        id="filter-hint",
+                    )
+                    yield Static(
+                        "Audit: capture traffic, show summary after exit",
+                        classes="network-hint",
+                        id="audit-hint",
                     )
 
-                # Hostname filtering section
-                with Container(id="filter-options", classes="" if network_filter.enabled else "hidden"):
+                # Hostname filtering section (only for filter mode)
+                with Container(id="filter-options", classes="" if network_filter.is_filter_mode() else "hidden"):
                     with Container(classes="options-section"):
                         yield Label("Hostname Filtering", classes="section-label")
                         yield Static(
-                            "Filter by hostname (resolved at launch):",
+                            "Filter by hostname (resolved once at launch):",
                             classes="network-hint",
+                        )
+                        yield Static(
+                            "⚠ IPs resolved at startup. If DNS changes during "
+                            "the session, new IPs will NOT be filtered.",
+                            classes="network-warning",
                         )
                         yield FilterModeRadio(
                             mode=network_filter.hostname_filter.mode.value,
@@ -100,9 +123,9 @@ def compose_network_tab(
                             add_btn_id=ids.ADD_HOSTNAME_BTN,
                         )
 
-            # Right column: IP/CIDR filtering + Localhost ports (only when filtering enabled)
+            # Right column: IP/CIDR filtering + Localhost ports (only in filter mode)
             with Vertical(classes="options-column"):
-                with Container(id="filter-options-right", classes="" if network_filter.enabled else "hidden"):
+                with Container(id="filter-options-right", classes="" if network_filter.is_filter_mode() else "hidden"):
                     # IP/CIDR filtering section
                     with Container(classes="options-section"):
                         yield Label("IP / CIDR Filtering", classes="section-label")

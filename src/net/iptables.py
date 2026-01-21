@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from model.network_filter import NetworkFilter
+
+logger = logging.getLogger(__name__)
 
 
 def find_iptables() -> tuple[str | None, str | None, bool]:
@@ -53,7 +56,7 @@ def generate_iptables_rules(nf: NetworkFilter) -> tuple[list[str], list[str]]:
         Tuple of (iptables_rules, ip6tables_rules) as command strings.
     """
     from model.network_filter import FilterMode
-    from net.utils import is_ipv6, resolve_hostname
+    from net.utils import is_ipv6, resolve_hostname, validate_ip_for_shell
 
     v4_rules: list[str] = []
     v6_rules: list[str] = []
@@ -97,17 +100,34 @@ def generate_iptables_rules(nf: NetworkFilter) -> tuple[list[str], list[str]]:
                 else:
                     v4_block.append(cidr)
 
+    # Defense-in-depth: validate all IPs before interpolating into shell commands
+    # While socket.getaddrinfo() should return safe values, re-validate to prevent
+    # any potential shell injection if the resolution path is compromised
+    def safe_ip(ip: str) -> str | None:
+        validated = validate_ip_for_shell(ip)
+        if validated is None:
+            logger.warning(f"Skipping invalid IP for iptables rule: {ip!r}")
+        return validated
+
     # Generate rules - blacklist first (explicit blocks)
     for ip in v4_block:
-        v4_rules.append(f"iptables -A OUTPUT -d {ip} -j DROP")
+        validated = safe_ip(ip)
+        if validated:
+            v4_rules.append(f"iptables -A OUTPUT -d {validated} -j DROP")
     for ip in v6_block:
-        v6_rules.append(f"ip6tables -A OUTPUT -d {ip} -j DROP")
+        validated = safe_ip(ip)
+        if validated:
+            v6_rules.append(f"ip6tables -A OUTPUT -d {validated} -j DROP")
 
     # Then whitelist (explicit allows)
     for ip in v4_allow:
-        v4_rules.append(f"iptables -A OUTPUT -d {ip} -j ACCEPT")
+        validated = safe_ip(ip)
+        if validated:
+            v4_rules.append(f"iptables -A OUTPUT -d {validated} -j ACCEPT")
     for ip in v6_allow:
-        v6_rules.append(f"ip6tables -A OUTPUT -d {ip} -j ACCEPT")
+        validated = safe_ip(ip)
+        if validated:
+            v6_rules.append(f"ip6tables -A OUTPUT -d {validated} -j ACCEPT")
 
     # If any whitelist is active, drop everything else
     has_whitelist = hf.mode == FilterMode.WHITELIST or ipf.mode == FilterMode.WHITELIST

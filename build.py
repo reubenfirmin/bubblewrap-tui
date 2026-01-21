@@ -14,7 +14,7 @@ from pathlib import Path
 HEADER = '''#!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["textual>=0.89.0"]
+# dependencies = ["textual>=0.89.0", "dpkt>=1.9.8"]
 # ///
 """
 Bubblewrap TUI - A visual interface for configuring bubblewrap sandboxes.
@@ -41,6 +41,7 @@ MODULE_ORDER = [
     "net/utils.py",                   # Network utilities (resolve hostname, validate, etc.)
     "net/iptables.py",                # iptables rule generation
     "net/pasta.py",                   # pasta network namespace wrapper
+    "net/audit.py",                   # Network audit/pcap analysis
     "net/__init__.py",                # Network module exports
     "bwrap.py",                       # Depends on detection, model (serialization/summary)
     "profiles.py",                    # Depends on model (JSON serialization)
@@ -69,7 +70,7 @@ MODULE_ORDER = [
 LOCAL_MODULES = {
     "detection", "environment", "installer", "sandbox", "profiles", "app", "cli", "styles", "bwrap",
     "commandoutput",
-    "net", "net.utils", "net.iptables", "net.pasta",
+    "net", "net.utils", "net.iptables", "net.pasta", "net.audit",
     "model",
     "model.ui_field", "model.bound_directory", "model.overlay_config", "model.network_filter",
     "model.config_group", "model.config", "model.groups", "model.sandbox_config",

@@ -15,10 +15,11 @@ from app import BubblewrapTUI
 from commandoutput import print_execution_header
 from installer import check_for_updates, do_install, do_update, show_update_notice
 from model import BoundDirectory, SandboxConfig
-from net import check_pasta, execute_with_network_filter, get_install_instructions
+from net import check_pasta, execute_with_audit, execute_with_network_filter, get_install_instructions
 from profiles import BUI_PROFILES_DIR, Profile
 from sandbox import (
     BUI_STATE_DIR,
+    clean_temp_files,
     find_executables,
     install_sandbox_binary,
     list_overlays,
@@ -116,6 +117,7 @@ class BuiHelpFormatter(argparse.RawDescriptionHelpFormatter):
             "  bui --sandbox <name> --uninstall      Remove sandbox and wrapper scripts",
             "  bui --list-sandboxes                  List installed sandboxes",
             "  bui --list-overlays                   List overlay directories",
+            "  bui --clean                           Remove temporary network filter files",
             "",
             "Examples:",
             "",
@@ -168,6 +170,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--list-sandboxes", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--list-overlays", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--list-profiles", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--clean", action="store_true", help=argparse.SUPPRESS)
 
     # Command to run (everything after --)
     parser.add_argument("command", nargs="*", help=argparse.SUPPRESS)
@@ -217,6 +220,10 @@ def parse_args() -> tuple[list[str], str | None, str | None, bool, list[Path], l
 
     if args.list_profiles:
         list_profiles()
+        sys.exit(0)
+
+    if args.clean:
+        clean_temp_files()
         sys.exit(0)
 
     # Sandbox management actions (require --sandbox)
@@ -397,9 +404,18 @@ def main() -> None:
 
         fd_map = setup_virtual_user_fds(config)
 
-        # Print execution info
-        if config.network_filter.requires_pasta():
-            # Network filtering execution - header printed by execute_with_network_filter
+        # Dispatch based on network mode
+        if config.network_filter.is_audit_mode():
+            # Network auditing - capture traffic and show summary after exit
+            execute_with_audit(
+                config,
+                fd_map if fd_map else None,
+                _build_bwrap_command,
+                sandbox_name if overlay_dirs else None,
+                overlay_dirs,
+            )
+        elif config.network_filter.is_filter_mode():
+            # Network filtering - apply iptables rules
             execute_with_network_filter(
                 config,
                 fd_map if fd_map else None,
@@ -408,6 +424,7 @@ def main() -> None:
                 overlay_dirs,
             )
         else:
+            # Normal execution without pasta
             cmd = config.build_command(fd_map if fd_map else None)
             print_execution_header(
                 cmd,
@@ -431,14 +448,23 @@ def main() -> None:
 
         fd_map = setup_virtual_user_fds(app.config)
 
-        if app.config.network_filter.requires_pasta():
-            # Network filtering execution - header printed by execute_with_network_filter
+        # Dispatch based on network mode
+        if app.config.network_filter.is_audit_mode():
+            # Network auditing - capture traffic and show summary after exit
+            execute_with_audit(
+                app.config,
+                fd_map if fd_map else None,
+                _build_bwrap_command,
+            )
+        elif app.config.network_filter.is_filter_mode():
+            # Network filtering - apply iptables rules
             execute_with_network_filter(
                 app.config,
                 fd_map if fd_map else None,
                 _build_bwrap_command,
             )
         else:
+            # Normal execution without pasta
             cmd = app.config.build_command(fd_map if fd_map else None)
             print_execution_header(cmd)
             os.execvp("bwrap", cmd)

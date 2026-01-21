@@ -118,3 +118,49 @@ def validate_port(port: int | str) -> bool:
         return 1 <= port_int <= 65535
     except (ValueError, TypeError):
         return False
+
+
+def find_cap_drop_tool() -> tuple[str | None, str]:
+    """Find a tool to drop capabilities (setpriv or capsh).
+
+    Returns:
+        Tuple of (tool_path, shell_command_template).
+        shell_command_template contains {command} placeholder for the user command.
+        Returns (None, "") if no suitable tool is found.
+    """
+    # Prefer setpriv (from util-linux, more common)
+    setpriv_path = shutil.which("setpriv")
+    if setpriv_path:
+        # setpriv expects capability names without "cap_" prefix
+        # setpriv --bounding-set=-net_admin -- command args
+        return (setpriv_path, 'exec setpriv --bounding-set=-net_admin -- {command}')
+
+    # Fall back to capsh (from libcap)
+    capsh_path = shutil.which("capsh")
+    if capsh_path:
+        # capsh --drop=cap_net_admin -- -c 'exec "$@"' -- command args
+        return (capsh_path, 'exec capsh --drop=cap_net_admin -- -c \'exec "$@"\' -- {command}')
+
+    return (None, "")
+
+
+def validate_ip_for_shell(ip: str) -> str | None:
+    """Validate and sanitize an IP address/CIDR for shell use.
+
+    Defense-in-depth: re-validate IPs before interpolating into shell commands.
+    While socket.getaddrinfo() should return safe values, this provides an
+    additional layer of protection against shell injection.
+
+    Args:
+        ip: IP address or CIDR string
+
+    Returns:
+        The validated IP/CIDR string, or None if invalid.
+    """
+    try:
+        # Parse as network to handle both plain IPs and CIDR notation
+        network = ipaddress.ip_network(ip, strict=False)
+        # Return the normalized string representation
+        return str(network)
+    except ValueError:
+        return None

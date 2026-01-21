@@ -2,6 +2,15 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
+
+
+class NetworkMode(Enum):
+    """Top-level network mode for sandbox."""
+
+    OFF = "off"  # No network isolation via pasta
+    FILTER = "filter"  # Network filtering with iptables rules
+    AUDIT = "audit"  # Traffic auditing with pcap capture
 
 
 class FilterMode(Enum):
@@ -36,22 +45,49 @@ class LocalhostAccess:
 
 
 @dataclass
-class NetworkFilter:
-    """Top-level network filtering config for a profile.
+class AuditConfig:
+    """Configuration for network traffic auditing."""
 
-    Network filtering uses pasta to provide user-space networking
-    with iptables rules for filtering. This allows true enforcement at
-    the network level that applications cannot bypass.
+    pcap_path: Path | None = None  # Auto-generated temp file if None
+
+
+@dataclass
+class NetworkFilter:
+    """Top-level network config for a profile.
+
+    Supports two modes via pasta:
+    - FILTER: Network filtering with iptables rules
+    - AUDIT: Traffic auditing with pcap capture (no filtering)
+
+    Both modes use pasta to provide user-space networking in an
+    isolated network namespace.
     """
 
-    enabled: bool = False
+    mode: NetworkMode = NetworkMode.OFF
     hostname_filter: HostnameFilter = field(default_factory=HostnameFilter)
     ip_filter: IPFilter = field(default_factory=IPFilter)
     localhost_access: LocalhostAccess = field(default_factory=LocalhostAccess)
+    audit: AuditConfig = field(default_factory=AuditConfig)
+
+    # Backwards compatibility property
+    @property
+    def enabled(self) -> bool:
+        """Returns True if filtering mode is enabled."""
+        return self.mode == NetworkMode.FILTER
+
+    @enabled.setter
+    def enabled(self, value: bool) -> None:
+        """Set filtering mode on/off (backwards compatibility)."""
+        self.mode = NetworkMode.FILTER if value else NetworkMode.OFF
 
     def requires_pasta(self) -> bool:
-        """Returns True if any filtering is configured that needs pasta."""
-        return self.enabled and (
+        """Returns True if pasta is needed for network isolation."""
+        if self.mode == NetworkMode.OFF:
+            return False
+        if self.mode == NetworkMode.AUDIT:
+            return True
+        # FILTER mode - need pasta if any rules or port forwards
+        return (
             self.hostname_filter.mode != FilterMode.OFF
             or self.ip_filter.mode != FilterMode.OFF
             or len(self.localhost_access.ports) > 0
@@ -67,3 +103,11 @@ class NetworkFilter:
     def has_port_forwards(self) -> bool:
         """Returns True if any localhost ports are forwarded."""
         return len(self.localhost_access.ports) > 0
+
+    def is_audit_mode(self) -> bool:
+        """Returns True if audit mode is enabled."""
+        return self.mode == NetworkMode.AUDIT
+
+    def is_filter_mode(self) -> bool:
+        """Returns True if filter mode is enabled."""
+        return self.mode == NetworkMode.FILTER

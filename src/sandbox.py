@@ -264,3 +264,31 @@ def list_profiles() -> None:
     for profile in profiles:
         print(f"  {profile.name}")
     print(f"\nProfile directory: {BUI_PROFILES_DIR}")
+
+
+def clean_temp_files() -> None:
+    """Remove temporary network filter directories from /tmp."""
+    import shutil
+    import tempfile
+
+    tmp_dir = Path(tempfile.gettempdir())
+    removed = 0
+    errors = 0
+
+    # Find bui-net-* directories
+    for item in tmp_dir.glob("bui-net-*"):
+        if item.is_dir():
+            try:
+                shutil.rmtree(item)
+                print(f"  Removed: {item}")
+                removed += 1
+            except OSError as e:
+                print(f"  Error removing {item}: {e}")
+                errors += 1
+
+    if removed == 0 and errors == 0:
+        print("No temporary network filter files found.")
+    else:
+        print(f"\nCleaned up {removed} temporary director{'y' if removed == 1 else 'ies'}.")
+        if errors:
+            print(f"Failed to remove {errors} director{'y' if errors == 1 else 'ies'}.")

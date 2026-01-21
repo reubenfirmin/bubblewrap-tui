@@ -8,6 +8,7 @@ from model.network_filter import (
     IPFilter,
     LocalhostAccess,
     NetworkFilter,
+    NetworkMode,
 )
 
 
@@ -93,19 +94,19 @@ class TestNetworkFilter:
         assert nf.localhost_access.ports == []
 
     def test_requires_pasta_disabled(self):
-        """requires_pasta returns False when disabled."""
-        nf = NetworkFilter(enabled=False)
+        """requires_pasta returns False when mode is OFF."""
+        nf = NetworkFilter(mode=NetworkMode.OFF)
         assert nf.requires_pasta() is False
 
     def test_requires_pasta_enabled_no_rules(self):
-        """requires_pasta returns False when enabled but no rules."""
-        nf = NetworkFilter(enabled=True)
+        """requires_pasta returns False when filter mode enabled but no rules."""
+        nf = NetworkFilter(mode=NetworkMode.FILTER)
         assert nf.requires_pasta() is False
 
     def test_requires_pasta_with_hostname_filter(self):
         """requires_pasta returns True with hostname filter."""
         nf = NetworkFilter(
-            enabled=True,
+            mode=NetworkMode.FILTER,
             hostname_filter=HostnameFilter(
                 mode=FilterMode.WHITELIST,
                 hosts=["github.com"],
@@ -116,7 +117,7 @@ class TestNetworkFilter:
     def test_requires_pasta_with_ip_filter(self):
         """requires_pasta returns True with IP filter."""
         nf = NetworkFilter(
-            enabled=True,
+            mode=NetworkMode.FILTER,
             ip_filter=IPFilter(
                 mode=FilterMode.BLACKLIST,
                 cidrs=["10.0.0.0/8"],
@@ -127,10 +128,36 @@ class TestNetworkFilter:
     def test_requires_pasta_with_ports(self):
         """requires_pasta returns True with localhost ports."""
         nf = NetworkFilter(
-            enabled=True,
+            mode=NetworkMode.FILTER,
             localhost_access=LocalhostAccess(ports=[5432]),
         )
         assert nf.requires_pasta() is True
+
+    def test_requires_pasta_audit_mode(self):
+        """requires_pasta returns True in audit mode."""
+        nf = NetworkFilter(mode=NetworkMode.AUDIT)
+        assert nf.requires_pasta() is True
+
+    def test_is_audit_mode(self):
+        """is_audit_mode returns True when mode is AUDIT."""
+        nf = NetworkFilter(mode=NetworkMode.AUDIT)
+        assert nf.is_audit_mode() is True
+        assert nf.is_filter_mode() is False
+
+    def test_is_filter_mode(self):
+        """is_filter_mode returns True when mode is FILTER."""
+        nf = NetworkFilter(mode=NetworkMode.FILTER)
+        assert nf.is_filter_mode() is True
+        assert nf.is_audit_mode() is False
+
+    def test_enabled_property_backwards_compat(self):
+        """enabled property works for backwards compatibility."""
+        nf = NetworkFilter()
+        assert nf.enabled is False
+        nf.enabled = True
+        assert nf.mode == NetworkMode.FILTER
+        nf.enabled = False
+        assert nf.mode == NetworkMode.OFF
 
     def test_has_any_rules_false(self):
         """has_any_rules returns False when no filters active."""

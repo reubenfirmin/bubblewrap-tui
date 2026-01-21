@@ -518,6 +518,14 @@ SaveProfileModal {
     margin-bottom: 1;
 }
 
+.network-warning {
+    color: $warning;
+    background: $warning 10%;
+    height: auto;
+    margin-bottom: 1;
+    padding: 0 1;
+}
+
 PastaStatus {
     height: auto;
     margin-bottom: 1;

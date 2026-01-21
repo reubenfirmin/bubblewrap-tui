@@ -12,6 +12,7 @@ from model.network_filter import (
     IPFilter,
     LocalhostAccess,
     NetworkFilter,
+    NetworkMode,
 )
 
 # Re-export groups module for easy access
@@ -31,5 +32,6 @@ __all__ = [
     "IPFilter",
     "LocalhostAccess",
     "NetworkFilter",
+    "NetworkMode",
     "groups",
 ]
