@@ -43,6 +43,10 @@ chmod +x bui
 
 Update to latest: `bui --update`
 
+### Compatibility
+- Intended to work on all modern Linux distros. Please file tickets with any issues
+- Will not work on OSX, which doesn't have Bubblewrap or equivalents (your best options would be something like Sandbox.app or Docker Desktop)
+
 ## Quick Start
 
 Launch the TUI to configure a sandbox interactively:
@@ -315,40 +319,27 @@ uv run --with pytest --with pytest-cov --with pytest-asyncio --with textual pyte
 
 ```
 src/
-├── cli.py              # Entry point, argument parsing
-├── app.py              # Main Textual App (composes UI, orchestrates mixins)
-├── bwrap.py            # bwrap command generation and execution
+├── cli.py              # Entry point
+├── app.py              # Main TUI app (composes UI, orchestrates mixins)
+├── bwrap.py            # bwrap command generation
 ├── profiles.py         # Profile save/load
-├── detection.py        # Path detection and resolution
+├── installer.py        # Self-install, managed sandboxes
+├── sandbox.py          # Sandbox/overlay management
 │
-├── net/                # Network filtering module
-│   ├── __init__.py     # Module exports
-│   ├── pasta.py        # pasta network namespace wrapper
-│   ├── iptables.py     # iptables rule generation
-│   └── utils.py        # Hostname resolution, validation, etc.
+├── net/                # Network filtering (pasta, iptables, audit)
+├── model/              # Data models
+│   ├── sandbox_config.py
+│   ├── fields/         # Field definitions
+│   └── ...             # Config primitives, serializers
 │
-├── model/              # Data models (what gets configured)
-│   ├── config.py       # SandboxConfig - the main configuration object
-│   ├── network_filter.py
-│   ├── groups.py       # Option groups (filesystem, network, etc.)
-│   └── ...
-│
-├── controller/         # Event handling mixins (mixed into App)
-│   ├── directories.py  # Directory binding events
-│   ├── environment.py  # Environment variable events
-│   ├── network.py      # Network filtering events
-│   ├── overlays.py     # Overlay events
-│   └── execute.py      # Execute/run events
+├── controller/         # Event handlers & UI sync
+│   ├── sync.py         # Bidirectional UI ↔ config sync
+│   └── ...             # Per-tab event mixins
 │
 └── ui/                 # UI components
-    ├── tabs/           # Tab composition (one file per tab)
-    │   ├── directories.py
-    │   ├── network.py
-    │   └── ...
-    ├── widgets.py      # Reusable widgets
-    ├── modals.py       # Modal dialogs
-    ├── ids.py          # Widget IDs
-    └── styles.css      # Textual CSS
+    ├── tabs/           # Tab layouts
+    ├── widgets/        # Reusable widgets
+    └── ...             # Modals, IDs, CSS
 ```
 
 **Key patterns:**

@@ -128,6 +128,7 @@ class SandboxConfig:
     _system_paths_group: ConfigGroup = field(default=None, repr=False)
     _user_group: ConfigGroup = field(default=None, repr=False)
     _isolation_group: ConfigGroup = field(default=None, repr=False)
+    _hostname_group: ConfigGroup = field(default=None, repr=False)
     _process_group: ConfigGroup = field(default=None, repr=False)
     _network_group: ConfigGroup = field(default=None, repr=False)
     _desktop_group: ConfigGroup = field(default=None, repr=False)
@@ -147,6 +148,8 @@ class SandboxConfig:
             self._user_group = _copy_group(groups.user_group)
         if self._isolation_group is None:
             self._isolation_group = _copy_group(groups.isolation_group)
+        if self._hostname_group is None:
+            self._hostname_group = _copy_group(groups.hostname_group)
         if self._process_group is None:
             self._process_group = _copy_group(groups.process_group)
         if self._network_group is None:
@@ -162,8 +165,18 @@ class SandboxConfig:
 
     # Property accessors for backward compatibility
     @property
+    def vfs(self) -> GroupProxy:
+        """Access virtual filesystem settings (/dev, /proc, /tmp)."""
+        return GroupProxy(self._vfs_group)
+
+    @property
+    def system_paths(self) -> GroupProxy:
+        """Access system path bindings (/usr, /bin, /lib, etc.)."""
+        return GroupProxy(self._system_paths_group)
+
+    @property
     def filesystem(self) -> FilesystemProxy:
-        """Access filesystem settings."""
+        """Access filesystem settings (legacy - spans vfs and system_paths)."""
         return FilesystemProxy(self._vfs_group, self._system_paths_group)
 
     @property
@@ -173,8 +186,13 @@ class SandboxConfig:
 
     @property
     def namespace(self) -> GroupProxy:
-        """Access namespace isolation settings (PID, IPC, UTS, cgroup)."""
+        """Access namespace isolation settings (PID, IPC, cgroup)."""
         return NamespaceProxy(self._isolation_group)
+
+    @property
+    def hostname(self) -> GroupProxy:
+        """Access hostname settings (UTS namespace + custom hostname)."""
+        return GroupProxy(self._hostname_group)
 
     @property
     def process(self) -> GroupProxy:
@@ -196,6 +214,24 @@ class SandboxConfig:
         """Access environment settings."""
         return GroupProxy(self._environment_group)
 
+    def all_field_groups(self) -> list[ConfigGroup]:
+        """Get all configuration groups with fields for UI sync.
+
+        This method returns all groups that contain UIField items, which is used
+        by ConfigSyncManager to iterate over all fields for bidirectional sync.
+        """
+        return [
+            self._vfs_group,
+            self._system_paths_group,
+            self._user_group,
+            self._isolation_group,
+            self._hostname_group,
+            self._process_group,
+            self._network_group,
+            self._desktop_group,
+            self._environment_group,
+        ]
+
     def get_all_groups(self) -> list[ConfigGroup]:
         """Get all groups in serialization order."""
         return [
@@ -203,6 +239,7 @@ class SandboxConfig:
             self._system_paths_group,
             self._user_group,
             self._isolation_group,
+            self._hostname_group,
             self._process_group,
             self._network_group,
             self._desktop_group,

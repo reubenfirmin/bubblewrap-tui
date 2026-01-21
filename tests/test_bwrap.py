@@ -23,6 +23,7 @@ def make_config(
     network=None,
     user=None,
     namespace=None,
+    hostname=None,
     process=None,
     environment=None,
     desktop=None,
@@ -53,10 +54,15 @@ def make_config(
         for key, value in user.items():
             setattr(config.user, key, value)
 
-    # Apply namespace settings (pid, ipc, uts, cgroup)
+    # Apply namespace settings (pid, ipc, cgroup)
     if namespace:
         for key, value in namespace.items():
             setattr(config.namespace, key, value)
+
+    # Apply hostname settings (uts namespace + custom hostname)
+    if hostname:
+        for key, value in hostname.items():
+            setattr(config.hostname, key, value)
 
     # Apply process settings
     if process:
@@ -461,7 +467,7 @@ class TestEnvironment:
 
     def test_custom_hostname(self):
         """Custom hostname produces --hostname."""
-        config = make_config(environment={"custom_hostname": "sandbox"})
+        config = make_config(hostname={"custom_hostname": "sandbox"})
         args = BubblewrapSerializer(config).serialize()
         assert "--hostname" in args
         hostname_idx = args.index("--hostname")

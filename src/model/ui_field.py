@@ -129,6 +129,8 @@ class UIField:
         bwrap_flag: str | None = None,
         bwrap_args: Callable[[Any], list[str]] | None = None,
         summary: str | None = None,
+        value_transform: Callable[[Any], Any] | None = None,
+        inverse_transform: Callable[[Any], Any] | None = None,
     ):
         """Create a UIField descriptor.
 
@@ -141,6 +143,8 @@ class UIField:
             bwrap_flag: Simple bwrap flag (e.g., "--unshare-user") - used when value is truthy
             bwrap_args: Callable that takes value and returns bwrap args list (for complex cases)
             summary: Text for summary view (defaults to explanation)
+            value_transform: Transform UI value to config value (e.g., validation)
+            inverse_transform: Transform config value to UI value
         """
         self.type_ = type_
         self.default = default
@@ -150,6 +154,8 @@ class UIField:
         self.bwrap_flag = bwrap_flag
         self.bwrap_args = bwrap_args
         self.summary = summary or explanation
+        self.value_transform = value_transform
+        self.inverse_transform = inverse_transform
         self.name: str | None = None
 
     def __set_name__(self, owner: type, name: str) -> None:
@@ -173,6 +179,12 @@ class UIField:
     def __set__(self, obj: Any, value: Any) -> None:
         """Set the field value on an instance."""
         obj.__dict__[self.name] = value
+
+    @property
+    def widget_type(self) -> type:
+        """Infer widget type from field type."""
+        from textual.widgets import Checkbox, Input
+        return Checkbox if self.type_ == bool else Input
 
     def to_bwrap_args(self, value: Any) -> list[str]:
         """Generate bwrap command-line args for this field's value.

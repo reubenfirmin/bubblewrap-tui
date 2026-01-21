@@ -538,6 +538,14 @@ SaveProfileModal {
     padding: 0 1;
 }
 
+.audit-info-text {
+    color: $text;
+    height: auto;
+    padding: 1;
+    background: $primary 10%;
+    border: solid $primary 50%;
+}
+
 PastaStatus {
     height: auto;
     margin-bottom: 1;

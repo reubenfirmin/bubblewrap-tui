@@ -6,22 +6,48 @@ as the fundamental unit. Each group maps to one UI section and one summary bulle
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from model.config import Config
 from model.config_group import ConfigGroup
-from model.ui_field import UIField, Field
+
+# Import all field definitions from the fields package
+from model.fields import (
+    # VFS fields
+    dev_mode, mount_proc, mount_tmp, tmpfs_size,
+    # System path fields
+    bind_usr, bind_bin, bind_lib, bind_lib64, bind_sbin, bind_etc,
+    # User fields
+    unshare_user, synthetic_passwd, overlay_home,
+    uid_field, gid_field, username_field,
+    # Isolation fields
+    unshare_pid, unshare_ipc, unshare_uts, unshare_cgroup, disable_userns,
+    # Process fields
+    die_with_parent, new_session, as_pid_1, chdir,
+    # Network fields
+    share_net, bind_resolv_conf, bind_ssl_certs,
+    # Desktop fields
+    allow_dbus, allow_display, bind_user_config,
+    # Environment fields
+    clear_env, custom_hostname,
+)
+
+# Import serializers
+from model.serializers import (
+    vfs_to_args, vfs_to_summary,
+    network_to_args, network_to_summary,
+    desktop_to_args, desktop_to_summary,
+    user_to_args, user_to_summary,
+    isolation_to_summary,
+    hostname_to_summary,
+    process_to_args, process_to_summary,
+    environment_to_args, environment_to_summary,
+)
 
 if TYPE_CHECKING:
     from model.network_filter import NetworkFilter
 
-
-def _named(name: str, field: UIField) -> UIField:
-    """Set the name attribute on a UIField and return it."""
-    field.name = name
-    return field
 
 # =============================================================================
 # Color Scheme
@@ -39,561 +65,24 @@ DEFAULT_COLOR = "#6B7280"  # gray-500 (clearly inactive)
 
 
 # =============================================================================
-# UIField Definitions - Virtual Filesystems Group
+# Legacy aliases for backwards compatibility
+# These are re-exports from the serializers module with underscore prefix
 # =============================================================================
 
-dev_mode = _named("dev_mode", UIField(
-    str, "minimal", "dev-mode-btn",
-    "/dev mode", "Device access level",
-    bwrap_args=lambda v: ["--dev", "/dev"] if v == "minimal" else
-                         ["--bind", "/dev", "/dev"] if v == "full" else [],
-))
-
-mount_proc = _named("mount_proc", UIField(
-    bool, True, "opt-proc",
-    "/proc", "New procfs for sandbox",
-    bwrap_args=lambda v: ["--proc", "/proc"] if v else [],
-))
-
-mount_tmp = _named("mount_tmp", UIField(
-    bool, True, "opt-tmp",
-    "/tmp", "Private temp filesystem",
-    # Note: bwrap_args handled by group's custom to_args due to tmpfs_size dependency
-))
-
-tmpfs_size = _named("tmpfs_size", UIField(
-    str, "", "opt-tmpfs-size",
-    "Tmpfs size", "Size limit for /tmp (e.g., 100M, 1G)",
-))
-
-
-# =============================================================================
-# UIField Definitions - System Paths Group
-# =============================================================================
-
-bind_usr = _named("bind_usr", UIField(
-    bool, True, "opt-usr",
-    "/usr", "Programs and libraries",
-    # bwrap_args handled via bound_dirs sync in Quick Shortcuts
-))
-bind_usr.shortcut_path = Path("/usr")
-
-bind_bin = _named("bind_bin", UIField(
-    bool, True, "opt-bin",
-    "/bin", "Essential binaries",
-    # bwrap_args handled via bound_dirs sync in Quick Shortcuts
-))
-bind_bin.shortcut_path = Path("/bin")
-
-bind_lib = _named("bind_lib", UIField(
-    bool, True, "opt-lib",
-    "/lib", "Shared libraries",
-    # bwrap_args handled via bound_dirs sync in Quick Shortcuts
-))
-bind_lib.shortcut_path = Path("/lib")
-
-bind_lib64 = _named("bind_lib64", UIField(
-    bool, True, "opt-lib64",
-    "/lib64", "64-bit libraries",
-    # bwrap_args handled via bound_dirs sync in Quick Shortcuts
-))
-bind_lib64.shortcut_path = Path("/lib64")
-
-bind_sbin = _named("bind_sbin", UIField(
-    bool, True, "opt-sbin",
-    "/sbin", "System binaries",
-    # bwrap_args handled via bound_dirs sync in Quick Shortcuts
-))
-bind_sbin.shortcut_path = Path("/sbin")
-
-bind_etc = _named("bind_etc", UIField(
-    bool, False, "opt-etc",
-    "/etc", "Config files - use caution",
-    # bwrap_args handled via bound_dirs sync in Quick Shortcuts
-))
-bind_etc.shortcut_path = Path("/etc")
-
-
-# =============================================================================
-# UIField Definitions - User Group
-# =============================================================================
-
-unshare_user = _named("unshare_user", UIField(
-    bool, False, "opt-unshare-user",
-    "Mask user identity", "Appear as different user inside sandbox",
-    bwrap_flag="--unshare-user",
-    summary="Isolated user IDs — sandbox sees different UID/GID than host",
-))
-
-# Virtual user options (shown when unshare_user is enabled)
-# synthetic_passwd is in the model - controls passwd/group generation
-synthetic_passwd = _named("synthetic_passwd", UIField(
-    bool, True, "opt-synthetic-passwd",
-    "Synthetic /etc/passwd", "Generate passwd/group for virtual user",
-))
-
-# overlay_home is UI-only (like directory shortcuts) - adds/removes from overlays list
-# Note: The label "Overlay home directory" is generic; the actual label is updated
-# at runtime by _update_home_overlay_label() based on uid/username (e.g., "/root" or "/home/user")
-overlay_home = _named("overlay_home", UIField(
-    bool, False, "opt-overlay-home",
-    "Overlay home directory", "Ephemeral home directory",
-))
-
-# UID/GID/Username fields (data fields, not standard checkboxes)
-# Default to 0 (root inside sandbox) since that's the common use case
-uid_field = Field(int, default=0)
-gid_field = Field(int, default=0)
-username_field = Field(str, default="")
-
-
-# =============================================================================
-# UIField Definitions - Isolation Group (Namespaces)
-# =============================================================================
-
-unshare_pid = _named("unshare_pid", UIField(
-    bool, False, "opt-unshare-pid",
-    "PID namespace", "Hide host processes",
-    bwrap_flag="--unshare-pid",
-    summary="Cannot see or signal host processes",
-))
-
-unshare_ipc = _named("unshare_ipc", UIField(
-    bool, False, "opt-unshare-ipc",
-    "IPC namespace", "Isolated shared memory",
-    bwrap_flag="--unshare-ipc",
-    summary="Cannot access host shared memory or semaphores",
-))
-
-unshare_uts = _named("unshare_uts", UIField(
-    bool, False, "opt-unshare-uts",
-    "UTS namespace", "Own hostname inside",
-    bwrap_flag="--unshare-uts",
-    summary="Isolated hostname — cannot see or modify host's hostname",
-))
-
-unshare_cgroup = _named("unshare_cgroup", UIField(
-    bool, False, "opt-unshare-cgroup",
-    "Cgroup namespace", "Isolated resource limits",
-    bwrap_flag="--unshare-cgroup",
-    summary="Isolated cgroup view — sees only its own resource accounting",
-))
-
-disable_userns = _named("disable_userns", UIField(
-    bool, False, "opt-disable-userns",
-    "Disable nested sandboxing", "Prevent user namespaces inside",
-    bwrap_flag="--disable-userns",
-    summary="Cannot create nested containers — prevents namespace escape attacks",
-))
-
-
-# =============================================================================
-# UIField Definitions - Process Group
-# =============================================================================
-
-die_with_parent = _named("die_with_parent", UIField(
-    bool, True, "opt-die-with-parent",
-    "Kill with parent", "Dies when terminal closes",
-    bwrap_flag="--die-with-parent",
-))
-
-new_session = _named("new_session", UIField(
-    bool, True, "opt-new-session",
-    "New session", "Prevents terminal escape attacks, but disables job control",
-    bwrap_flag="--new-session",
-))
-
-as_pid_1 = _named("as_pid_1", UIField(
-    bool, False, "opt-as-pid-1",
-    "Run as PID 1", "Command runs as init process in PID namespace",
-    bwrap_flag="--as-pid-1",
-))
-
-chdir = _named("chdir", UIField(
-    str, "", "opt-chdir",
-    "Working dir", "Directory to start in",
-    bwrap_args=lambda v: ["--chdir", v] if v else [],
-))
-
-
-# =============================================================================
-# UIField Definitions - Network Group
-# =============================================================================
-
-share_net = _named("share_net", UIField(
-    bool, False, "opt-net",
-    "Allow network", "Enable host network access",
-    bwrap_flag="--share-net",
-))
-
-bind_resolv_conf = _named("bind_resolv_conf", UIField(
-    bool, False, "opt-resolv-conf",
-    "DNS config", "/etc/resolv.conf for hostname resolution",
-    # bwrap_args handled by group's custom to_args
-))
-
-bind_ssl_certs = _named("bind_ssl_certs", UIField(
-    bool, False, "opt-ssl-certs",
-    "SSL certificates", "/etc/ssl/certs for HTTPS",
-    # bwrap_args handled by group's custom to_args
-))
-
-
-# =============================================================================
-# UIField Definitions - Desktop Group
-# =============================================================================
-
-allow_dbus = _named("allow_dbus", UIField(
-    bool, False, "opt-dbus",
-    "D-Bus session", "Open browser, notifications, etc.",
-    # bwrap_args handled by group's custom to_args
-))
-
-allow_display = _named("allow_display", UIField(
-    bool, False, "opt-display",
-    "Display server", "X11/Wayland display access",
-    # bwrap_args handled by group's custom to_args
-))
-
-bind_user_config = _named("bind_user_config", UIField(
-    bool, False, "opt-user-config",
-    "~/.config", "App settings - use caution",
-    # bwrap_args handled via bound_dirs sync in Quick Shortcuts
-))
-bind_user_config.shortcut_path = Path.home() / ".config"
-
-
-# =============================================================================
-# UIField Definitions - Environment Group
-# =============================================================================
-
-clear_env = _named("clear_env", UIField(
-    bool, False, "toggle-clear-btn",
-    "Clear environment", "Start with empty environment",
-    bwrap_flag="--clearenv",
-))
-
-custom_hostname = _named("custom_hostname", UIField(
-    str, "", "opt-hostname",
-    "Custom hostname", "Hostname inside the sandbox",
-    bwrap_args=lambda v: ["--hostname", v] if v else [],
-))
-
-# Data fields for environment
-keep_env_vars_field = Field(set, default_factory=set)
-unset_env_vars_field = Field(set, default_factory=set)
-custom_env_vars_field = Field(dict, default_factory=dict)
-
-
-# =============================================================================
-# Custom to_args functions for groups with special logic
-# =============================================================================
-
-def _vfs_to_args(group: ConfigGroup) -> list[str]:
-    """Custom to_args for virtual filesystems (handles /tmp + size)."""
-    args = []
-
-    # /dev mode
-    dev_mode_val = group.get("dev_mode")
-    if dev_mode_val == "minimal":
-        args.extend(["--dev", "/dev"])
-    elif dev_mode_val == "full":
-        args.extend(["--bind", "/dev", "/dev"])
-
-    # /proc
-    if group.get("mount_proc"):
-        args.extend(["--proc", "/proc"])
-
-    # /tmp with optional size
-    if group.get("mount_tmp"):
-        size = group.get("tmpfs_size")
-        if size:
-            args.extend(["--size", size, "--tmpfs", "/tmp"])
-        else:
-            args.extend(["--tmpfs", "/tmp"])
-
-    return args
-
-
-def _vfs_to_summary(group: ConfigGroup) -> str | None:
-    """Custom summary for virtual filesystems."""
-    lines = []
-    dev_mode_val = group.get("dev_mode")
-    if dev_mode_val == "minimal":
-        lines.append("/dev: Basic device nodes (null, zero, random, tty) — no real hardware access")
-    elif dev_mode_val == "full":
-        lines.append("/dev: Full host device access including GPU, USB, and other hardware")
-
-    if group.get("mount_proc"):
-        lines.append("/proc: New process filesystem — with PID isolation, only sandbox processes visible")
-
-    if group.get("mount_tmp"):
-        size = group.get("tmpfs_size")
-        if size:
-            lines.append(f"/tmp: Temporary filesystem ({size} max) — files discarded on exit")
-        else:
-            lines.append("/tmp: Temporary filesystem — files discarded on exit")
-
-    return "\n".join(lines) if lines else None
-
-
-# Note: _system_paths_to_summary removed - system paths are now shown via bound_dirs summary
-
-
-def _network_to_args(group: ConfigGroup, network_filter: "NetworkFilter | None" = None) -> list[str]:
-    """Custom to_args for network (handles DNS/SSL path detection and filtering).
-
-    Args:
-        group: The network ConfigGroup
-        network_filter: Optional NetworkFilter config for pasta filtering
-    """
-    from detection import find_dns_paths, find_ssl_cert_paths
-
-    args = []
-
-    # Check if network filtering is active (uses pasta)
-    filtering_active = network_filter and network_filter.requires_pasta()
-
-    if filtering_active:
-        # Network filtering requires isolated network namespace (pasta provides filtered network)
-        args.append("--unshare-net")
-    elif group.get("share_net"):
-        # Full network access
-        args.append("--share-net")
-
-    # DNS and SSL bindings are needed for both full access and filtered network
-    if group.get("bind_resolv_conf"):
-        for dns_path in find_dns_paths():
-            args.extend(["--ro-bind", dns_path, dns_path])
-
-    if group.get("bind_ssl_certs"):
-        for cert_path in find_ssl_cert_paths():
-            args.extend(["--ro-bind", cert_path, cert_path])
-
-    return args
-
-
-def _network_to_summary(group: ConfigGroup) -> str | None:
-    """Custom summary for network."""
-    if group.get("share_net"):
-        extras = []
-        if group.get("bind_resolv_conf"):
-            extras.append("DNS config")
-        if group.get("bind_ssl_certs"):
-            extras.append("SSL certs")
-        if extras:
-            return f"Network: Full access — can reach internet and local services ({', '.join(extras)} bound)"
-        return "Network: Full access — WARNING: missing DNS/SSL, connections may fail"
-    return "Network: Completely offline — no network access at all"
-
-
-def _desktop_to_args(group: ConfigGroup) -> list[str]:
-    """Custom to_args for desktop integration."""
-    from detection import detect_dbus_session, detect_display_server
-
-    args = []
-    if group.get("allow_dbus"):
-        for dbus_path in detect_dbus_session():
-            args.extend(["--bind", dbus_path, dbus_path])
-
-    if group.get("allow_display"):
-        display_info = detect_display_server()
-        for display_path in display_info.paths:
-            args.extend(["--ro-bind", display_path, display_path])
-
-    # Note: bind_user_config is now handled via Quick Shortcuts -> bound_dirs
-
-    return args
-
-
-def _desktop_to_summary(group: ConfigGroup) -> str | None:
-    """Custom summary for desktop integration."""
-    from detection import detect_display_server
-
-    lines = []
-
-    if group.get("allow_display"):
-        display_info = detect_display_server()
-        display_type = display_info.type
-        if display_type == "x11":
-            lines.append("Display: X11 — WARNING: X11 provides NO isolation, sandbox can keylog other apps")
-        elif display_type == "wayland":
-            lines.append("Display: Wayland — apps isolated from each other (more secure than X11)")
-        elif display_type:
-            lines.append(f"Display: {display_type.upper()}")
-
-    if group.get("allow_dbus"):
-        lines.append("D-Bus: Session bus access — can call host services (systemd, portals, etc.)")
-
-    # Note: bind_user_config is now shown via Quick Shortcuts in directories tab
-
-    return "\n".join(lines) if lines else None
-
-
-def _user_to_args(group: ConfigGroup) -> list[str]:
-    """Custom to_args for user identity.
-
-    Note: Virtual user (passwd/group generation) is handled separately in bwrap.py
-    via FD-based injection. This only handles the basic --unshare-user and --uid/--gid.
-    """
-    args = []
-
-    if group.get("unshare_user"):
-        args.append("--unshare-user")
-        args.extend(["--uid", str(group.get("uid"))])
-        args.extend(["--gid", str(group.get("gid"))])
-
-    return args
-
-
-def _user_to_summary(group: ConfigGroup) -> str | None:
-    """Custom summary for user identity."""
-    if not group.get("unshare_user"):
-        return None
-
-    lines = []
-    uid = group.get("uid")
-    gid = group.get("gid")
-    username = group.get("username")
-
-    if username and uid > 0:
-        lines.append(f"Identity: {username} (UID {uid}, GID {gid}) with generated /etc/passwd")
-    else:
-        lines.append(f"Identity: Runs as UID {uid}, GID {gid} inside sandbox")
-
-    return "\n".join(lines) if lines else None
-
-
-def _isolation_to_summary(group: ConfigGroup) -> str | None:
-    """Custom summary for isolation namespaces."""
-    items = []
-    # Note: unshare_user is now in user_group, not here
-    ns_items = [
-        ("unshare_pid", unshare_pid),
-        ("unshare_ipc", unshare_ipc),
-        ("unshare_uts", unshare_uts),
-        ("unshare_cgroup", unshare_cgroup),
-    ]
-    for name, field in ns_items:
-        if group.get(name):
-            items.append(field.summary)
-
-    lines = []
-    if items:
-        lines.append("Namespace isolation:")
-        for item in items:
-            lines.append(f"  - {item}")
-
-    # Handle disable_userns separately (important security feature)
-    if group.get("disable_userns"):
-        lines.append(f"Nested sandboxing: DISABLED — {disable_userns.summary}")
-
-    return "\n".join(lines) if lines else None
-
-
-def _process_to_args(group: ConfigGroup, isolation_group: ConfigGroup) -> list[str]:
-    """Custom to_args for process (needs isolation group for PID namespace check)."""
-    args = []
-
-    if group.get("die_with_parent"):
-        args.append("--die-with-parent")
-
-    if group.get("new_session"):
-        args.append("--new-session")
-
-    if group.get("as_pid_1"):
-        # --as-pid-1 requires --unshare-pid
-        if not isolation_group.get("unshare_pid"):
-            args.append("--unshare-pid")
-        args.append("--as-pid-1")
-
-    chdir_val = group.get("chdir")
-    if chdir_val:
-        args.extend(["--chdir", chdir_val])
-
-    # Note: uid/gid handling moved to user_group
-
-    return args
-
-
-def _process_to_summary(group: ConfigGroup, env_group: ConfigGroup) -> str | None:
-    """Custom summary for process behavior."""
-    lines = []
-
-    if group.get("die_with_parent"):
-        lines.append("Lifecycle: Killed if launcher exits — prevents orphaned sandboxes")
-
-    if group.get("new_session"):
-        lines.append("Session: New terminal session — prevents keystroke injection (CVE-2017-5226)")
-
-    if group.get("as_pid_1"):
-        lines.append("PID 1: App handles zombie process cleanup itself (advanced)")
-
-    chdir_val = group.get("chdir")
-    if chdir_val:
-        lines.append(f"Working dir: Starts in {chdir_val}")
-
-    hostname = env_group.get("custom_hostname")
-    if hostname:
-        lines.append(f"Hostname: {hostname}")
-
-    # Note: Identity summary moved to user_group
-
-    return "\n".join(lines) if lines else None
-
-
-def _environment_to_args(group: ConfigGroup) -> list[str]:
-    """Custom to_args for environment variables."""
-    args = []
-
-    if group.get("clear_env"):
-        args.append("--clearenv")
-        # Re-set kept vars
-        keep_vars = group.get("keep_env_vars") or set()
-        for var in keep_vars:
-            if var in os.environ:
-                args.extend(["--setenv", var, os.environ[var]])
-    else:
-        # Unset specific vars
-        unset_vars = group.get("unset_env_vars") or set()
-        for var in unset_vars:
-            args.extend(["--unsetenv", var])
-
-    # Custom env vars
-    custom_vars = group.get("custom_env_vars") or {}
-    for name, value in custom_vars.items():
-        args.extend(["--setenv", name, value])
-
-    # Hostname
-    hostname = group.get("custom_hostname")
-    if hostname:
-        args.extend(["--hostname", hostname])
-
-    return args
-
-
-def _environment_to_summary(group: ConfigGroup) -> str | None:
-    """Custom summary for environment."""
-    lines = []
-    keep_vars = group.get("keep_env_vars") or set()
-    custom_vars = group.get("custom_env_vars") or {}
-
-    if group.get("clear_env"):
-        if keep_vars:
-            lines.append(f"Environment: CLEARED, passing through {len(keep_vars)} vars from parent")
-        else:
-            lines.append("Environment: CLEARED — secrets like API keys won't leak to sandbox")
-    else:
-        unset_vars = group.get("unset_env_vars") or set()
-        if unset_vars:
-            lines.append(f"Environment: Inherited minus {len(unset_vars)} removed vars")
-        else:
-            lines.append("Environment: Fully inherited — sandbox sees all parent env vars including secrets")
-
-    if custom_vars:
-        lines.append(f"Custom vars set: {', '.join(custom_vars.keys())}")
-
-    return "\n".join(lines) if lines else None
+_vfs_to_args = vfs_to_args
+_vfs_to_summary = vfs_to_summary
+_network_to_args = network_to_args
+_network_to_summary = network_to_summary
+_desktop_to_args = desktop_to_args
+_desktop_to_summary = desktop_to_summary
+_user_to_args = user_to_args
+_user_to_summary = user_to_summary
+_isolation_to_summary = isolation_to_summary
+_hostname_to_summary = hostname_to_summary
+_process_to_args = process_to_args
+_process_to_summary = process_to_summary
+_environment_to_args = environment_to_args
+_environment_to_summary = environment_to_summary
 
 
 # =============================================================================
@@ -623,20 +112,23 @@ system_paths_group = ConfigGroup(
 user_group = ConfigGroup(
     name="user",
     title="User",
-    items=[unshare_user, synthetic_passwd],
+    items=[unshare_user, synthetic_passwd, uid_field, gid_field, username_field],
     _to_args_fn=_user_to_args,
     _to_summary_fn=_user_to_summary,
 )
-# Initialize uid/gid/username - default to 0 (root inside sandbox)
-user_group.set("uid", 0)
-user_group.set("gid", 0)
-user_group.set("username", "")
 
 isolation_group = ConfigGroup(
     name="isolation",
-    title="Isolation",
-    items=[unshare_pid, unshare_ipc, unshare_uts, unshare_cgroup, disable_userns],
+    title="Isolate",
+    items=[unshare_pid, unshare_ipc, unshare_cgroup, disable_userns],
     _to_summary_fn=_isolation_to_summary,
+)
+
+hostname_group = ConfigGroup(
+    name="hostname",
+    title="Hostname",
+    items=[unshare_uts, custom_hostname],
+    _to_summary_fn=hostname_to_summary,
 )
 
 process_group = ConfigGroup(
@@ -667,7 +159,7 @@ desktop_group = ConfigGroup(
 environment_group = ConfigGroup(
     name="env_vars",
     title="Environment Variables",
-    items=[clear_env, custom_hostname],
+    items=[clear_env],
     _to_args_fn=_environment_to_args,
     _to_summary_fn=_environment_to_summary,
 )
@@ -713,7 +205,7 @@ filesystem_config = Config(
 
 sandbox_config = Config(
     name="sandbox",
-    groups=[user_group, isolation_group, process_group, network_group, desktop_group],
+    groups=[user_group, isolation_group, hostname_group, process_group, network_group, desktop_group],
 )
 
 environment_config = Config(

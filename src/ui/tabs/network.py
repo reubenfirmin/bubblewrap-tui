@@ -128,8 +128,23 @@ def compose_network_tab(
                             add_btn_id=ids.ADD_HOSTNAME_BTN,
                         )
 
-            # Right column: IP/CIDR filtering + Port forwarding (only in filter mode)
+            # Right column: IP/CIDR filtering + Port forwarding (filter mode) or Audit info (audit mode)
             with Vertical(classes="options-column"):
+                # Audit mode info card
+                with Container(id="audit-options-right", classes="" if network_filter.is_audit_mode() else "hidden"):
+                    with Container(classes="options-section"):
+                        yield Label("Audit Mode", classes="section-label")
+                        yield Static(
+                            "Network traffic will be captured to a PCAP file while "
+                            "the sandbox is running.\n\n"
+                            "When the process exits, traffic will be analyzed and a "
+                            "summary of contacted hosts and IPs will be displayed.\n\n"
+                            "Use this to discover what network connections an "
+                            "application makes before deciding on filter rules.",
+                            classes="audit-info-text",
+                        )
+
+                # Filter mode options
                 with Container(id="filter-options-right", classes="" if network_filter.is_filter_mode() else "hidden"):
                     # IP/CIDR filtering section
                     with Container(classes="options-section"):

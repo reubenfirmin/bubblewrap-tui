@@ -5,9 +5,11 @@
 """
 Build script for bui - concatenates src/ modules into a single executable script.
 
-Usage: ./build.py
+Usage: ./build.py [--bundle] [--clean]
 """
 
+import argparse
+import shutil
 from pathlib import Path
 
 # Header for the generated script (shebang + uv metadata)
@@ -36,19 +38,42 @@ MODULE_ORDER = [
     "model/network_filter.py",        # No dependencies - network filtering model
     "model/config_group.py",          # Depends on ui_field
     "model/config.py",                # Depends on config_group
-    "model/groups.py",                # Depends on config, config_group, ui_field
+    "model/fields/vfs.py",            # VFS field definitions
+    "model/fields/system_paths.py",   # System path field definitions
+    "model/fields/user.py",           # User field definitions
+    "model/fields/isolation.py",      # Isolation/namespace field definitions
+    "model/fields/process.py",        # Process field definitions
+    "model/fields/network.py",        # Network field definitions
+    "model/fields/desktop.py",        # Desktop integration field definitions
+    "model/fields/environment.py",    # Environment field definitions
+    "model/fields/__init__.py",       # Fields package re-exports
+    "model/serializers.py",           # Custom to_args/to_summary functions
+    "model/groups.py",                # Depends on config, config_group, ui_field, fields, serializers
     "model/sandbox_config.py",        # Depends on config_group, groups, network_filter
     "commandoutput.py",               # Command output formatting
     "net/utils.py",                   # Network utilities (resolve hostname, validate, etc.)
     "net/iptables.py",                # iptables rule generation
-    "net/pasta.py",                   # pasta network namespace wrapper
+    "net/pasta_install.py",           # pasta installation detection
+    "net/pasta_args.py",              # pasta command argument generation
+    "net/filtering.py",               # Network filtering validation/script generation
+    "net/pasta_exec.py",              # pasta execution functions
+    "net/pasta.py",                   # pasta re-exports for compatibility
     "net/audit.py",                   # Network audit/pcap analysis
     "net/__init__.py",                # Network module exports
     "bwrap.py",                       # Depends on detection, model (serialization/summary)
     "profiles.py",                    # Depends on model (JSON serialization)
     "ui/ids.py",                      # No dependencies - widget ID constants (needed early for ids.X refs)
-    "controller/sync.py",             # UI ↔ Config sync (uses ids.X)
-    "ui/widgets.py",                  # Depends on model (uses BoundDirectory, etc.)
+    "controller/validators.py",       # Validation functions for sync
+    "controller/field_mappings.py",   # Field mapping registry (depends on validators, ids)
+    "controller/sync.py",             # UI ↔ Config sync (depends on field_mappings)
+    "ui/widgets/directory.py",        # Directory widgets (FilteredDirectoryTree, BoundDirItem)
+    "ui/widgets/overlay.py",          # Overlay widget (OverlayItem)
+    "ui/widgets/environment.py",      # Environment widgets (EnvVarItem, EnvVarRow, AddEnvDialog)
+    "ui/widgets/sandbox.py",          # Sandbox widgets (DevModeCard, OptionCard)
+    "ui/widgets/profiles.py",         # Profile widget (ProfileItem)
+    "ui/widgets/network.py",          # Network widgets (PastaStatus, FilterModeRadio, FilterList, PortList)
+    "ui/widgets/__init__.py",         # Widget package re-exports
+    "ui/widgets.py",                  # Legacy re-export for compatibility
     "ui/helpers.py",                  # Depends on ui.widgets
     "ui/tabs/directories.py",         # Depends on ui.widgets
     "ui/tabs/environment.py",         # Depends on ui.widgets
@@ -72,12 +97,19 @@ LOCAL_MODULES = {
     "constants", "detection", "environment", "installer", "sandbox", "profiles", "app", "cli", "styles", "bwrap",
     "commandoutput",
     "net", "net.utils", "net.iptables", "net.pasta", "net.audit",
+    "net.pasta_install", "net.pasta_args", "net.filtering", "net.pasta_exec",
     "model",
     "model.ui_field", "model.bound_directory", "model.overlay_config", "model.network_filter",
-    "model.config_group", "model.config", "model.groups", "model.sandbox_config",
+    "model.config_group", "model.config", "model.groups", "model.sandbox_config", "model.serializers",
+    "model.fields", "model.fields.vfs", "model.fields.system_paths", "model.fields.user",
+    "model.fields.isolation", "model.fields.process", "model.fields.network",
+    "model.fields.desktop", "model.fields.environment",
     "controller", "controller.sync", "controller.directories", "controller.overlays",
     "controller.environment", "controller.execute", "controller.network",
-    "ui", "ui.ids", "ui.widgets", "ui.helpers", "ui.modals",
+    "controller.validators", "controller.field_mappings",
+    "ui", "ui.ids", "ui.widgets", "ui.widgets.directory", "ui.widgets.overlay",
+    "ui.widgets.environment", "ui.widgets.sandbox", "ui.widgets.profiles", "ui.widgets.network",
+    "ui.helpers", "ui.modals",
     "ui.tabs", "ui.tabs.directories", "ui.tabs.environment", "ui.tabs.filesystem",
     "ui.tabs.overlays", "ui.tabs.sandbox", "ui.tabs.network", "ui.tabs.summary", "ui.tabs.profiles",
 }
@@ -280,7 +312,25 @@ def process_app_module(content: str, css_content: str) -> str:
     return '\n'.join(result)
 
 
-def build():
+def clean():
+    """Remove __pycache__ directories and .pyc files."""
+    root = Path(__file__).parent
+
+    # Remove __pycache__ directories
+    for pycache in root.rglob("__pycache__"):
+        print(f"Removing {pycache}")
+        shutil.rmtree(pycache)
+
+    # Remove .pyc files
+    for pyc_file in root.rglob("*.pyc"):
+        print(f"Removing {pyc_file}")
+        pyc_file.unlink()
+
+    print("Clean complete")
+    return True
+
+
+def bundle():
     """Build the single-file bui script from src/ modules."""
     src_dir = Path(__file__).parent / "src"
     output_path = Path(__file__).parent / "bui"
@@ -357,5 +407,25 @@ ids = _IdsNamespace()
     return True
 
 
+def main():
+    """Parse arguments and execute requested operations."""
+    parser = argparse.ArgumentParser(description="Build script for bui")
+    parser.add_argument("--bundle", action="store_true", help="Build the single-file executable")
+    parser.add_argument("--clean", action="store_true", help="Remove __pycache__ and .pyc files")
+    args = parser.parse_args()
+
+    # Default to bundle if no flags specified
+    if not args.bundle and not args.clean:
+        args.bundle = True
+
+    success = True
+    if args.clean:
+        success = clean() and success
+    if args.bundle:
+        success = bundle() and success
+
+    return 0 if success else 1
+
+
 if __name__ == "__main__":
-    build()
+    exit(main())

@@ -69,6 +69,10 @@ def compose_sandbox_tab(on_dev_mode_change: Callable[[str], None]) -> ComposeRes
                     yield OptionCard(groups.mount_tmp)
                     yield Label("Tmpfs size:")
                     yield Input(placeholder="default (half of RAM)", id="opt-tmpfs-size")
+                with Container(classes="options-section"):
+                    yield Label(groups.hostname_group.title, classes="section-label")
+                    yield OptionCard(groups.unshare_uts)
+                    yield Input(placeholder="custom hostname", id="opt-hostname")
 
             # Right column: Isolation + Process
             with Vertical(classes="options-column"):
@@ -76,7 +80,6 @@ def compose_sandbox_tab(on_dev_mode_change: Callable[[str], None]) -> ComposeRes
                     yield Label(groups.isolation_group.title, classes="section-label")
                     yield OptionCard(groups.unshare_pid)
                     yield OptionCard(groups.unshare_ipc)
-                    yield OptionCard(groups.unshare_uts)
                     yield OptionCard(groups.unshare_cgroup)
                     yield OptionCard(groups.disable_userns)
                 with Container(classes="options-section"):
@@ -86,5 +89,3 @@ def compose_sandbox_tab(on_dev_mode_change: Callable[[str], None]) -> ComposeRes
                     yield OptionCard(groups.as_pid_1)
                     yield Label("Working dir:")
                     yield Input(value=str(Path.cwd()), id="opt-chdir")
-                    yield Label("Custom hostname:")
-                    yield Input(placeholder="sandbox", id="opt-hostname")

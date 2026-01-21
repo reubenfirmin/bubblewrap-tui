@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from textual.containers import VerticalScroll
-from textual.css.query import NoMatches
+from textual.css.query import NoMatches, WrongType
 from textual.widgets import Button, Checkbox, Input
 
-from constants import MAX_UID_GID
+from model import NetworkMode
 from ui.ids import css
 import ui.ids as ids
 
@@ -20,94 +19,6 @@ if TYPE_CHECKING:
     from model import SandboxConfig
 
 log = logging.getLogger(__name__)
-
-
-def _validate_uid_gid(value: str) -> int | None:
-    """Validate UID/GID is numeric and in valid range (0-65535)."""
-    stripped = value.strip()
-    if not stripped.isdigit():
-        return None
-    num = int(stripped)
-    return num if 0 <= num <= MAX_UID_GID else None
-
-
-@dataclass
-class FieldMapping:
-    """Maps a UI widget to a config field."""
-
-    widget_id: str
-    config_path: str  # e.g., "filesystem.mount_proc"
-    widget_type: type  # Checkbox or Input
-    value_transform: Callable[[Any], Any] | None = None  # Transform UI value to config value
-    inverse_transform: Callable[[Any], Any] | None = None  # Transform config value to UI value
-
-
-# Registry of all checkbox/input mappings
-# These map widget IDs to config paths for automatic sync
-FIELD_MAPPINGS: list[FieldMapping] = [
-    # Filesystem options (Virtual Filesystems)
-    FieldMapping(ids.OPT_PROC, "filesystem.mount_proc", Checkbox),
-    FieldMapping(ids.OPT_TMP, "filesystem.mount_tmp", Checkbox),
-    FieldMapping(ids.OPT_TMPFS_SIZE, "filesystem.tmpfs_size", Input, lambda v: v.strip()),
-
-    # Quick Shortcuts (system paths + user config)
-    # These sync checkbox state for profile saving/loading
-    # The bound_dirs sync is handled separately in app.py
-    FieldMapping(ids.OPT_USR, "filesystem.bind_usr", Checkbox),
-    FieldMapping(ids.OPT_BIN, "filesystem.bind_bin", Checkbox),
-    FieldMapping(ids.OPT_LIB, "filesystem.bind_lib", Checkbox),
-    FieldMapping(ids.OPT_LIB64, "filesystem.bind_lib64", Checkbox),
-    FieldMapping(ids.OPT_SBIN, "filesystem.bind_sbin", Checkbox),
-    FieldMapping(ids.OPT_ETC, "filesystem.bind_etc", Checkbox),
-    FieldMapping(ids.OPT_USER_CONFIG, "desktop.bind_user_config", Checkbox),
-
-    # Network options
-    FieldMapping(ids.OPT_NET, "network.share_net", Checkbox),
-    FieldMapping(ids.OPT_RESOLV_CONF, "network.bind_resolv_conf", Checkbox),
-    FieldMapping(ids.OPT_SSL_CERTS, "network.bind_ssl_certs", Checkbox),
-
-    # Desktop integration
-    FieldMapping(ids.OPT_DBUS, "desktop.allow_dbus", Checkbox),
-    FieldMapping(ids.OPT_DISPLAY, "desktop.allow_display", Checkbox),
-    # Note: bind_user_config is handled via Quick Shortcuts in directories tab
-
-    # User identity (unshare_user, uid, gid, username, synthetic_passwd)
-    FieldMapping(ids.OPT_UNSHARE_USER, "user.unshare_user", Checkbox),
-    FieldMapping(ids.OPT_UID, "user.uid", Input, _validate_uid_gid),
-    FieldMapping(ids.OPT_GID, "user.gid", Input, _validate_uid_gid),
-    FieldMapping(ids.OPT_USERNAME, "user.username", Input, lambda v: v.strip()),
-    FieldMapping(ids.OPT_SYNTHETIC_PASSWD, "user.synthetic_passwd", Checkbox),
-    # Note: overlay_home is UI-only (like directory shortcuts) - not synced to model
-
-    # Namespaces (PID, IPC, UTS, cgroup)
-    FieldMapping(ids.OPT_UNSHARE_PID, "namespace.unshare_pid", Checkbox),
-    FieldMapping(ids.OPT_UNSHARE_IPC, "namespace.unshare_ipc", Checkbox),
-    FieldMapping(ids.OPT_UNSHARE_UTS, "namespace.unshare_uts", Checkbox),
-    FieldMapping(ids.OPT_UNSHARE_CGROUP, "namespace.unshare_cgroup", Checkbox),
-    FieldMapping(ids.OPT_DISABLE_USERNS, "namespace.disable_userns", Checkbox),
-
-    # Process options
-    FieldMapping(ids.OPT_DIE_WITH_PARENT, "process.die_with_parent", Checkbox),
-    FieldMapping(ids.OPT_NEW_SESSION, "process.new_session", Checkbox),
-    FieldMapping(ids.OPT_AS_PID_1, "process.as_pid_1", Checkbox),
-    FieldMapping(ids.OPT_CHDIR, "process.chdir", Input),
-    FieldMapping(ids.OPT_HOSTNAME, "environment.custom_hostname", Input),
-]
-
-
-def _get_nested_attr(obj: Any, path: str) -> Any:
-    """Get nested attribute like 'filesystem.mount_proc'."""
-    for part in path.split('.'):
-        obj = getattr(obj, part)
-    return obj
-
-
-def _set_nested_attr(obj: Any, path: str, value: Any) -> None:
-    """Set nested attribute like 'filesystem.mount_proc'."""
-    parts = path.split('.')
-    for part in parts[:-1]:
-        obj = getattr(obj, part)
-    setattr(obj, parts[-1], value)
 
 
 class ConfigSyncManager:
@@ -155,30 +66,36 @@ class ConfigSyncManager:
             widget = self.app.query_one(f"#{widget_id}", widget_type)
             self._widget_cache[widget_id] = widget
             return widget
-        except NoMatches:
+        except (NoMatches, WrongType):
+            # Widget not found or wrong type (e.g., dev_mode uses Button, not Input)
             return None
 
     def sync_config_from_ui(self) -> None:
         """Read all UI widgets and update config."""
-        for mapping in FIELD_MAPPINGS:
-            widget = self.get_widget(mapping.widget_id, mapping.widget_type)
-            if widget is None:
-                continue
+        for group in self.config.all_field_groups():
+            for field in group.items:
+                # Skip fields without UI widgets
+                if not hasattr(field, 'checkbox_id') or not field.checkbox_id:
+                    continue
 
-            try:
-                if mapping.widget_type == Checkbox:
+                widget = self.get_widget(field.checkbox_id, field.widget_type)
+                if widget is None:
+                    continue
+
+                try:
                     value = widget.value
-                else:  # Input
-                    value = widget.value
-                    if mapping.value_transform:
-                        transformed = mapping.value_transform(value)
+
+                    # Apply value transform if present (e.g., uid/gid validation)
+                    if hasattr(field, 'value_transform') and field.value_transform:
+                        transformed = field.value_transform(value)
                         if transformed is None:
                             continue  # Skip invalid values
                         value = transformed
 
-                _set_nested_attr(self.config, mapping.config_path, value)
-            except (ValueError, AttributeError) as e:
-                log.debug(f"Error syncing {mapping.widget_id}: {e}")
+                    # Set value directly on group
+                    group.set(field.name, value)
+                except (ValueError, AttributeError) as e:
+                    log.debug(f"Error syncing {field.checkbox_id}: {e}")
 
     def sync_shortcuts_from_bound_dirs(self) -> None:
         """Derive shortcut checkbox states from existing bound_dirs.
@@ -202,29 +119,37 @@ class ConfigSyncManager:
 
             # Set the config value (checkbox will sync from this)
             if field.name in ("bind_usr", "bind_bin", "bind_lib", "bind_lib64", "bind_sbin", "bind_etc"):
-                setattr(self.config.filesystem, field.name, enabled)
+                setattr(self.config.system_paths, field.name, enabled)
             elif field.name == "bind_user_config":
                 setattr(self.config.desktop, field.name, enabled)
 
     def sync_ui_from_config(self) -> None:
         """Read config and update all UI widgets."""
-        for mapping in FIELD_MAPPINGS:
-            widget = self.get_widget(mapping.widget_id, mapping.widget_type)
-            if widget is None:
-                continue
+        for group in self.config.all_field_groups():
+            for field in group.items:
+                # Skip fields without UI widgets
+                if not hasattr(field, 'checkbox_id') or not field.checkbox_id:
+                    continue
 
-            try:
-                value = _get_nested_attr(self.config, mapping.config_path)
+                widget = self.get_widget(field.checkbox_id, field.widget_type)
+                if widget is None:
+                    continue
 
-                if mapping.inverse_transform:
-                    value = mapping.inverse_transform(value)
+                try:
+                    # Get value from group (with fallback to field default)
+                    value = group._values.get(field.name, field.default)
 
-                if mapping.widget_type == Checkbox:
-                    widget.value = bool(value)
-                else:  # Input
-                    widget.value = str(value) if value is not None else ""
-            except (ValueError, AttributeError) as e:
-                log.debug(f"Error syncing UI {mapping.widget_id}: {e}")
+                    # Apply inverse transform if present
+                    if hasattr(field, 'inverse_transform') and field.inverse_transform:
+                        value = field.inverse_transform(value)
+
+                    # Set widget value
+                    if field.widget_type == Checkbox:
+                        widget.value = bool(value)
+                    else:  # Input
+                        widget.value = str(value) if value is not None else ""
+                except (ValueError, AttributeError) as e:
+                    log.debug(f"Error syncing UI {field.checkbox_id}: {e}")
 
     def clear_cache(self) -> None:
         """Clear the widget cache (call when widgets are remounted)."""
@@ -327,6 +252,52 @@ class ConfigSyncManager:
         except NoMatches:
             log.debug("username-options or virtual-user-options not found")
 
+    def sync_network_visibility(self) -> None:
+        """Sync network options visibility based on share_net checkbox state."""
+        from textual.containers import Container
+
+        try:
+            share_net_checkbox = self.get_widget(ids.OPT_NET, Checkbox)
+            if share_net_checkbox is None:
+                return
+
+            share_net = share_net_checkbox.value
+
+            # Get containers
+            full_net_opts = self.app.query_one("#full-network-options", Container)
+            network_mode_section = self.app.query_one("#network-mode-section", Container)
+            filter_opts = self.app.query_one("#filter-options", Container)
+            filter_opts_right = self.app.query_one("#filter-options-right", Container)
+            audit_opts_right = self.app.query_one("#audit-options-right", Container)
+
+            if share_net:
+                # Show network options
+                full_net_opts.remove_class("hidden")
+                network_mode_section.remove_class("hidden")
+                # Show/hide filter/audit based on mode
+                mode = self.config.network_filter.mode
+                if mode == NetworkMode.FILTER:
+                    filter_opts.remove_class("hidden")
+                    filter_opts_right.remove_class("hidden")
+                    audit_opts_right.add_class("hidden")
+                elif mode == NetworkMode.AUDIT:
+                    filter_opts.add_class("hidden")
+                    filter_opts_right.add_class("hidden")
+                    audit_opts_right.remove_class("hidden")
+                else:  # OFF
+                    filter_opts.add_class("hidden")
+                    filter_opts_right.add_class("hidden")
+                    audit_opts_right.add_class("hidden")
+            else:
+                # Hide all network options
+                full_net_opts.add_class("hidden")
+                network_mode_section.add_class("hidden")
+                filter_opts.add_class("hidden")
+                filter_opts_right.add_class("hidden")
+                audit_opts_right.add_class("hidden")
+        except NoMatches:
+            log.debug("Network containers not found for visibility sync")
+
     def sync_overlay_home_from_overlays(self) -> None:
         """Derive overlay_home checkbox state from existing overlays.
 
@@ -366,7 +337,7 @@ class ConfigSyncManager:
         """
         try:
             dev_card = self.app.query_one(dev_mode_card_class)
-            dev_card.set_mode(self.config.filesystem.dev_mode)
+            dev_card.set_mode(self.config.vfs.dev_mode)
         except NoMatches:
             log.debug("DevModeCard not found")
 
@@ -393,7 +364,7 @@ class ConfigSyncManager:
             for field in QUICK_SHORTCUTS:
                 # Get the checkbox state from config
                 if field.name in ("bind_usr", "bind_bin", "bind_lib", "bind_lib64", "bind_sbin", "bind_etc"):
-                    enabled = getattr(self.config.filesystem, field.name, False)
+                    enabled = getattr(self.config.system_paths, field.name, False)
                 elif field.name == "bind_user_config":
                     enabled = getattr(self.config.desktop, field.name, False)
                 else:
