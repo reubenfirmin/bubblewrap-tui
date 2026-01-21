@@ -6,9 +6,9 @@ from model.network_filter import (
     FilterMode,
     HostnameFilter,
     IPFilter,
-    LocalhostAccess,
     NetworkFilter,
     NetworkMode,
+    PortForwarding,
 )
 
 
@@ -67,19 +67,25 @@ class TestIPFilter:
         assert len(ipf.cidrs) == 2
 
 
-class TestLocalhostAccess:
-    """Test LocalhostAccess dataclass."""
+class TestPortForwarding:
+    """Test PortForwarding dataclass."""
 
     def test_defaults(self):
-        """LocalhostAccess has correct defaults."""
-        la = LocalhostAccess()
-        assert la.ports == []
+        """PortForwarding has correct defaults."""
+        pf = PortForwarding()
+        assert pf.expose_ports == []
+        assert pf.host_ports == []
 
     def test_with_ports(self):
-        """LocalhostAccess can be created with ports."""
-        la = LocalhostAccess(ports=[5432, 6379, 3306])
-        assert len(la.ports) == 3
-        assert 5432 in la.ports
+        """PortForwarding can be created with ports."""
+        pf = PortForwarding(
+            expose_ports=[8080, 3000],
+            host_ports=[5432, 6379],
+        )
+        assert len(pf.expose_ports) == 2
+        assert len(pf.host_ports) == 2
+        assert 8080 in pf.expose_ports
+        assert 5432 in pf.host_ports
 
 
 class TestNetworkFilter:
@@ -91,7 +97,8 @@ class TestNetworkFilter:
         assert nf.enabled is False
         assert nf.hostname_filter.mode == FilterMode.OFF
         assert nf.ip_filter.mode == FilterMode.OFF
-        assert nf.localhost_access.ports == []
+        assert nf.port_forwarding.expose_ports == []
+        assert nf.port_forwarding.host_ports == []
 
     def test_requires_pasta_disabled(self):
         """requires_pasta returns False when mode is OFF."""
@@ -126,10 +133,10 @@ class TestNetworkFilter:
         assert nf.requires_pasta() is True
 
     def test_requires_pasta_with_ports(self):
-        """requires_pasta returns True with localhost ports."""
+        """requires_pasta returns True with port forwarding."""
         nf = NetworkFilter(
             mode=NetworkMode.FILTER,
-            localhost_access=LocalhostAccess(ports=[5432]),
+            port_forwarding=PortForwarding(host_ports=[5432]),
         )
         assert nf.requires_pasta() is True
 
@@ -185,7 +192,13 @@ class TestNetworkFilter:
 
     def test_has_port_forwards_true(self):
         """has_port_forwards returns True with ports."""
+        # Test with host ports
         nf = NetworkFilter(
-            localhost_access=LocalhostAccess(ports=[5432]),
+            port_forwarding=PortForwarding(host_ports=[5432]),
         )
         assert nf.has_port_forwards() is True
+        # Test with expose ports
+        nf2 = NetworkFilter(
+            port_forwarding=PortForwarding(expose_ports=[8080]),
+        )
+        assert nf2.has_port_forwards() is True

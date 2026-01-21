@@ -67,12 +67,22 @@ class NetworkEventsMixin:
         # Already removed by widget, just update preview
         self._update_preview()
 
-    def _on_port_add(self, port: int) -> None:
-        """Handle port added to localhost access list."""
+    def _on_expose_port_add(self, port: int) -> None:
+        """Handle port added to expose ports list."""
         # Already added by widget, just update preview
         self._update_preview()
 
-    def _on_port_remove(self, port: int) -> None:
-        """Handle port removed from localhost access list."""
+    def _on_expose_port_remove(self, port: int) -> None:
+        """Handle port removed from expose ports list."""
+        # Already removed by widget, just update preview
+        self._update_preview()
+
+    def _on_host_port_add(self, port: int) -> None:
+        """Handle port added to host ports list."""
+        # Already added by widget, just update preview
+        self._update_preview()
+
+    def _on_host_port_remove(self, port: int) -> None:
+        """Handle port removed from host ports list."""
         # Already removed by widget, just update preview
         self._update_preview()

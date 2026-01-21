@@ -8,8 +8,8 @@ from model.network_filter import (
     FilterMode,
     HostnameFilter,
     IPFilter,
-    LocalhostAccess,
     NetworkFilter,
+    PortForwarding,
 )
 from net import (
     check_pasta,
@@ -339,11 +339,18 @@ class TestGeneratePastaArgs:
         assert "--netns" not in args
 
     def test_port_forwarding(self):
-        """Port forwards are included with -T flag."""
+        """Port forwards are included with -t and -T flags."""
         nf = NetworkFilter(
-            localhost_access=LocalhostAccess(ports=[5432, 6379]),
+            port_forwarding=PortForwarding(
+                expose_ports=[8080],
+                host_ports=[5432, 6379],
+            ),
         )
         args = generate_pasta_args(nf)
+        # Expose ports use -t
+        assert "-t" in args
+        assert "8080" in args
+        # Host ports use -T
         assert "-T" in args
         assert "5432" in args
         assert "6379" in args

@@ -38,10 +38,16 @@ class IPFilter:
 
 
 @dataclass
-class LocalhostAccess:
-    """Ports to forward from host localhost into sandbox."""
+class PortForwarding:
+    """Bidirectional port forwarding between host and sandbox."""
 
-    ports: list[int] = field(default_factory=list)  # [5432, 6379]
+    # Ports to expose from sandbox to host (-t)
+    # Server in sandbox on port 8080 → accessible at host:8080
+    expose_ports: list[int] = field(default_factory=list)
+
+    # Ports to forward from host into sandbox (-T)
+    # Host service on port 5432 → accessible in sandbox at localhost:5432
+    host_ports: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -66,10 +72,9 @@ class NetworkFilter:
     mode: NetworkMode = NetworkMode.OFF
     hostname_filter: HostnameFilter = field(default_factory=HostnameFilter)
     ip_filter: IPFilter = field(default_factory=IPFilter)
-    localhost_access: LocalhostAccess = field(default_factory=LocalhostAccess)
+    port_forwarding: PortForwarding = field(default_factory=PortForwarding)
     audit: AuditConfig = field(default_factory=AuditConfig)
 
-    # Backwards compatibility property
     @property
     def enabled(self) -> bool:
         """Returns True if filtering mode is enabled."""
@@ -90,7 +95,7 @@ class NetworkFilter:
         return (
             self.hostname_filter.mode != FilterMode.OFF
             or self.ip_filter.mode != FilterMode.OFF
-            or len(self.localhost_access.ports) > 0
+            or self.has_port_forwards()
         )
 
     def has_any_rules(self) -> bool:
@@ -101,8 +106,11 @@ class NetworkFilter:
         )
 
     def has_port_forwards(self) -> bool:
-        """Returns True if any localhost ports are forwarded."""
-        return len(self.localhost_access.ports) > 0
+        """Returns True if any port forwarding is configured."""
+        return (
+            len(self.port_forwarding.expose_ports) > 0
+            or len(self.port_forwarding.host_ports) > 0
+        )
 
     def is_audit_mode(self) -> bool:
         """Returns True if audit mode is enabled."""

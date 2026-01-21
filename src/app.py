@@ -203,8 +203,10 @@ class BubblewrapTUI(
                     self._on_ip_mode_change,
                     self._on_cidr_add,
                     self._on_cidr_remove,
-                    self._on_port_add,
-                    self._on_port_remove,
+                    self._on_expose_port_add,
+                    self._on_expose_port_remove,
+                    self._on_host_port_add,
+                    self._on_host_port_remove,
                 )
 
             with TabPane("Overlays", id="overlays-tab"):

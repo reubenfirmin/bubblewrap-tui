@@ -10,9 +10,9 @@ from model.network_filter import (
     FilterMode,
     HostnameFilter,
     IPFilter,
-    LocalhostAccess,
     NetworkFilter,
     NetworkMode,
+    PortForwarding,
 )
 
 # Re-export groups module for easy access
@@ -30,8 +30,8 @@ __all__ = [
     "FilterMode",
     "HostnameFilter",
     "IPFilter",
-    "LocalhostAccess",
     "NetworkFilter",
     "NetworkMode",
+    "PortForwarding",
     "groups",
 ]

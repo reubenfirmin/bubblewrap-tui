@@ -104,9 +104,14 @@ def generate_pasta_args(nf: NetworkFilter, pcap_path: Path | None = None) -> lis
         args.append("--no-splice")  # Force traffic through tap for capture
         args.extend(["--pcap", str(pcap_path)])
 
-    # Forward localhost ports (container → host)
+    # Expose sandbox ports to host (for servers running in sandbox)
+    # -t forwards TCP ports from host to sandbox
+    for port in nf.port_forwarding.expose_ports:
+        args.extend(["-t", str(port)])
+
+    # Forward host ports into sandbox (for accessing host services)
     # -T forwards TCP ports from sandbox to host localhost
-    for port in nf.localhost_access.ports:
+    for port in nf.port_forwarding.host_ports:
         args.extend(["-T", str(port)])
 
     # The "--" separator and command will be added by caller
@@ -361,15 +366,15 @@ def execute_with_audit(
     if pcap_path.exists():
         try:
             audit_result = parse_pcap(pcap_path)
-            print_audit_summary(audit_result)
+            print_audit_summary(audit_result, pcap_path)
         except Exception as e:
             print(f"\nWarning: Failed to parse pcap: {e}", file=sys.stderr)
-
-    # Clean up temp directory
-    try:
-        import shutil
-        shutil.rmtree(tmp_dir)
-    except Exception:
-        pass
+    else:
+        # Clean up empty temp directory if no pcap was created
+        try:
+            import shutil
+            shutil.rmtree(tmp_dir)
+        except Exception:
+            pass
 
     sys.exit(exit_code)

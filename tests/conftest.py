@@ -10,9 +10,9 @@ from model import (
     FilterMode,
     HostnameFilter,
     IPFilter,
-    LocalhostAccess,
     NetworkFilter,
     OverlayConfig,
+    PortForwarding,
     SandboxConfig,
 )
 
@@ -154,7 +154,7 @@ def network_filter_whitelist():
             mode=FilterMode.OFF,
             cidrs=[],
         ),
-        localhost_access=LocalhostAccess(ports=[5432, 6379]),
+        port_forwarding=PortForwarding(host_ports=[5432, 6379]),
     )
 
 
@@ -171,5 +171,4 @@ def network_filter_blacklist():
             mode=FilterMode.BLACKLIST,
             cidrs=["10.0.0.0/8", "192.168.0.0/16"],
         ),
-        localhost_access=LocalhostAccess(ports=[]),
     )

@@ -29,8 +29,10 @@ def compose_network_tab(
     on_ip_mode_change: Callable[[str], None],
     on_cidr_add: Callable[[str], None],
     on_cidr_remove: Callable[[str], None],
-    on_port_add: Callable[[int], None],
-    on_port_remove: Callable[[int], None],
+    on_expose_port_add: Callable[[int], None],
+    on_expose_port_remove: Callable[[int], None],
+    on_host_port_add: Callable[[int], None],
+    on_host_port_remove: Callable[[int], None],
 ) -> ComposeResult:
     """Compose the network filtering tab content.
 
@@ -45,8 +47,10 @@ def compose_network_tab(
         on_ip_mode_change: Callback when IP filter mode changes
         on_cidr_add: Callback when CIDR is added
         on_cidr_remove: Callback when CIDR is removed
-        on_port_add: Callback when port is added
-        on_port_remove: Callback when port is removed
+        on_expose_port_add: Callback when expose port is added
+        on_expose_port_remove: Callback when expose port is removed
+        on_host_port_add: Callback when host port is added
+        on_host_port_remove: Callback when host port is removed
 
     Yields:
         Textual widgets for the network filtering tab
@@ -149,18 +153,34 @@ def compose_network_tab(
                             validate_fn=validate_cidr,
                         )
 
-                    # Localhost access section
+                    # Expose ports section (sandbox → host)
                     with Container(classes="options-section"):
-                        yield Label("Localhost Port Forwarding", classes="section-label")
+                        yield Label("Expose Ports (sandbox → host)", classes="section-label")
                         yield Static(
-                            "Forward host ports into sandbox:",
+                            "Make sandbox servers accessible from host:",
                             classes="network-hint",
                         )
                         yield PortList(
-                            ports=network_filter.localhost_access.ports,
-                            on_add=on_port_add,
-                            on_remove=on_port_remove,
-                            list_id=ids.PORT_LIST,
-                            input_id=ids.PORT_INPUT,
-                            add_btn_id=ids.ADD_PORT_BTN,
+                            ports=network_filter.port_forwarding.expose_ports,
+                            on_add=on_expose_port_add,
+                            on_remove=on_expose_port_remove,
+                            list_id=ids.EXPOSE_PORT_LIST,
+                            input_id=ids.EXPOSE_PORT_INPUT,
+                            add_btn_id=ids.ADD_EXPOSE_PORT_BTN,
+                        )
+
+                    # Host ports section (host → sandbox)
+                    with Container(classes="options-section"):
+                        yield Label("Host Ports (host → sandbox)", classes="section-label")
+                        yield Static(
+                            "Access host services from sandbox:",
+                            classes="network-hint",
+                        )
+                        yield PortList(
+                            ports=network_filter.port_forwarding.host_ports,
+                            on_add=on_host_port_add,
+                            on_remove=on_host_port_remove,
+                            list_id=ids.HOST_PORT_LIST,
+                            input_id=ids.HOST_PORT_INPUT,
+                            add_btn_id=ids.ADD_HOST_PORT_BTN,
                         )
