@@ -78,129 +78,129 @@ class TestParseArgs:
     def test_command_after_separator(self):
         """Command after -- is parsed correctly."""
         with patch.object(sys, "argv", ["bui", "--", "bash"]):
-            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
-            assert command == ["bash"]
-            assert profile is None
-            assert sandbox is None
-            assert bind_cwd is False
-            assert bind_paths == []
+            args = parse_args()
+            assert args.command == ["bash"]
+            assert args.profile_path is None
+            assert args.sandbox_name is None
+            assert args.bind_cwd is False
+            assert args.bind_paths == []
 
     def test_command_with_args(self):
         """Command with arguments after --."""
         with patch.object(sys, "argv", ["bui", "--", "python", "script.py", "-v"]):
-            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
-            assert command == ["python", "script.py", "-v"]
+            args = parse_args()
+            assert args.command == ["python", "script.py", "-v"]
 
     def test_profile_flag(self):
         """--profile flag is parsed."""
         with patch.object(
             sys, "argv", ["bui", "--profile", "test.json", "--", "bash"]
         ):
-            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
-            assert command == ["bash"]
-            assert profile == "test.json"
+            args = parse_args()
+            assert args.command == ["bash"]
+            assert args.profile_path == "test.json"
 
     def test_profile_flag_path(self):
         """--profile with full path."""
         with patch.object(
             sys, "argv", ["bui", "--profile", "/home/user/profiles/dev.json", "--", "bash"]
         ):
-            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
-            assert profile == "/home/user/profiles/dev.json"
+            args = parse_args()
+            assert args.profile_path == "/home/user/profiles/dev.json"
 
     def test_no_separator(self):
         """Command without -- separator."""
         with patch.object(sys, "argv", ["bui", "bash"]):
-            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
-            assert command == ["bash"]
+            args = parse_args()
+            assert args.command == ["bash"]
 
     def test_shell_wrap_applied(self):
         """Shell metacharacters trigger shell wrap."""
         with patch.object(sys, "argv", ["bui", "--", "cat foo | grep bar"]):
-            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
+            args = parse_args()
             # shlex.join quotes the argument
-            assert command[0] == "/bin/bash"
-            assert command[1] == "-c"
-            assert "cat foo | grep bar" in command[2]
+            assert args.command[0] == "/bin/bash"
+            assert args.command[1] == "-c"
+            assert "cat foo | grep bar" in args.command[2]
 
     def test_sandbox_flag(self):
         """--sandbox flag is parsed."""
         with patch.object(
             sys, "argv", ["bui", "--profile", "untrusted", "--sandbox", "test", "--", "bash"]
         ):
-            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
-            assert command == ["bash"]
-            assert profile == "untrusted"
-            assert sandbox == "test"
+            args = parse_args()
+            assert args.command == ["bash"]
+            assert args.profile_path == "untrusted"
+            assert args.sandbox_name == "test"
 
     def test_bind_cwd_flag(self):
         """--bind-cwd flag is parsed."""
         with patch.object(
             sys, "argv", ["bui", "--profile", "untrusted", "--bind-cwd", "--", "bash"]
         ):
-            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
-            assert command == ["bash"]
-            assert bind_cwd is True
+            args = parse_args()
+            assert args.command == ["bash"]
+            assert args.bind_cwd is True
 
     def test_bind_cwd_with_sandbox(self):
         """--bind-cwd with --sandbox."""
         with patch.object(
             sys, "argv", ["bui", "--profile", "untrusted", "--sandbox", "test", "--bind-cwd", "--", "bash"]
         ):
-            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
-            assert sandbox == "test"
-            assert bind_cwd is True
+            args = parse_args()
+            assert args.sandbox_name == "test"
+            assert args.bind_cwd is True
 
     def test_single_bind_path(self):
         """Single --bind path is parsed and resolved."""
         with patch.object(
             sys, "argv", ["bui", "--profile", "untrusted", "--bind", "/tmp/test", "--", "bash"]
         ):
-            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
-            assert command == ["bash"]
-            assert len(bind_paths) == 1
-            assert bind_paths[0] == Path("/tmp/test")
+            args = parse_args()
+            assert args.command == ["bash"]
+            assert len(args.bind_paths) == 1
+            assert args.bind_paths[0] == Path("/tmp/test")
 
     def test_multiple_bind_paths(self):
         """Multiple --bind paths are parsed."""
         with patch.object(
             sys, "argv", ["bui", "--profile", "untrusted", "--bind", "/tmp/a", "--bind", "/tmp/b", "--", "bash"]
         ):
-            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
-            assert len(bind_paths) == 2
-            assert bind_paths[0] == Path("/tmp/a")
-            assert bind_paths[1] == Path("/tmp/b")
+            args = parse_args()
+            assert len(args.bind_paths) == 2
+            assert args.bind_paths[0] == Path("/tmp/a")
+            assert args.bind_paths[1] == Path("/tmp/b")
 
     def test_bind_path_expansion(self, tmp_path):
         """--bind expands ~ in paths."""
         with patch.object(
             sys, "argv", ["bui", "--profile", "untrusted", "--bind", "~/.nvm", "--", "bash"]
         ):
-            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
-            assert len(bind_paths) == 1
+            args = parse_args()
+            assert len(args.bind_paths) == 1
             # Path should be expanded (not contain ~)
-            assert "~" not in str(bind_paths[0])
-            assert bind_paths[0].is_absolute()
+            assert "~" not in str(args.bind_paths[0])
+            assert args.bind_paths[0].is_absolute()
 
     def test_bind_with_bind_cwd(self):
         """--bind can be combined with --bind-cwd."""
         with patch.object(
             sys, "argv", ["bui", "--profile", "untrusted", "--bind", "/tmp/test", "--bind-cwd", "--", "bash"]
         ):
-            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
-            assert bind_cwd is True
-            assert len(bind_paths) == 1
-            assert bind_paths[0] == Path("/tmp/test")
+            args = parse_args()
+            assert args.bind_cwd is True
+            assert len(args.bind_paths) == 1
+            assert args.bind_paths[0] == Path("/tmp/test")
 
     def test_bind_with_sandbox(self):
         """--bind can be combined with --sandbox."""
         with patch.object(
             sys, "argv", ["bui", "--profile", "untrusted", "--sandbox", "test", "--bind", "/tmp/tools", "--", "bash"]
         ):
-            command, profile, sandbox, bind_cwd, bind_paths, bind_env = parse_args()
-            assert sandbox == "test"
-            assert len(bind_paths) == 1
-            assert bind_paths[0] == Path("/tmp/tools")
+            args = parse_args()
+            assert args.sandbox_name == "test"
+            assert len(args.bind_paths) == 1
+            assert args.bind_paths[0] == Path("/tmp/tools")
 
     def test_help_flag_exits(self):
         """--help flag shows help and exits."""

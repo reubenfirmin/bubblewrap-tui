@@ -5,42 +5,46 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import fields, is_dataclass
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, get_args, get_origin, get_type_hints
 
 log = logging.getLogger(__name__)
 
+from constants import MAX_UID_GID
 from model import BoundDirectory, OverlayConfig, SandboxConfig
 from model.config_group import ConfigGroup
 from model.ui_field import ConfigBase, Field, UIField
-
-# Valid range for Unix UID/GID values
-MAX_UID_GID = 65535
 
 
 class ProfileValidationError(Exception):
     """Raised when profile validation fails."""
 
 
-def validate_config(config: SandboxConfig) -> list[str]:
+def validate_config(config: SandboxConfig, profile_name: str | None = None) -> list[str]:
     """Validate a SandboxConfig and return list of warnings.
+
+    Args:
+        config: The SandboxConfig to validate
+        profile_name: Optional profile name for context in error messages
 
     Raises ProfileValidationError for critical issues.
     Returns list of non-critical warnings.
     """
     warnings = []
+    prefix = f"Profile '{profile_name}': " if profile_name else ""
 
     # Validate UID/GID range (0-65535)
     if config.user.uid is not None:
         if not (0 <= config.user.uid <= MAX_UID_GID):
             raise ProfileValidationError(
-                f"Invalid UID: {config.user.uid} (must be 0-{MAX_UID_GID})"
+                f"{prefix}Invalid UID: {config.user.uid} (must be 0-{MAX_UID_GID})"
             )
 
     if config.user.gid is not None:
         if not (0 <= config.user.gid <= MAX_UID_GID):
             raise ProfileValidationError(
-                f"Invalid GID: {config.user.gid} (must be 0-{MAX_UID_GID})"
+                f"{prefix}Invalid GID: {config.user.gid} (must be 0-{MAX_UID_GID})"
             )
 
     # Validate dev_mode is a known value
@@ -59,14 +63,18 @@ def validate_config(config: SandboxConfig) -> list[str]:
         if overlay.mode == "persistent" and not overlay.write_dir:
             warnings.append(f"Overlay {i}: persistent mode requires write_dir")
         if overlay.mode == "persistent" and overlay.write_dir:
-            # Check for conflicting paths
+            # Check for conflicting paths - these are critical misconfigs
             src = Path(overlay.source).resolve() if overlay.source else None
             dest = Path(overlay.dest).resolve() if overlay.dest else None
             write = Path(overlay.write_dir).resolve()
             if src and write == src:
-                warnings.append(f"Overlay {i}: write_dir cannot be same as source")
+                raise ProfileValidationError(
+                    f"Overlay {i}: write_dir cannot be same as source"
+                )
             if dest and write == dest:
-                warnings.append(f"Overlay {i}: write_dir cannot be same as mount point")
+                raise ProfileValidationError(
+                    f"Overlay {i}: write_dir cannot be same as mount point"
+                )
 
     # Warn about non-existent bound directories (don't fail - they might be created later)
     for bd in config.bound_dirs:
@@ -137,6 +145,8 @@ def serialize(obj: Any) -> dict | list | str | int | float | bool | None:
         return result
 
     # Handle other types
+    if isinstance(obj, Enum):
+        return obj.value
     if isinstance(obj, Path):
         return str(obj)
     if isinstance(obj, set):
@@ -231,6 +241,10 @@ def _deserialize_value(value: Any, field_type: type) -> Any:
     origin = get_origin(field_type)
     args = get_args(field_type)
 
+    # Handle Enum types
+    if field_type is not None and isinstance(field_type, type) and issubclass(field_type, Enum):
+        return field_type(value)
+
     # Handle ConfigGroup - don't deserialize here, handled specially in SandboxConfig
     if field_type is ConfigGroup:
         return None  # Will be reconstructed by SandboxConfig.__post_init__
@@ -293,7 +307,7 @@ class Profile:
         """
         data = json.loads(self.path.read_text())
         config = deserialize(SandboxConfig, data, command=command)
-        warnings = validate_config(config)
+        warnings = validate_config(config, profile_name=self.name)
         return config, warnings
 
     def delete(self) -> None:

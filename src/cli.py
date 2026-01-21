@@ -5,6 +5,7 @@ import os
 import shlex
 import sys
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -12,11 +13,14 @@ if TYPE_CHECKING:
     from model import SandboxConfig
 
 from app import BubblewrapTUI
+from commandoutput import print_execution_header
 from installer import check_for_updates, do_install, do_update, show_update_notice
 from model import BoundDirectory, SandboxConfig
+from net import check_pasta, execute_with_audit, execute_with_network_filter, get_install_instructions
 from profiles import BUI_PROFILES_DIR, Profile
 from sandbox import (
     BUI_STATE_DIR,
+    clean_temp_files,
     find_executables,
     install_sandbox_binary,
     list_overlays,
@@ -26,10 +30,37 @@ from sandbox import (
     uninstall_sandbox,
 )
 
-BUI_VERSION = "3.4.0"
+BUI_VERSION = "0.5.0"
 
 # Global to store update message for display after TUI exits
 _update_available: str | None = None
+
+
+@dataclass
+class ParsedArgs:
+    """Parsed command-line arguments."""
+
+    command: list[str]
+    profile_path: str | None
+    sandbox_name: str | None
+    bind_cwd: bool
+    bind_paths: list[Path]
+    bind_env: list[str]
+
+
+def print_error_box(title: str, *lines: str) -> None:
+    """Print a formatted error box to stderr.
+
+    Args:
+        title: The error title (will be prefixed with "Error: ")
+        *lines: Additional lines to print in the box
+    """
+    print("=" * 60, file=sys.stderr)
+    print(f"Error: {title}", file=sys.stderr)
+    print("", file=sys.stderr)
+    for line in lines:
+        print(line, file=sys.stderr)
+    print("=" * 60, file=sys.stderr)
 
 
 def load_profile(profile_name: str, command: list[str]) -> SandboxConfig:
@@ -114,6 +145,7 @@ class BuiHelpFormatter(argparse.RawDescriptionHelpFormatter):
             "  bui --sandbox <name> --uninstall      Remove sandbox and wrapper scripts",
             "  bui --list-sandboxes                  List installed sandboxes",
             "  bui --list-overlays                   List overlay directories",
+            "  bui --clean                           Remove temporary network filter files",
             "",
             "Examples:",
             "",
@@ -166,6 +198,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--list-sandboxes", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--list-overlays", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--list-profiles", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--clean", action="store_true", help=argparse.SUPPRESS)
 
     # Command to run (everything after --)
     parser.add_argument("command", nargs="*", help=argparse.SUPPRESS)
@@ -173,10 +206,11 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def parse_args() -> tuple[list[str], str | None, str | None, bool, list[Path], list[str]]:
+def parse_args() -> ParsedArgs:
     """Parse command line arguments.
 
-    Returns: (command, profile_path, sandbox_name, bind_cwd, bind_paths, bind_env)
+    Returns:
+        ParsedArgs with command, profile, sandbox, and bind options.
     """
     parser = create_parser()
 
@@ -217,6 +251,10 @@ def parse_args() -> tuple[list[str], str | None, str | None, bool, list[Path], l
         list_profiles()
         sys.exit(0)
 
+    if args.clean:
+        clean_temp_files()
+        sys.exit(0)
+
     # Sandbox management actions (require --sandbox)
     if args.install and args.sandbox:
         profile = args.profile if args.profile else "untrusted"
@@ -253,7 +291,26 @@ def parse_args() -> tuple[list[str], str | None, str | None, bool, list[Path], l
     # Resolve bind paths
     bind_paths = [Path(p).expanduser().resolve() for p in args.bind]
 
-    return command, args.profile, args.sandbox, args.bind_cwd, bind_paths, args.bind_env
+    return ParsedArgs(
+        command=command,
+        profile_path=args.profile,
+        sandbox_name=args.sandbox,
+        bind_cwd=args.bind_cwd,
+        bind_paths=bind_paths,
+        bind_env=args.bind_env,
+    )
+
+
+def cleanup_fds(fd_map: dict[str, int]) -> None:
+    """Close all file descriptors in the map.
+
+    Used to clean up FDs on error paths before exit.
+    """
+    for fd in fd_map.values():
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
 def setup_virtual_user_fds(config: SandboxConfig) -> dict[str, int]:
@@ -321,35 +378,62 @@ def apply_sandbox_to_overlays(config: SandboxConfig, sandbox_name: str) -> list[
     return overlay_dirs
 
 
+def validate_network_filter(config: SandboxConfig) -> bool:
+    """Validate network filtering requirements.
+
+    Returns True if network filtering can proceed, False if there's an error.
+    """
+    nf = config.network_filter
+    if not nf.requires_pasta():
+        return True
+
+    if not check_pasta():
+        print_error_box(
+            "Network filtering requires pasta",
+            f"Install with: {get_install_instructions()}",
+            "",
+            "Or disable network filtering in the profile.",
+        )
+        return False
+
+    return True
+
+
+def _build_bwrap_command(config: SandboxConfig, fd_map: dict[str, int] | None) -> list[str]:
+    """Helper to build bwrap command from config."""
+    return config.build_command(fd_map)
+
+
 def main() -> None:
     """Main entry point."""
     global _update_available
-    command, profile_path, sandbox_name, bind_cwd, bind_paths, bind_env = parse_args()
+    args = parse_args()
 
     # Check for updates in background (non-blocking, cached for 1 day)
     _update_available = check_for_updates(BUI_VERSION)
 
     # If profile specified, run directly without TUI
-    if profile_path:
-        config = load_profile(profile_path, command)
+    if args.profile_path:
+        config = load_profile(args.profile_path, args.command)
 
         # Apply --bind: add paths as read-only bound directories
-        for path in bind_paths:
+        for path in args.bind_paths:
             config.bound_dirs.append(BoundDirectory(path=path, readonly=True))
 
         # Apply --bind-cwd: add current directory as read-write bound directory
-        if bind_cwd:
+        if args.bind_cwd:
             cwd = Path(os.getcwd())
             config.bound_dirs.append(BoundDirectory(path=cwd, readonly=False))
 
         # Apply --bind-env: set environment variables in sandbox
-        for env_spec in bind_env:
+        for env_spec in args.bind_env:
             if "=" in env_spec:
                 var, value = env_spec.split("=", 1)
                 config.environment.custom_env_vars[var] = value
 
         # Apply sandbox isolation to overlays
         overlay_dirs = []
+        sandbox_name = args.sandbox_name
         user_provided_sandbox = sandbox_name is not None
         if config.overlays:
             # Generate UUID if no sandbox name specified
@@ -359,24 +443,46 @@ def main() -> None:
 
         # Register sandbox metadata (so --install can pick up binds later)
         if user_provided_sandbox:
-            bind_paths_str = [str(p) for p in bind_paths] if bind_paths else None
-            register_sandbox(sandbox_name, profile_path, bind_paths_str, bind_env)
+            bind_paths_str = [str(p) for p in args.bind_paths] if args.bind_paths else None
+            register_sandbox(sandbox_name, args.profile_path, bind_paths_str, args.bind_env)
+
+        # Validate network filtering requirements
+        if not validate_network_filter(config):
+            sys.exit(1)
 
         fd_map = setup_virtual_user_fds(config)
-        cmd = config.build_command(fd_map if fd_map else None)
-        print("=" * 60)
-        print("Executing:")
-        print(" ".join(cmd))
-        if overlay_dirs:
-            print(f"\nSandbox: {sandbox_name}")
-            print("Overlay writes will go to:")
-            for d in overlay_dirs:
-                print(f"  {d}/")
-        print("=" * 60 + "\n")
-        os.execvp("bwrap", cmd)
+
+        # Dispatch based on network mode
+        if config.network_filter.is_audit_mode():
+            # Network auditing - capture traffic and show summary after exit
+            execute_with_audit(
+                config,
+                fd_map if fd_map else None,
+                _build_bwrap_command,
+                sandbox_name if overlay_dirs else None,
+                overlay_dirs,
+            )
+        elif config.network_filter.is_filter_mode():
+            # Network filtering - apply iptables rules
+            execute_with_network_filter(
+                config,
+                fd_map if fd_map else None,
+                _build_bwrap_command,
+                sandbox_name if overlay_dirs else None,
+                overlay_dirs,
+            )
+        else:
+            # Normal execution without pasta
+            cmd = config.build_command(fd_map if fd_map else None)
+            print_execution_header(
+                cmd,
+                sandbox_name=sandbox_name if overlay_dirs else None,
+                overlay_dirs=overlay_dirs,
+            )
+            os.execvp("bwrap", cmd)
 
     # Otherwise show TUI for configuration
-    app = BubblewrapTUI(command, version=BUI_VERSION)
+    app = BubblewrapTUI(args.command, version=BUI_VERSION)
     app.run()
 
     # Show update notice after TUI exits
@@ -384,14 +490,32 @@ def main() -> None:
         show_update_notice(BUI_VERSION, _update_available)
 
     if app._execute_command:
-        fd_map = setup_virtual_user_fds(app.config)
-        cmd = app.config.build_command(fd_map if fd_map else None)
-        print("=" * 60)
-        print("Executing:")
-        print(" ".join(cmd))
-        print("=" * 60 + "\n")
+        # Validate network filtering requirements
+        if not validate_network_filter(app.config):
+            sys.exit(1)
 
-        os.execvp("bwrap", cmd)
+        fd_map = setup_virtual_user_fds(app.config)
+
+        # Dispatch based on network mode
+        if app.config.network_filter.is_audit_mode():
+            # Network auditing - capture traffic and show summary after exit
+            execute_with_audit(
+                app.config,
+                fd_map if fd_map else None,
+                _build_bwrap_command,
+            )
+        elif app.config.network_filter.is_filter_mode():
+            # Network filtering - apply iptables rules
+            execute_with_network_filter(
+                app.config,
+                fd_map if fd_map else None,
+                _build_bwrap_command,
+            )
+        else:
+            # Normal execution without pasta
+            cmd = app.config.build_command(fd_map if fd_map else None)
+            print_execution_header(cmd)
+            os.execvp("bwrap", cmd)
     else:
         print("Cancelled.")
         sys.exit(0)

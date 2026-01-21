@@ -144,3 +144,24 @@ ADD_BTN = "add-btn"
 
 # Quick shortcuts section (directories tab)
 QUICK_SHORTCUTS_SECTION = "quick-shortcuts-section"
+
+# Network filtering tab IDs
+NETWORK_TAB_CONTENT = "network-tab-content"
+NETWORK_MODE_RADIO = "network-mode-radio"
+PASTA_STATUS = "pasta-status"
+HOSTNAME_MODE_RADIO = "hostname-mode-radio"
+HOSTNAME_LIST = "hostname-list"
+HOSTNAME_INPUT = "hostname-input"
+ADD_HOSTNAME_BTN = "add-hostname-btn"
+IP_MODE_RADIO = "ip-mode-radio"
+CIDR_LIST = "cidr-list"
+CIDR_INPUT = "cidr-input"
+ADD_CIDR_BTN = "add-cidr-btn"
+# Expose ports (sandbox → host)
+EXPOSE_PORT_LIST = "expose-port-list"
+EXPOSE_PORT_INPUT = "expose-port-input"
+ADD_EXPOSE_PORT_BTN = "add-expose-port-btn"
+# Host ports (host → sandbox)
+HOST_PORT_LIST = "host-port-list"
+HOST_PORT_INPUT = "host-port-input"
+ADD_HOST_PORT_BTN = "add-host-port-btn"

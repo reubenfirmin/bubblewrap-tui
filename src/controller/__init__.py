@@ -10,6 +10,7 @@ from controller.directories import DirectoryEventsMixin
 from controller.overlays import OverlayEventsMixin
 from controller.environment import EnvironmentEventsMixin
 from controller.execute import ExecuteEventsMixin
+from controller.network import NetworkEventsMixin
 
 __all__ = [
     # Sync
@@ -20,5 +21,6 @@ __all__ = [
     "DirectoryEventsMixin",
     "EnvironmentEventsMixin",
     "ExecuteEventsMixin",
+    "NetworkEventsMixin",
     "OverlayEventsMixin",
 ]

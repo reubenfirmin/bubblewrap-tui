@@ -8,7 +8,7 @@ from pathlib import Path
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import Container, Horizontal
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widgets import (
@@ -16,6 +16,7 @@ from textual.widgets import (
     Checkbox,
     Input,
     Label,
+    RadioSet,
     Static,
     TabbedContent,
     TabPane,
@@ -23,6 +24,8 @@ from textual.widgets import (
 
 from model import (
     BoundDirectory,
+    FilterMode,
+    NetworkMode,
     OverlayConfig,
     SandboxConfig,
 )
@@ -32,6 +35,7 @@ from controller import (
     DirectoryEventsMixin,
     EnvironmentEventsMixin,
     ExecuteEventsMixin,
+    NetworkEventsMixin,
     OverlayEventsMixin,
 )
 from detection import is_path_covered, resolve_command_executable
@@ -42,6 +46,7 @@ from ui import (
     OverlayItem,
     compose_directories_tab,
     compose_environment_tab,
+    compose_network_tab,
     compose_overlays_tab,
     compose_sandbox_tab,
     compose_summary_tab,
@@ -73,9 +78,10 @@ APP_CSS = (Path(__file__).parent / "ui" / "styles.css").read_text()
 
 class BubblewrapTUI(
     DirectoryEventsMixin,
-    OverlayEventsMixin,
     EnvironmentEventsMixin,
     ExecuteEventsMixin,
+    NetworkEventsMixin,
+    OverlayEventsMixin,
     App,
 ):
     """TUI for configuring bubblewrap sandboxes."""
@@ -160,9 +166,7 @@ class BubblewrapTUI(
         self.config.command[0] = str(resolved_path)
 
     def compose(self) -> ComposeResult:
-        log.info("compose() called")
-        log.info(f"bound_dirs: {self.config.bound_dirs}")
-        log.info(f"env vars count: {len(os.environ)}")
+        log.debug("compose() starting with %d bound_dirs", len(self.config.bound_dirs))
 
         yield Horizontal(
             Label(f"bui - {' '.join(self.config.command)}", id="header-title"),
@@ -184,6 +188,24 @@ class BubblewrapTUI(
 
             with TabPane("Sandbox", id="sandbox-tab"):
                 yield from compose_sandbox_tab(self._on_dev_mode_change)
+
+            with TabPane("Network", id="network-tab"):
+                yield from compose_network_tab(
+                    self.config.network_filter,
+                    self.config.network.share_net,
+                    self.config.network.bind_resolv_conf,
+                    self.config.network.bind_ssl_certs,
+                    self._on_hostname_mode_change,
+                    self._on_hostname_add,
+                    self._on_hostname_remove,
+                    self._on_ip_mode_change,
+                    self._on_cidr_add,
+                    self._on_cidr_remove,
+                    self._on_expose_port_add,
+                    self._on_expose_port_remove,
+                    self._on_host_port_add,
+                    self._on_host_port_remove,
+                )
 
             with TabPane("Overlays", id="overlays-tab"):
                 yield from compose_overlays_tab()
@@ -283,13 +305,22 @@ class BubblewrapTUI(
     @on(Checkbox.Changed)
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         """Handle checkbox changes."""
-        # Auto-enable DNS and SSL certs when network is toggled on
-        if event.checkbox.id == ids.OPT_NET and event.value:
+        # Handle network access toggle - show/hide full network options
+        if event.checkbox.id == ids.OPT_NET:
             try:
-                self.query_one(css(ids.OPT_RESOLV_CONF), Checkbox).value = True
-                self.query_one(css(ids.OPT_SSL_CERTS), Checkbox).value = True
+                full_net_opts = self.query_one("#full-network-options", Container)
+                network_mode_section = self.query_one("#network-mode-section", Container)
+                if event.value:
+                    full_net_opts.remove_class("hidden")
+                    network_mode_section.remove_class("hidden")
+                    # Auto-enable DNS and SSL certs
+                    self.query_one(css(ids.OPT_RESOLV_CONF), Checkbox).value = True
+                    self.query_one(css(ids.OPT_SSL_CERTS), Checkbox).value = True
+                else:
+                    full_net_opts.add_class("hidden")
+                    network_mode_section.add_class("hidden")
             except NoMatches:
-                log.debug("DNS/SSL checkboxes not found for auto-enable")
+                log.debug("Network options containers not found")
         # Show/hide UID/GID options when user namespace is toggled
         if event.checkbox.id == ids.OPT_UNSHARE_USER:
             try:
@@ -329,6 +360,19 @@ class BubblewrapTUI(
         self._sync_config_from_ui()
         self._update_preview()
 
+    @on(RadioSet.Changed, f"#{ids.NETWORK_MODE_RADIO}")
+    def on_network_mode_changed(self, event: RadioSet.Changed) -> None:
+        """Handle network mode radio change."""
+        if event.pressed is None:
+            return
+        button_id = event.pressed.id
+        if button_id == "network-mode-off":
+            self._on_network_mode_change(NetworkMode.OFF)
+        elif button_id == "network-mode-filter":
+            self._on_network_mode_change(NetworkMode.FILTER)
+        elif button_id == "network-mode-audit":
+            self._on_network_mode_change(NetworkMode.AUDIT)
+
     @on(Input.Changed)
     def on_input_changed(self, event: Input.Changed) -> None:
         """Handle input changes."""
@@ -360,6 +404,27 @@ class BubblewrapTUI(
         """Handle /dev mode change."""
         self.config.filesystem.dev_mode = mode
 
+    # =========================================================================
+    # Network Filtering Callbacks
+    # =========================================================================
+
+    def _on_network_mode_change(self, mode: NetworkMode) -> None:
+        """Handle network mode change (off/filter/audit)."""
+        self.config.network_filter.mode = mode
+        # Toggle visibility of filter options (only shown in filter mode)
+        try:
+            filter_opts = self.query_one("#filter-options", Container)
+            filter_opts_right = self.query_one("#filter-options-right", Container)
+            if mode == NetworkMode.FILTER:
+                filter_opts.remove_class("hidden")
+                filter_opts_right.remove_class("hidden")
+            else:
+                filter_opts.add_class("hidden")
+                filter_opts_right.add_class("hidden")
+        except NoMatches:
+            pass
+        self._update_preview()
+
     def _update_home_overlay_label(self) -> None:
         """Update the home overlay checkbox label and explanation based on uid/username."""
         try:
@@ -381,6 +446,13 @@ class BubblewrapTUI(
 
     def _handle_quick_shortcut_change(self, field, enabled: bool) -> None:
         """Handle quick shortcut checkbox toggle - sync with bound dirs list.
+
+        Quick shortcuts exist in two places:
+        1. Checkboxes in _system_paths_group (UI state)
+        2. Entries in bound_dirs list (data model)
+
+        These are kept in sync by this method (UI → data) and by
+        sync_shortcuts_from_bound_dirs() (data → UI, used when loading profiles).
 
         Args:
             field: UIField with shortcut_path attribute
@@ -593,7 +665,13 @@ class BubblewrapTUI(
         self._sync_manager = ConfigSyncManager(self, self.config)
 
     def _on_profile_loaded(self) -> None:
-        """Called when a profile is loaded (sync UI)."""
+        """Called when a profile is loaded (sync UI).
+
+        Guards against being called before widgets are mounted.
+        """
+        if not getattr(self, '_mounted', False):
+            self.call_later(self._on_profile_loaded)
+            return
         # First, derive checkbox states from bound_dirs (inverse sync)
         # This ensures Quick Shortcuts checkboxes reflect what's in the profile's bound_dirs
         self._get_sync_manager().sync_shortcuts_from_bound_dirs()

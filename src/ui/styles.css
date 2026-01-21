@@ -508,3 +508,102 @@ SaveProfileModal {
     width: 100%;
     margin-bottom: 1;
 }
+
+/* Network Filtering Tab */
+#network-tab-content {
+    padding: 1;
+}
+
+#full-network-options {
+    height: auto;
+    padding-left: 2;
+}
+
+#filter-options,
+#filter-options-right {
+    height: auto;
+}
+
+.network-hint {
+    color: $text-muted;
+    height: auto;
+    margin-bottom: 1;
+}
+
+.network-warning {
+    color: $warning;
+    background: $warning 10%;
+    height: auto;
+    margin-bottom: 1;
+    padding: 0 1;
+}
+
+PastaStatus {
+    height: auto;
+    margin-bottom: 1;
+}
+
+FilterModeRadio {
+    height: auto;
+    margin-bottom: 1;
+}
+
+FilterModeRadio RadioSet {
+    layout: horizontal;
+    height: auto;
+    width: 100%;
+}
+
+FilterModeRadio RadioButton {
+    width: auto;
+    margin-right: 2;
+}
+
+FilterList,
+PortList {
+    height: auto;
+    width: auto;
+    max-width: 50;
+}
+
+.filter-list-scroll {
+    height: auto;
+    max-height: 10;
+    min-height: 3;
+    border: solid $surface-lighten-2;
+    margin-bottom: 1;
+}
+
+FilterListItem,
+PortListItem {
+    layout: horizontal;
+    height: 3;
+    width: auto;
+    align: left middle;
+}
+
+.filter-item-label {
+    width: 1fr;
+    height: 3;
+    content-align: left middle;
+    padding: 0 1;
+}
+
+.filter-remove-btn {
+    width: 5;
+    min-width: 5;
+}
+
+.filter-add-row {
+    height: auto;
+    width: auto;
+}
+
+.filter-add-row Input {
+    width: 30;
+}
+
+.filter-add-row Button {
+    width: 5;
+    min-width: 5;
+}

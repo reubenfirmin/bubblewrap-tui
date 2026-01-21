@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from model.config import Config
 from model.config_group import ConfigGroup
 from model.ui_field import UIField, Field
+
+if TYPE_CHECKING:
+    from model.network_filter import NetworkFilter
 
 
 def _named(name: str, field: UIField) -> UIField:
@@ -129,9 +133,11 @@ synthetic_passwd = _named("synthetic_passwd", UIField(
 ))
 
 # overlay_home is UI-only (like directory shortcuts) - adds/removes from overlays list
+# Note: The label "Overlay home directory" is generic; the actual label is updated
+# at runtime by _update_home_overlay_label() based on uid/username (e.g., "/root" or "/home/user")
 overlay_home = _named("overlay_home", UIField(
     bool, False, "opt-overlay-home",
-    "Overlay /root", "Ephemeral home directory",
+    "Overlay home directory", "Ephemeral home directory",
 ))
 
 # UID/GID/Username fields (data fields, not standard checkboxes)
@@ -334,14 +340,28 @@ def _vfs_to_summary(group: ConfigGroup) -> str | None:
 # Note: _system_paths_to_summary removed - system paths are now shown via bound_dirs summary
 
 
-def _network_to_args(group: ConfigGroup) -> list[str]:
-    """Custom to_args for network (handles DNS/SSL path detection)."""
+def _network_to_args(group: ConfigGroup, network_filter: "NetworkFilter | None" = None) -> list[str]:
+    """Custom to_args for network (handles DNS/SSL path detection and filtering).
+
+    Args:
+        group: The network ConfigGroup
+        network_filter: Optional NetworkFilter config for pasta filtering
+    """
     from detection import find_dns_paths, find_ssl_cert_paths
 
     args = []
-    if group.get("share_net"):
+
+    # Check if network filtering is active (uses pasta)
+    filtering_active = network_filter and network_filter.requires_pasta()
+
+    if filtering_active:
+        # Network filtering requires isolated network namespace (pasta provides filtered network)
+        args.append("--unshare-net")
+    elif group.get("share_net"):
+        # Full network access
         args.append("--share-net")
 
+    # DNS and SSL bindings are needed for both full access and filtered network
     if group.get("bind_resolv_conf"):
         for dns_path in find_dns_paths():
             args.extend(["--ro-bind", dns_path, dns_path])
@@ -378,7 +398,7 @@ def _desktop_to_args(group: ConfigGroup) -> list[str]:
 
     if group.get("allow_display"):
         display_info = detect_display_server()
-        for display_path in display_info["paths"]:
+        for display_path in display_info.paths:
             args.extend(["--ro-bind", display_path, display_path])
 
     # Note: bind_user_config is now handled via Quick Shortcuts -> bound_dirs
@@ -394,7 +414,7 @@ def _desktop_to_summary(group: ConfigGroup) -> str | None:
 
     if group.get("allow_display"):
         display_info = detect_display_server()
-        display_type = display_info["type"]
+        display_type = display_info.type
         if display_type == "x11":
             lines.append("Display: X11 — WARNING: X11 provides NO isolation, sandbox can keylog other apps")
         elif display_type == "wayland":

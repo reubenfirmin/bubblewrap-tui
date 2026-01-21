@@ -482,11 +482,12 @@ class TestDesktopIntegration:
     @patch("detection.detect_display_server")
     def test_allow_display(self, mock_display):
         """allow_display binds display paths."""
-        mock_display.return_value = {
-            "type": "x11",
-            "paths": ["/tmp/.X11-unix"],
-            "env_vars": ["DISPLAY"],
-        }
+        from detection import DisplayServerInfo
+        mock_display.return_value = DisplayServerInfo(
+            type="x11",
+            paths=["/tmp/.X11-unix"],
+            env_vars=["DISPLAY"],
+        )
         config = make_config(desktop={"allow_display": True})
         args = BubblewrapSerializer(config).serialize()
         assert "/tmp/.X11-unix" in args

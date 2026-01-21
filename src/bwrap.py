@@ -84,7 +84,13 @@ class BubblewrapSerializer:
         ]
 
     def _has_home_overlay(self, home: str) -> bool:
-        """Check if there's an overlay for the home directory."""
+        """Check if either the user's home or /root has an overlay.
+
+        /root is checked because it's the default home for UID 0.
+        When synthetic_passwd is enabled, we need to know if there's already
+        an overlay handling home directory creation to avoid creating duplicate
+        directories.
+        """
         for ov in self.config.overlays:
             if ov.dest == home or ov.dest == "/root":
                 return True
@@ -141,6 +147,9 @@ class BubblewrapSerializer:
             # Special handling for process group (needs isolation group)
             if group.name == "process":
                 args.extend(self._get_process_args())
+            # Special handling for network group (needs network_filter)
+            elif group.name == "network":
+                args.extend(self._get_network_args())
             else:
                 args.extend(group.to_args())
 
@@ -171,6 +180,11 @@ class BubblewrapSerializer:
         from model.groups import _process_to_args
         return _process_to_args(self.config._process_group, self.config._isolation_group)
 
+    def _get_network_args(self) -> list[str]:
+        """Get network args (checks network filtering)."""
+        from model.groups import _network_to_args
+        return _network_to_args(self.config._network_group, self.config.network_filter)
+
     def serialize_colored(self) -> str:
         """Build the command with Rich color markup, rotating colors by group."""
         parts = ["[bold]bwrap[/bold]"]
@@ -181,6 +195,9 @@ class BubblewrapSerializer:
             # Special handling for process group
             if group.name == "process":
                 args = self._get_process_args()
+            # Special handling for network group
+            elif group.name == "network":
+                args = self._get_network_args()
             else:
                 args = group.to_args()
 
@@ -228,7 +245,24 @@ class BubblewrapSerializer:
         for arg in self.config.command:
             parts.append(shlex.quote(arg))
 
-        return " ".join(parts)
+        result = " ".join(parts)
+
+        # Add pasta command if network filtering is active
+        nf = self.config.network_filter
+        if nf.requires_pasta():
+            from net.pasta import generate_pasta_args
+            color = COLORS[color_idx % len(COLORS)]
+            pasta_parts = [f"[bold {color}]pasta[/]"]
+            pasta_args = generate_pasta_args(nf)
+            # Skip first element (pasta itself) since we handle it specially
+            for arg in pasta_args[1:]:
+                pasta_parts.append(f"[{color}]{arg}[/]")
+            # Add placeholder for the bwrap command
+            pasta_parts.append("[dim]--[/]")
+            pasta_parts.append("[dim]<bwrap...>[/]")
+            result += "\n\n" + " ".join(pasta_parts)
+
+        return result
 
 
 class BubblewrapSummarizer:
@@ -284,6 +318,13 @@ class BubblewrapSummarizer:
                 lines.append(f"• User directories (read-only): {', '.join(ro_dirs)} — sandbox cannot modify")
             if rw_dirs:
                 lines.append(f"• User directories (read-write): {', '.join(rw_dirs)} — sandbox can modify these files")
+
+        # Network filtering
+        nf = self.config.network_filter
+        if nf.requires_pasta():
+            lines.append("• Network filtering (pasta):")
+            for summary_line in nf.get_filtering_summary():
+                lines.append(f"  - {summary_line}")
 
         # Command
         lines.append(f"• Running: {' '.join(self.config.command)}")
@@ -361,6 +402,15 @@ class BubblewrapSummarizer:
                 lines.append(f"[{color}]• User directories (read-only): {', '.join(ro_dirs)} — sandbox cannot modify[/]")
             if rw_dirs:
                 lines.append(f"[{color}]• User directories (read-write): {', '.join(rw_dirs)} — sandbox can modify these files[/]")
+
+        # Network filtering
+        nf = self.config.network_filter
+        if nf.requires_pasta():
+            color = COLORS[color_idx % len(COLORS)]
+            color_idx += 1
+            lines.append(f"[{color}]• Network filtering (pasta):[/]")
+            for summary_line in nf.get_filtering_summary():
+                lines.append(f"[{color}]  - {summary_line}[/]")
 
         # Command (white, not colored - it's what the user asked to run)
         lines.append(f"• Running: {' '.join(self.config.command)}")

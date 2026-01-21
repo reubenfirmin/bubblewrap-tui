@@ -7,7 +7,12 @@ import pytest
 
 from model import (
     BoundDirectory,
+    FilterMode,
+    HostnameFilter,
+    IPFilter,
+    NetworkFilter,
     OverlayConfig,
+    PortForwarding,
     SandboxConfig,
 )
 
@@ -133,4 +138,37 @@ def overlay_persistent():
         dest="/persist",
         mode="persistent",
         write_dir="/var/persist-writes",
+    )
+
+
+@pytest.fixture
+def network_filter_whitelist():
+    """A NetworkFilter with whitelist mode."""
+    return NetworkFilter(
+        enabled=True,
+        hostname_filter=HostnameFilter(
+            mode=FilterMode.WHITELIST,
+            hosts=["github.com", "registry.npmjs.org"],
+        ),
+        ip_filter=IPFilter(
+            mode=FilterMode.OFF,
+            cidrs=[],
+        ),
+        port_forwarding=PortForwarding(host_ports=[5432, 6379]),
+    )
+
+
+@pytest.fixture
+def network_filter_blacklist():
+    """A NetworkFilter with blacklist mode."""
+    return NetworkFilter(
+        enabled=True,
+        hostname_filter=HostnameFilter(
+            mode=FilterMode.OFF,
+            hosts=[],
+        ),
+        ip_filter=IPFilter(
+            mode=FilterMode.BLACKLIST,
+            cidrs=["10.0.0.0/8", "192.168.0.0/16"],
+        ),
     )

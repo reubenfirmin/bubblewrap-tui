@@ -12,8 +12,14 @@ Instead of memorizing dozens of `bwrap` flags, visually configure your sandbox a
 - [Quick Start](#quick-start)
 - [Profiles](#profiles)
 - [Managed Sandboxes](#managed-sandboxes)
-  - [Safe Curl|Bash - Installing Deno](#safe-curlbash---installing-deno)
+  - [Safe curl | bash - Installing Deno](#safe-curl--bash---installing-deno)
   - [Constraining Agents - Sandboxing Claude Code](#constraining-agents---sandboxing-claude-code)
+- [Network Filtering](#network-filtering)
+  - [Why pasta?](#why-pasta)
+  - [How filtering works](#how-filtering-works)
+  - [Hostname resolution](#hostname-resolution)
+  - [Audit mode](#audit-mode)
+  - [Requirements](#requirements-1)
 - [Development](#development)
 - [License](#license)
 
@@ -95,7 +101,7 @@ For applications you want to install and run repeatedly in isolation, bui provid
 - Isolating development tools from your system
 - Running AI coding assistants with restricted access
 
-### Safe Curl|Bash - Installing Deno
+### Safe curl | bash - Installing Deno
 
 Install Deno in an isolated sandbox:
 
@@ -233,6 +239,53 @@ Removed: /home/user/.local/state/bui/overlays/deno/
 bui --sandbox myapp --bind-env "TERM=$TERM" -- myapp
 ```
 
+## Network Filtering
+
+Network filtering uses [pasta](https://passt.top/) (part of passt) to create an isolated network namespace, then applies iptables rules inside that namespace.
+
+### Why pasta?
+
+Creating a network namespace normally requires root privileges. Pasta provides user-space networking without requiring `CAP_SYS_ADMIN` or root access. In spawn mode, pasta creates the namespace and runs your command inside it with full network connectivity.
+
+### How filtering works
+
+1. Pasta creates an isolated user+network namespace
+2. An init script runs inside with `CAP_NET_ADMIN` to apply iptables rules
+3. The capability is dropped before your command executes
+4. Your command runs unprivileged and cannot modify the firewall rules
+
+This ensures filtering decisions made at launch cannot be bypassed by the sandboxed application.
+
+### Hostname resolution
+
+Hostnames are resolved to IP addresses **at sandbox startup**. This is a fundamental limitation:
+
+- Iptables rules are static - they don't support hostname-based filtering
+- DNS resolution is dynamic - `github.com` might resolve to different IPs over time
+- The sandbox's isolated namespace makes runtime DNS monitoring impractical without a proxy
+
+For most use cases this works fine. If a service changes IP during execution, traffic to the new IP won't match your rules. For strict security requirements, use IP/CIDR filters instead of hostnames.
+
+### Audit mode
+
+Audit mode captures all network traffic to a pcap file without filtering. After the sandbox exits, a summary shows:
+
+- Unique destinations contacted
+- Bytes sent/received per destination
+- Hostname mappings (from observed DNS responses)
+
+The pcap file can be opened in Wireshark for detailed analysis.
+
+### Requirements
+
+Network filtering requires:
+- `pasta` (install the `passt` package)
+- `iptables` (for rule application)
+- `ip6tables` (only if filtering IPv6 traffic)
+- `setpriv` or `capsh` (for dropping capabilities)
+
+The TUI shows installation commands if dependencies are missing.
+
 ## Development
 
 ```bash
@@ -251,6 +304,51 @@ uv run --with pytest --with pytest-cov --with pytest-asyncio --with textual pyte
 # With coverage
 uv run --with pytest --with pytest-cov --with pytest-asyncio --with textual pytest tests/ --cov=src --cov-report=term-missing
 ```
+
+### Code Layout
+
+```
+src/
+├── cli.py              # Entry point, argument parsing
+├── app.py              # Main Textual App (composes UI, orchestrates mixins)
+├── bwrap.py            # bwrap command generation and execution
+├── profiles.py         # Profile save/load
+├── detection.py        # Path detection and resolution
+│
+├── net/                # Network filtering module
+│   ├── __init__.py     # Module exports
+│   ├── pasta.py        # pasta network namespace wrapper
+│   ├── iptables.py     # iptables rule generation
+│   └── utils.py        # Hostname resolution, validation, etc.
+│
+├── model/              # Data models (what gets configured)
+│   ├── config.py       # SandboxConfig - the main configuration object
+│   ├── network_filter.py
+│   ├── groups.py       # Option groups (filesystem, network, etc.)
+│   └── ...
+│
+├── controller/         # Event handling mixins (mixed into App)
+│   ├── directories.py  # Directory binding events
+│   ├── environment.py  # Environment variable events
+│   ├── network.py      # Network filtering events
+│   ├── overlays.py     # Overlay events
+│   └── execute.py      # Execute/run events
+│
+└── ui/                 # UI components
+    ├── tabs/           # Tab composition (one file per tab)
+    │   ├── directories.py
+    │   ├── network.py
+    │   └── ...
+    ├── widgets.py      # Reusable widgets
+    ├── modals.py       # Modal dialogs
+    ├── ids.py          # Widget IDs
+    └── styles.css      # Textual CSS
+```
+
+**Key patterns:**
+- `model/` defines data structures, `controller/` handles events, `ui/` renders
+- Each tab has a composition function in `ui/tabs/` and event handlers in `controller/`
+- `app.py` inherits from controller mixins and composes the full UI
 
 ## License
 

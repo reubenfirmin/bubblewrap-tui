@@ -14,7 +14,7 @@ from pathlib import Path
 HEADER = '''#!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["textual>=0.89.0"]
+# dependencies = ["textual>=0.89.0", "dpkt>=1.9.8"]
 # ///
 """
 Bubblewrap TUI - A visual interface for configuring bubblewrap sandboxes.
@@ -25,6 +25,7 @@ Usage: bui -- <command> [args...]
 
 # Order matters - modules must be concatenated in dependency order
 MODULE_ORDER = [
+    "constants.py",                   # No dependencies - shared constants
     "detection.py",                   # No dependencies (system detection)
     "environment.py",                 # No dependencies (env var utilities)
     "installer.py",                   # No dependencies (install/update)
@@ -32,10 +33,17 @@ MODULE_ORDER = [
     "model/ui_field.py",              # No dependencies - UIField, Field, ConfigBase
     "model/bound_directory.py",       # No dependencies
     "model/overlay_config.py",        # No dependencies
+    "model/network_filter.py",        # No dependencies - network filtering model
     "model/config_group.py",          # Depends on ui_field
     "model/config.py",                # Depends on config_group
     "model/groups.py",                # Depends on config, config_group, ui_field
-    "model/sandbox_config.py",        # Depends on config_group, groups
+    "model/sandbox_config.py",        # Depends on config_group, groups, network_filter
+    "commandoutput.py",               # Command output formatting
+    "net/utils.py",                   # Network utilities (resolve hostname, validate, etc.)
+    "net/iptables.py",                # iptables rule generation
+    "net/pasta.py",                   # pasta network namespace wrapper
+    "net/audit.py",                   # Network audit/pcap analysis
+    "net/__init__.py",                # Network module exports
     "bwrap.py",                       # Depends on detection, model (serialization/summary)
     "profiles.py",                    # Depends on model (JSON serialization)
     "ui/ids.py",                      # No dependencies - widget ID constants (needed early for ids.X refs)
@@ -46,6 +54,7 @@ MODULE_ORDER = [
     "ui/tabs/environment.py",         # Depends on ui.widgets
     "ui/tabs/overlays.py",            # No widget dependencies
     "ui/tabs/sandbox.py",             # Depends on ui.widgets, model, detection
+    "ui/tabs/network.py",             # Depends on ui.widgets, net
     "ui/tabs/summary.py",             # No dependencies
     "ui/tabs/profiles.py",            # No dependencies
     "ui/modals.py",                   # Profile modals - depends on profiles
@@ -53,21 +62,24 @@ MODULE_ORDER = [
     "controller/directories.py",      # Event handler - depends on ui
     "controller/overlays.py",         # Event handler - depends on ui
     "controller/environment.py",      # Event handler - depends on ui
+    "controller/network.py",          # Event handler - network filtering
     "app.py",                         # Depends on ui, model, profiles, controller, detection
-    "cli.py",                         # Depends on app, model, profiles, installer
+    "cli.py",                         # Depends on app, model, profiles, installer, net
 ]
 
 # Local modules (imports to filter out)
 LOCAL_MODULES = {
-    "detection", "environment", "installer", "sandbox", "profiles", "app", "cli", "styles", "bwrap",
+    "constants", "detection", "environment", "installer", "sandbox", "profiles", "app", "cli", "styles", "bwrap",
+    "commandoutput",
+    "net", "net.utils", "net.iptables", "net.pasta", "net.audit",
     "model",
-    "model.ui_field", "model.bound_directory", "model.overlay_config",
+    "model.ui_field", "model.bound_directory", "model.overlay_config", "model.network_filter",
     "model.config_group", "model.config", "model.groups", "model.sandbox_config",
     "controller", "controller.sync", "controller.directories", "controller.overlays",
-    "controller.environment", "controller.execute",
+    "controller.environment", "controller.execute", "controller.network",
     "ui", "ui.ids", "ui.widgets", "ui.helpers", "ui.modals",
     "ui.tabs", "ui.tabs.directories", "ui.tabs.environment", "ui.tabs.filesystem",
-    "ui.tabs.overlays", "ui.tabs.sandbox", "ui.tabs.summary", "ui.tabs.profiles",
+    "ui.tabs.overlays", "ui.tabs.sandbox", "ui.tabs.network", "ui.tabs.summary", "ui.tabs.profiles",
 }
 
 
