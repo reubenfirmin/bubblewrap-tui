@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 def execute_with_pasta(
     config: "SandboxConfig",
-    fd_map: dict[str, int] | None,
-    build_command_fn: Callable[["SandboxConfig", dict[str, int] | None], list[str]],
+    file_map: dict[str, str] | None,
+    build_command_fn: Callable[["SandboxConfig", dict[str, str] | None], list[str]],
     sandbox_name: str | None = None,
     overlay_dirs: list[str] | None = None,
 ) -> None:
@@ -36,15 +36,24 @@ def execute_with_pasta(
 
     Args:
         config: SandboxConfig with network_filter enabled
-        fd_map: Optional FD mapping for virtual user files
+        file_map: Optional file mapping for virtual user files
         build_command_fn: Function to build bwrap command from config
         sandbox_name: Optional sandbox name for overlay info
         overlay_dirs: Optional list of overlay directories
     """
     import os
+    import signal
+    import subprocess
     import sys
 
     nf = config.network_filter
+
+    # Determine if we need to use seccomp for user namespace blocking
+    # Use seccomp if explicitly enabled OR if network filtering + bwrap's disable_userns
+    # (bwrap's --disable-userns prevents CAP_NET_ADMIN from working)
+    use_seccomp = config.namespace.seccomp_block_userns or (
+        nf.requires_pasta() and config.namespace.disable_userns
+    )
 
     # Validate all required tools are available
     iptables_path, ip6tables_path, is_multicall, cap_drop_template = validate_filtering_requirements(nf)
@@ -52,7 +61,8 @@ def execute_with_pasta(
     # Create init script (resolves hostnames to IPs)
     try:
         init_script_path = create_init_script(
-            nf, config.command, iptables_path, ip6tables_path, is_multicall, cap_drop_template
+            nf, config.command, iptables_path, ip6tables_path, is_multicall, cap_drop_template,
+            use_seccomp=use_seccomp
         )
     except HostnameResolutionError as e:
         print("=" * 60, file=sys.stderr)
@@ -70,11 +80,11 @@ def execute_with_pasta(
     # Build bwrap command with init script as the command
     original_command = config.command
     config.command = [str(init_script_path)]
-    cmd = build_command_fn(config, fd_map)
+    cmd = build_command_fn(config, file_map)
     config.command = original_command
 
-    # Prepare command for pasta execution
-    cmd = prepare_bwrap_command(cmd, tmp_dir)
+    # Prepare command for pasta execution (removes --disable-userns if using seccomp)
+    cmd = prepare_bwrap_command(cmd, tmp_dir, use_seccomp=use_seccomp)
 
     # Print header
     from commandoutput import print_execution_header
@@ -89,14 +99,56 @@ def execute_with_pasta(
     pasta_args = generate_pasta_args(nf)
     full_cmd = pasta_args + ["--"] + cmd
 
-    # Execute: pasta spawns bwrap in the network namespace it creates
-    os.execvp("pasta", full_cmd)
+    # Execute with subprocess so we can handle signals properly
+    # bwrap's --new-session creates a new session/process group, so signals
+    # from the terminal don't reach the sandbox directly. We need to forward them.
+    #
+    # Process tree:
+    #   bui (this process)
+    #     └── pasta (subprocess)
+    #           └── bwrap (--new-session, --die-with-parent)
+    #                 └── init.sh → user command
+    #
+    # When we terminate pasta, bwrap's --die-with-parent will kill bwrap,
+    # and bwrap will kill its children.
+    proc = subprocess.Popen(full_cmd, start_new_session=False)
+
+    def signal_handler(signum: int, frame: object) -> None:
+        """Forward signals to pasta, which will cascade to bwrap via --die-with-parent."""
+        if proc.poll() is None:  # Process still running
+            # Send SIGTERM to pasta to trigger clean shutdown
+            # bwrap's --die-with-parent will cause it to exit when pasta dies
+            try:
+                proc.terminate()  # SIGTERM
+            except ProcessLookupError:
+                pass
+
+    # Install signal handlers to forward SIGINT and SIGTERM
+    original_sigint = signal.signal(signal.SIGINT, signal_handler)
+    original_sigterm = signal.signal(signal.SIGTERM, signal_handler)
+
+    try:
+        exit_code = proc.wait()
+    except KeyboardInterrupt:
+        # Handle case where signal handler didn't catch it
+        proc.terminate()
+        try:
+            exit_code = proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            exit_code = proc.wait()
+    finally:
+        # Restore original signal handlers
+        signal.signal(signal.SIGINT, original_sigint)
+        signal.signal(signal.SIGTERM, original_sigterm)
+
+    sys.exit(exit_code)
 
 
 def execute_with_audit(
     config: "SandboxConfig",
-    fd_map: dict[str, int] | None,
-    build_command_fn: Callable[["SandboxConfig", dict[str, int] | None], list[str]],
+    file_map: dict[str, str] | None,
+    build_command_fn: Callable[["SandboxConfig", dict[str, str] | None], list[str]],
     sandbox_name: str | None = None,
     overlay_dirs: list[str] | None = None,
 ) -> None:
@@ -113,7 +165,7 @@ def execute_with_audit(
 
     Args:
         config: SandboxConfig with network_filter in audit mode
-        fd_map: Optional FD mapping for virtual user files
+        file_map: Optional file mapping for virtual user files
         build_command_fn: Function to build bwrap command from config
         sandbox_name: Optional sandbox name for overlay info
         overlay_dirs: Optional list of overlay directories
@@ -138,7 +190,7 @@ def execute_with_audit(
     pcap_path = nf.audit.pcap_path or (tmp_path / "audit.pcap")
 
     # Build bwrap command
-    cmd = build_command_fn(config, fd_map)
+    cmd = build_command_fn(config, file_map)
 
     # Remove --unshare-net since pasta provides the network namespace
     cmd = [arg for arg in cmd if arg != "--unshare-net"]

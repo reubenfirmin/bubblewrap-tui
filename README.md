@@ -25,7 +25,7 @@ Instead of memorizing dozens of `bwrap` flags, visually configure your sandbox a
 
 ## Status
 
-- Beta quality, moderately tested. That said it doesn't do anything except generate (and run, on demand) a bwrap command, so is mostly harmless. Do your own diligence before trusting the security of critical data to it, and also review bubblewrap CVEs / known issues.
+- Beta quality, moderately tested. That said it does not modify your system (with the exception of ~/.local install and state management of its own files, and creation of files in /tmp when needed to support various combinations of filtering). Do your own diligence before trusting the security of critical data to it, and also review bubblewrap CVEs / known issues.
 - PRs and bug reports welcome. Feature requests will be considered.
 
 ## Requirements

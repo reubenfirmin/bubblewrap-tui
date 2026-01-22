@@ -96,11 +96,11 @@ class BubblewrapSerializer:
                 return True
         return False
 
-    def _serialize_virtual_user_args(self, fd_map: dict[str, int]) -> list[str]:
-        """Serialize virtual user args using pre-created FDs.
+    def _serialize_virtual_user_args(self, file_map: dict[str, str]) -> list[str]:
+        """Serialize virtual user args using pre-created temp files.
 
         Args:
-            fd_map: Mapping of dest_path -> FD number
+            file_map: Mapping of dest_path -> source_file_path
 
         Returns:
             bwrap args for virtual user setup
@@ -118,11 +118,11 @@ class BubblewrapSerializer:
         # Create /etc directory for passwd/group
         args.extend(["--dir", "/etc"])
 
-        # Bind passwd/group from FDs
-        if "/etc/passwd" in fd_map:
-            args.extend(["--ro-bind-data", str(fd_map["/etc/passwd"]), "/etc/passwd"])
-        if "/etc/group" in fd_map:
-            args.extend(["--ro-bind-data", str(fd_map["/etc/group"]), "/etc/group"])
+        # Bind passwd/group from temp files
+        if "/etc/passwd" in file_map:
+            args.extend(["--ro-bind", file_map["/etc/passwd"], "/etc/passwd"])
+        if "/etc/group" in file_map:
+            args.extend(["--ro-bind", file_map["/etc/group"], "/etc/group"])
 
         # If no home overlay exists, we need to create /home/{user}
         # If there's an overlay for home, it handles creating the directory
@@ -134,11 +134,11 @@ class BubblewrapSerializer:
 
         return args
 
-    def serialize(self, fd_map: dict[str, int] | None = None) -> list[str]:
+    def serialize(self, file_map: dict[str, str] | None = None) -> list[str]:
         """Build the complete bwrap command.
 
         Args:
-            fd_map: Optional mapping of dest_path -> FD number for virtual user files
+            file_map: Optional mapping of dest_path -> source_file_path for virtual user files
         """
         args = ["bwrap"]
 
@@ -153,13 +153,13 @@ class BubblewrapSerializer:
             else:
                 args.extend(group.to_args())
 
-        # Overlays (must come before virtual user FD bindings)
+        # Overlays (must come before virtual user file bindings)
         for overlay in self.config.overlays:
             args.extend(overlay.to_args())
 
-        # Virtual user setup (must come AFTER overlays so FD bindings layer on top)
-        if fd_map:
-            args.extend(self._serialize_virtual_user_args(fd_map))
+        # Virtual user setup (must come AFTER overlays so bindings layer on top)
+        if file_map:
+            args.extend(self._serialize_virtual_user_args(file_map))
 
         # Capability drops
         for cap in self.config.drop_caps:
@@ -262,6 +262,15 @@ class BubblewrapSerializer:
             pasta_parts.append("[dim]<bwrap...>[/]")
             result += "\n\n" + " ".join(pasta_parts)
 
+        # Check if seccomp will be used (standalone or with network filter)
+        seccomp_explicit = self.config._isolation_group.get("seccomp_block_userns")
+        seccomp_auto = (
+            nf.requires_pasta() and
+            self.config._isolation_group.get("disable_userns")
+        )
+        if seccomp_explicit or seccomp_auto:
+            result += "\n\n[bold yellow]+ seccomp filter[/] [dim](blocks user namespace creation)[/]"
+
         return result
 
 
@@ -288,6 +297,9 @@ class BubblewrapSummarizer:
             # Special handling for process group
             if group.name == "process":
                 summary = self._get_process_summary()
+            # Special handling for isolation group (needs network_filter for seccomp warning)
+            elif group.name == "isolation":
+                summary = self._get_isolation_summary()
             else:
                 summary = group.to_summary()
 
@@ -319,6 +331,13 @@ class BubblewrapSummarizer:
             if rw_dirs:
                 lines.append(f"• User directories (read-write): {', '.join(rw_dirs)} — sandbox can modify these files")
 
+        # Virtual files (synthetic passwd/group, etc.)
+        virtual_files = self._get_virtual_files_summary()
+        if virtual_files:
+            lines.append("• Virtual files injected:")
+            for vf_line in virtual_files:
+                lines.append(f"  - {vf_line}")
+
         # Network filtering
         nf = self.config.network_filter
         if nf.requires_pasta():
@@ -339,6 +358,20 @@ class BubblewrapSummarizer:
             self.config._environment_group,
         )
 
+    def _get_isolation_summary(self) -> str | None:
+        """Get isolation summary (needs network_filter for seccomp auto-enable warning)."""
+        from model.groups import _isolation_to_summary
+        return _isolation_to_summary(
+            self.config._isolation_group,
+            self.config.network_filter,
+        )
+
+    def _get_virtual_files_summary(self) -> list[str]:
+        """Get summary of virtual files that will be injected."""
+        from virtual_files import create_virtual_files
+        vfiles = create_virtual_files(self.config)
+        return vfiles.get_summary()
+
     def summarize_colored(self) -> str:
         """Generate a colored summary matching command group colors."""
         lines: list[str] = []
@@ -350,6 +383,10 @@ class BubblewrapSummarizer:
             if group.name == "process":
                 args = BubblewrapSerializer(self.config)._get_process_args()
                 summary = self._get_process_summary()
+            # Special handling for isolation group (needs network_filter for seccomp warning)
+            elif group.name == "isolation":
+                args = group.to_args()
+                summary = self._get_isolation_summary()
             else:
                 args = group.to_args()
                 summary = group.to_summary()
@@ -411,6 +448,15 @@ class BubblewrapSummarizer:
             lines.append(f"[{color}]• Network filtering (pasta):[/]")
             for summary_line in nf.get_filtering_summary():
                 lines.append(f"[{color}]  - {summary_line}[/]")
+
+        # Seccomp filter (prominent display)
+        seccomp_explicit = self.config._isolation_group.get("seccomp_block_userns")
+        seccomp_auto = (
+            nf.requires_pasta() and
+            self.config._isolation_group.get("disable_userns")
+        )
+        if seccomp_explicit or seccomp_auto:
+            lines.append("[bold yellow]• Seccomp filter ACTIVE — blocks nested sandbox/container creation[/]")
 
         # Command (white, not colored - it's what the user asked to run)
         lines.append(f"• Running: {' '.join(self.config.command)}")

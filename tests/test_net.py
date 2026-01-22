@@ -388,3 +388,247 @@ class TestGetPastaStatus:
         installed, message = get_pasta_status()
         assert installed is False
         assert "apt" in message
+
+
+class TestIptablesRuleOrdering:
+    """Test iptables rule ordering for correct filtering behavior.
+
+    Rule ordering is critical for iptables. Rules are processed in order,
+    and the first matching rule wins. These tests verify that:
+    1. DROP rules come before general ACCEPT rules for blocked addresses
+    2. DNS port 53 exceptions come before DROP rules
+    3. Loopback accept is conditional on not blocking loopback
+    """
+
+    def test_loopback_drop_before_loopback_accept(self):
+        """When blocking 127.0.0.0/8, DROP must come before any loopback ACCEPT.
+
+        This is the key fix for the 'ping localhost' bug where the order was wrong.
+        """
+        nf = NetworkFilter(
+            ip_filter=IPFilter(
+                mode=FilterMode.BLACKLIST,
+                cidrs=["127.0.0.0/8"],
+            ),
+        )
+        v4, v6 = generate_iptables_rules(nf)
+
+        # Find the DROP rule for 127.0.0.0/8
+        drop_idx = None
+        for i, rule in enumerate(v4):
+            if "-d 127.0.0.0/8" in rule and "-j DROP" in rule:
+                drop_idx = i
+                break
+
+        # Find any general loopback OUTPUT accept
+        loopback_accept_idx = None
+        for i, rule in enumerate(v4):
+            if "-o lo" in rule and "-j ACCEPT" in rule and "--dport" not in rule:
+                loopback_accept_idx = i
+                break
+
+        # DROP must exist
+        assert drop_idx is not None, "DROP rule for 127.0.0.0/8 should exist"
+
+        # If there's a general loopback accept, it must come AFTER the DROP
+        # (But actually, when blocking loopback, there should be NO general accept)
+        if loopback_accept_idx is not None:
+            assert drop_idx < loopback_accept_idx, \
+                "DROP 127.0.0.0/8 must come before general loopback ACCEPT"
+
+    def test_no_general_loopback_accept_when_blocking_loopback(self):
+        """When blocking 127.0.0.0/8, no general loopback OUTPUT accept should exist."""
+        nf = NetworkFilter(
+            ip_filter=IPFilter(
+                mode=FilterMode.BLACKLIST,
+                cidrs=["127.0.0.0/8"],
+            ),
+        )
+        v4, v6 = generate_iptables_rules(nf)
+
+        # Should NOT have a general loopback OUTPUT accept (without port restriction)
+        general_loopback_accepts = [
+            r for r in v4
+            if "-o lo" in r and "-j ACCEPT" in r and "--dport" not in r
+        ]
+        assert len(general_loopback_accepts) == 0, \
+            "No general loopback ACCEPT when blocking 127.0.0.0/8"
+
+    def test_loopback_input_always_allowed(self):
+        """Loopback INPUT is always allowed (for responses)."""
+        nf = NetworkFilter(
+            ip_filter=IPFilter(
+                mode=FilterMode.BLACKLIST,
+                cidrs=["127.0.0.0/8"],
+            ),
+        )
+        v4, v6 = generate_iptables_rules(nf)
+
+        # INPUT -i lo should always be present
+        input_rules = [r for r in v4 if "-i lo" in r and "-j ACCEPT" in r]
+        assert len(input_rules) > 0, "Loopback INPUT accept should always exist"
+
+    def test_dns_port_53_before_loopback_drop_when_dns_proxy(self):
+        """DNS port 53 rules come before loopback DROP when DNS proxy is active."""
+        nf = NetworkFilter(
+            ip_filter=IPFilter(
+                mode=FilterMode.BLACKLIST,
+                cidrs=["127.0.0.0/8"],
+            ),
+            hostname_filter=HostnameFilter(
+                mode=FilterMode.WHITELIST,  # Triggers DNS proxy
+                hosts=["example.com"],
+            ),
+        )
+        v4, v6 = generate_iptables_rules(nf)
+
+        # Find DNS port 53 rule
+        dns_idx = None
+        for i, rule in enumerate(v4):
+            if "--dport 53" in rule and "-j ACCEPT" in rule:
+                dns_idx = i
+                break
+
+        # Find DROP rule for 127.0.0.0/8
+        drop_idx = None
+        for i, rule in enumerate(v4):
+            if "-d 127.0.0.0/8" in rule and "-j DROP" in rule:
+                drop_idx = i
+                break
+
+        assert dns_idx is not None, "DNS port 53 rule should exist when DNS proxy active"
+        assert drop_idx is not None, "DROP rule should exist"
+        assert dns_idx < drop_idx, "DNS port 53 ACCEPT must come before loopback DROP"
+
+    def test_ipv6_loopback_drop_before_accept(self):
+        """IPv6 ::1/128 DROP must come before general loopback accept."""
+        nf = NetworkFilter(
+            ip_filter=IPFilter(
+                mode=FilterMode.BLACKLIST,
+                cidrs=["::1/128"],
+            ),
+        )
+        v4, v6 = generate_iptables_rules(nf)
+
+        # Should NOT have general loopback OUTPUT accept for IPv6
+        general_loopback_accepts = [
+            r for r in v6
+            if "-o lo" in r and "-j ACCEPT" in r and "--dport" not in r
+        ]
+        assert len(general_loopback_accepts) == 0, \
+            "No general loopback ACCEPT when blocking ::1/128"
+
+    def test_multiple_blacklist_cidrs_all_before_loopback_accept(self):
+        """All blacklist DROP rules come before any general loopback accept."""
+        nf = NetworkFilter(
+            ip_filter=IPFilter(
+                mode=FilterMode.BLACKLIST,
+                cidrs=["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+            ),
+        )
+        v4, v6 = generate_iptables_rules(nf)
+
+        # Find all DROP rules
+        drop_indices = [
+            i for i, rule in enumerate(v4)
+            if "-j DROP" in rule and "-d" in rule
+        ]
+
+        # Find general loopback accept
+        loopback_accept_idx = None
+        for i, rule in enumerate(v4):
+            if "-o lo" in rule and "-j ACCEPT" in rule and "--dport" not in rule:
+                loopback_accept_idx = i
+                break
+
+        # All DROP rules should come before loopback accept (if it exists)
+        if loopback_accept_idx is not None:
+            for drop_idx in drop_indices:
+                assert drop_idx < loopback_accept_idx, \
+                    f"DROP rule at {drop_idx} should come before loopback ACCEPT at {loopback_accept_idx}"
+
+    def test_whitelist_mode_drop_all_at_end(self):
+        """Whitelist mode has DROP all at the end."""
+        nf = NetworkFilter(
+            ip_filter=IPFilter(
+                mode=FilterMode.WHITELIST,
+                cidrs=["8.8.8.8"],
+            ),
+        )
+        v4, v6 = generate_iptables_rules(nf)
+
+        # Last rule should be DROP all (no -d)
+        drop_all_rules = [r for r in v4 if "-j DROP" in r and "-d" not in r]
+        assert len(drop_all_rules) > 0, "Whitelist mode should have DROP all"
+
+        # It should be at the end
+        last_rule = v4[-1]
+        assert "-j DROP" in last_rule and "-d" not in last_rule, \
+            "DROP all should be the last rule"
+
+    def test_blacklist_with_loopback_has_correct_rule_sequence(self):
+        """Full test of rule sequence when blocking loopback."""
+        nf = NetworkFilter(
+            ip_filter=IPFilter(
+                mode=FilterMode.BLACKLIST,
+                cidrs=["127.0.0.0/8", "10.0.0.0/8"],
+            ),
+        )
+        v4, v6 = generate_iptables_rules(nf)
+
+        # Expected sequence:
+        # 1. INPUT -i lo -j ACCEPT (always first for responses)
+        # 2. DROP rules for blacklisted CIDRs
+        # 3. NO general loopback OUTPUT accept (because 127.0.0.0/8 is blocked)
+
+        # First rule should be INPUT loopback accept
+        assert "-i lo" in v4[0] and "INPUT" in v4[0]
+
+        # Should have DROP for 127.0.0.0/8
+        assert any("-d 127.0.0.0/8 -j DROP" in r for r in v4)
+
+        # Should have DROP for 10.0.0.0/8
+        assert any("-d 10.0.0.0/8 -j DROP" in r for r in v4)
+
+        # Should NOT have general OUTPUT loopback accept
+        general_lo_accept = [
+            r for r in v4
+            if "OUTPUT" in r and "-o lo" in r and "-j ACCEPT" in r and "--dport" not in r
+        ]
+        assert len(general_lo_accept) == 0
+
+    def test_non_loopback_blacklist_allows_loopback(self):
+        """Blacklist that doesn't include loopback should allow loopback."""
+        nf = NetworkFilter(
+            ip_filter=IPFilter(
+                mode=FilterMode.BLACKLIST,
+                cidrs=["10.0.0.0/8", "192.168.0.0/16"],  # No 127.x.x.x
+            ),
+        )
+        v4, v6 = generate_iptables_rules(nf)
+
+        # Should have general loopback OUTPUT accept
+        general_lo_accept = [
+            r for r in v4
+            if "-o lo" in r and "-j ACCEPT" in r and "--dport" not in r
+        ]
+        assert len(general_lo_accept) > 0, \
+            "Should have loopback accept when not blocking loopback"
+
+    def test_partial_loopback_block_still_blocks(self):
+        """Blocking 127.0.0.1 (not /8) should still prevent general loopback accept."""
+        nf = NetworkFilter(
+            ip_filter=IPFilter(
+                mode=FilterMode.BLACKLIST,
+                cidrs=["127.0.0.1"],
+            ),
+        )
+        v4, v6 = generate_iptables_rules(nf)
+
+        # Should NOT have general loopback OUTPUT accept
+        general_lo_accept = [
+            r for r in v4
+            if "-o lo" in r and "-j ACCEPT" in r and "--dport" not in r
+        ]
+        assert len(general_lo_accept) == 0, \
+            "No general loopback accept when blocking any 127.x.x.x"

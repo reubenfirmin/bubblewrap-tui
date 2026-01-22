@@ -38,6 +38,7 @@ from model.fields.isolation import (
     unshare_uts,
     unshare_cgroup,
     disable_userns,
+    seccomp_block_userns,
 )
 
 # Process

@@ -246,21 +246,21 @@ class SandboxConfig:
             self._environment_group,
         ]
 
-    def build_command(self, fd_map: dict[str, int] | None = None) -> list[str]:
+    def build_command(self, file_map: dict[str, str] | None = None) -> list[str]:
         """Build the complete bwrap command.
 
         Args:
-            fd_map: Optional mapping of dest_path -> FD number for virtual user files
+            file_map: Optional mapping of dest_path -> source_file_path for virtual user files
 
         Note:
             TODO: Consider dependency injection for testability.
             Currently tightly coupled to BubblewrapSerializer for simplicity.
         """
         from bwrap import BubblewrapSerializer
-        return BubblewrapSerializer(self).serialize(fd_map)
+        return BubblewrapSerializer(self).serialize(file_map)
 
     def get_virtual_user_data(self) -> list[tuple[str, str]]:
-        """Get virtual user file data that needs to be passed via FDs.
+        """Get virtual user file data for synthetic passwd/group.
 
         Returns list of (content, dest_path) tuples for files to inject.
         """

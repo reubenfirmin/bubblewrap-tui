@@ -82,6 +82,7 @@ def create_init_script(
     ip6tables_path: str | None,
     is_multicall: bool,
     cap_drop_template: str,
+    use_seccomp: bool = False,
 ) -> Path:
     """Create the init script that applies iptables rules then runs user command.
 
@@ -92,6 +93,7 @@ def create_init_script(
         ip6tables_path: Path to ip6tables binary (or None)
         is_multicall: Whether iptables is a multicall binary
         cap_drop_template: Template for capability drop command
+        use_seccomp: Whether to apply seccomp filter blocking user namespaces
 
     Returns:
         Path to the created init script
@@ -124,6 +126,19 @@ def create_init_script(
         resolv_conf_path.write_text("# DNS handled by bubblewrap-tui DNS proxy\nnameserver 127.0.0.1\n")
         resolv_conf_path.chmod(0o444)
 
+    # Build the final execution command
+    # When using seccomp, we wrap the cap_drop+user_command with seccomp filter
+    if use_seccomp:
+        from seccomp import get_seccomp_init_commands
+        seccomp_wrapper = get_seccomp_init_commands()
+        # The seccomp wrapper reads SECCOMP_EXEC_CMD from environment
+        # We set it to the cap_drop command (which will exec the user command)
+        # Note: We need to escape the command for shell export
+        escaped_exec_cmd = exec_cmd.replace("'", "'\"'\"'")  # Escape single quotes for shell
+        final_exec = f"export SECCOMP_EXEC_CMD='{escaped_exec_cmd}'\n{seccomp_wrapper}"
+    else:
+        final_exec = exec_cmd
+
     init_wrapper = f'''#!/bin/sh
 set -e
 
@@ -132,7 +147,7 @@ set -e
 {dns_proxy_setup}
 # Drop CAP_NET_ADMIN and run the user command
 # This prevents the sandboxed process from modifying iptables rules
-{exec_cmd}
+{final_exec}
 '''
 
     init_script_path.write_text(init_wrapper)

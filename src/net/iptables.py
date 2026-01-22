@@ -56,17 +56,11 @@ def generate_iptables_rules(nf: NetworkFilter) -> tuple[list[str], list[str]]:
         Tuple of (iptables_rules, ip6tables_rules) as command strings.
     """
     from model.network_filter import FilterMode
-    from net.dns_proxy import get_host_nameservers, needs_dns_proxy
+    from net.dns_proxy import needs_dns_proxy
     from net.utils import is_ipv6, resolve_hostname, validate_ip_for_shell
 
     v4_rules: list[str] = []
     v6_rules: list[str] = []
-
-    # Always allow loopback
-    v4_rules.append("iptables -A OUTPUT -o lo -j ACCEPT")
-    v4_rules.append("iptables -A INPUT -i lo -j ACCEPT")
-    v6_rules.append("ip6tables -A OUTPUT -o lo -j ACCEPT")
-    v6_rules.append("ip6tables -A INPUT -i lo -j ACCEPT")
 
     # Check if DNS proxy handles hostname filtering
     dns_proxy_active = needs_dns_proxy(nf.hostname_filter)
@@ -117,7 +111,34 @@ def generate_iptables_rules(nf: NetworkFilter) -> tuple[list[str], list[str]]:
             logger.warning(f"Skipping invalid IP for iptables rule: {ip!r}")
         return validated
 
-    # Generate rules - blacklist first (explicit blocks)
+    # Check if loopback addresses are being blocked
+    # We need to know this to structure rules correctly
+    blocks_loopback_v4 = any(
+        ip.startswith("127.") or ip == "127.0.0.0/8"
+        for ip in v4_block
+    )
+    blocks_loopback_v6 = "::1/128" in v6_block or "::1" in v6_block
+
+    # Rule ordering is critical for correct behavior:
+    # 1. Allow loopback INPUT (always needed for responses)
+    # 2. If DNS proxy active, allow DNS to loopback (port 53) before any blocks
+    # 3. Blacklist DROP rules (including loopback if configured)
+    # 4. Allow remaining loopback OUTPUT (only if not blocking loopback)
+    # 5. Whitelist ACCEPT rules
+    # 6. Final DROP all (if whitelist mode)
+
+    # 1. Always allow loopback INPUT (for responses)
+    v4_rules.append("iptables -A INPUT -i lo -j ACCEPT")
+    v6_rules.append("ip6tables -A INPUT -i lo -j ACCEPT")
+
+    # 2. If DNS proxy is active, allow DNS traffic to loopback before any blocks
+    if dns_proxy_active:
+        v4_rules.append("iptables -A OUTPUT -o lo -p udp --dport 53 -j ACCEPT")
+        v4_rules.append("iptables -A OUTPUT -o lo -p tcp --dport 53 -j ACCEPT")
+        v6_rules.append("ip6tables -A OUTPUT -o lo -p udp --dport 53 -j ACCEPT")
+        v6_rules.append("ip6tables -A OUTPUT -o lo -p tcp --dport 53 -j ACCEPT")
+
+    # 3. Blacklist DROP rules - MUST come before general loopback accept
     for ip in v4_block:
         validated = safe_ip(ip)
         if validated:
@@ -127,7 +148,13 @@ def generate_iptables_rules(nf: NetworkFilter) -> tuple[list[str], list[str]]:
         if validated:
             v6_rules.append(f"ip6tables -A OUTPUT -d {validated} -j DROP")
 
-    # Then whitelist (explicit allows)
+    # 4. Allow remaining loopback OUTPUT (only if not blocking loopback entirely)
+    if not blocks_loopback_v4:
+        v4_rules.append("iptables -A OUTPUT -o lo -j ACCEPT")
+    if not blocks_loopback_v6:
+        v6_rules.append("ip6tables -A OUTPUT -o lo -j ACCEPT")
+
+    # 5. Whitelist ACCEPT rules
     for ip in v4_allow:
         validated = safe_ip(ip)
         if validated:
@@ -137,7 +164,7 @@ def generate_iptables_rules(nf: NetworkFilter) -> tuple[list[str], list[str]]:
         if validated:
             v6_rules.append(f"ip6tables -A OUTPUT -d {validated} -j ACCEPT")
 
-    # If IP whitelist is active, drop everything else
+    # 6. If IP whitelist is active, drop everything else
     # Note: hostname whitelist with DNS proxy does NOT use iptables DROP all
     # because the DNS proxy needs to forward queries and the proxy IS the filter
     ip_whitelist_active = ipf.mode == FilterMode.WHITELIST

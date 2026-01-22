@@ -48,3 +48,10 @@ disable_userns = _named("disable_userns", UIField(
     bwrap_flag="--disable-userns",
     summary="Cannot create nested containers — prevents namespace escape attacks",
 ))
+
+seccomp_block_userns = _named("seccomp_block_userns", UIField(
+    bool, False, "opt-seccomp-block-userns",
+    "Block nested sandboxing (seccomp)",
+    "Block user namespace creation via seccomp filter. Alternative to bwrap's native option, works with network filtering.",
+    summary="Seccomp blocks nested containers",
+))
