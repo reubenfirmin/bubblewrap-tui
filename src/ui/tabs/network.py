@@ -105,13 +105,13 @@ def compose_network_tab(
                     with Container(classes="options-section"):
                         yield Label("Hostname Filtering", classes="section-label")
                         yield Static(
-                            "Filter by hostname (resolved once at launch):",
+                            "DNS proxy intercepts lookups at runtime",
                             classes="network-hint",
                         )
                         yield Static(
-                            "⚠ IPs resolved at startup. If DNS changes during "
-                            "the session, new IPs will NOT be filtered.",
-                            classes="network-warning",
+                            "example.com → matches example.com + subdomains\n"
+                            "*.example.com → matches subdomains only",
+                            classes="network-hint",
                         )
                         yield FilterModeRadio(
                             mode=network_filter.hostname_filter.mode.value,

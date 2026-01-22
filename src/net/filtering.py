@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from model.network_filter import NetworkFilter
 
+from net.dns_proxy import generate_dns_proxy_script, get_dns_proxy_init_commands, needs_dns_proxy
 from net.utils import find_cap_drop_tool
 
 
@@ -108,12 +109,27 @@ def create_init_script(
     user_cmd = " ".join(shlex.quote(arg) for arg in user_command)
     exec_cmd = cap_drop_template.format(command=user_cmd)
 
+    # Check if DNS proxy is needed for hostname filtering
+    dns_proxy_setup = ""
+    if needs_dns_proxy(nf.hostname_filter):
+        dns_proxy_script_path = tmp_path / "dns_proxy.py"
+        dns_proxy_script = generate_dns_proxy_script(nf.hostname_filter)
+        dns_proxy_script_path.write_text(dns_proxy_script)
+        dns_proxy_script_path.chmod(0o444)  # Read-only to prevent tampering
+        dns_proxy_setup = get_dns_proxy_init_commands(str(dns_proxy_script_path))
+
+        # Write resolv.conf to temp dir - will be ro-bind mounted by bwrap
+        # This is more secure than creating it inside the sandbox
+        resolv_conf_path = tmp_path / "resolv.conf"
+        resolv_conf_path.write_text("# DNS handled by bubblewrap-tui DNS proxy\nnameserver 127.0.0.1\n")
+        resolv_conf_path.chmod(0o444)
+
     init_wrapper = f'''#!/bin/sh
 set -e
 
 # Set up iptables rules
 {iptables_script}
-
+{dns_proxy_setup}
 # Drop CAP_NET_ADMIN and run the user command
 # This prevents the sandboxed process from modifying iptables rules
 {exec_cmd}
@@ -123,3 +139,18 @@ set -e
     init_script_path.chmod(0o755)
 
     return init_script_path
+
+
+def uses_dns_proxy(nf: "NetworkFilter") -> bool:
+    """Check if the network filter configuration will use the DNS proxy.
+
+    This is used by other modules to determine if they should skip
+    binding the host's /etc/resolv.conf (since the DNS proxy creates its own).
+
+    Args:
+        nf: NetworkFilter configuration
+
+    Returns:
+        True if DNS proxy will be used
+    """
+    return needs_dns_proxy(nf.hostname_filter)

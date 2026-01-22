@@ -260,21 +260,49 @@ Creating a network namespace normally requires root privileges. Pasta provides u
 
 This ensures filtering decisions made at launch cannot be bypassed by the sandboxed application.
 
-### Hostname resolution
+### Hostname filtering
 
-Hostnames are resolved to IP addresses **at sandbox startup**. This is a fundamental limitation:
+Hostname filtering uses a lightweight DNS proxy inside the sandbox to intercept DNS queries:
 
-- Iptables rules are static - they don't support hostname-based filtering
-- DNS resolution is dynamic - `github.com` might resolve to different IPs over time
-- The sandbox's isolated namespace makes runtime DNS monitoring impractical without a proxy
+- **Blacklisted hostnames** return NXDOMAIN (name not found)
+- **Whitelisted hostnames** are forwarded to the host's configured DNS servers
+- **Wildcards** are supported: `*.example.com` matches subdomains only; `example.com` matches the domain and all subdomains
 
-**If you're using hostname-based filtering:**
+**How it works:**
 
-- DNS lookups use your host machine's DNS before the sandbox starts
-- If a hostname fails to resolve, execution halts with an error
-- Services using CDNs or load balancers may rotate IPs during long-running sessions
+1. A ~180 line Python DNS proxy is generated and written to the sandbox temp directory
+2. The proxy starts inside the sandbox on `127.0.0.1:53`
+3. The sandbox's `/etc/resolv.conf` points to the local proxy
+4. DNS queries are intercepted and filtered before forwarding to the host's upstream DNS
+5. The proxy runs with no external dependencies (pure Python stdlib)
 
-For most use cases this works fine. If a service changes IP during execution, traffic to the new IP won't match your rules. For strict security requirements, use IP/CIDR filters instead of hostnames.
+**Inspecting the proxy:**
+
+When hostname filtering is active, the execution output shows the temp directory path (e.g., `/tmp/bui-net-abc123/`). You can inspect the generated proxy:
+
+```bash
+# View the generated DNS proxy script
+cat /tmp/bui-net-*/dns_proxy.py
+
+# The script contains your configured hosts list and mode (whitelist/blacklist)
+# It's plain Python - read it to understand exactly what filtering is applied
+```
+
+**Security:**
+
+The proxy is protected against tampering by sandboxed processes:
+
+- `/etc/resolv.conf` is ro-bind mounted from outside the sandbox, making it completely immutable
+- The DNS proxy script is ro-bind mounted, preventing modification or replacement
+- The proxy binds to port 53 before `CAP_NET_ADMIN` is dropped, so sandboxed processes cannot bind their own DNS server
+
+A malicious process could kill the proxy, but this would break its own DNS resolution (self-defeating).
+
+**Limitations:**
+
+- DNS-over-HTTPS (DoH) bypasses the proxy - block known DoH IPs via IP filtering if needed
+- Only UDP DNS is intercepted (covers 99% of queries; TCP DNS fallback is rare)
+- Applications that hardcode DNS servers bypass the proxy (rare, but possible)
 
 ### Audit mode
 

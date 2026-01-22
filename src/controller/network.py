@@ -6,7 +6,6 @@ import logging
 from typing import Any, Callable
 
 from model import FilterMode
-from net import get_www_variant
 import ui.ids as ids
 
 log = logging.getLogger(__name__)
@@ -26,26 +25,10 @@ class NetworkEventsMixin:
 
     def _on_hostname_add(self, hostname: str) -> None:
         """Handle hostname added to filter list."""
-        # Auto-add www variant for transparency
-        www_variant = get_www_variant(hostname)
-        hosts = self.config.network_filter.hostname_filter.hosts
-        if www_variant and www_variant not in hosts:
-            hosts.append(www_variant)
-            # Refresh the UI list to show the new item
-            self._refresh_hostname_list()
-
+        # Hostname matching is handled by DNS proxy:
+        # - "example.com" matches example.com and all subdomains (www.example.com, api.example.com)
+        # - "*.example.com" matches only subdomains, not example.com itself
         self._update_preview()
-
-    def _refresh_hostname_list(self) -> None:
-        """Refresh the hostname filter list UI."""
-        try:
-            from ui.widgets import FilterList
-
-            filter_list = self.query_one(f"#{ids.HOSTNAME_LIST}", expect_type=None).parent
-            if isinstance(filter_list, FilterList):
-                filter_list.refresh_items(self.config.network_filter.hostname_filter.hosts)
-        except Exception:
-            pass  # UI not ready or element not found
 
     def _on_hostname_remove(self, hostname: str) -> None:
         """Handle hostname removed from filter list."""

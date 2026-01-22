@@ -275,10 +275,10 @@ class TestGenerateIptablesRules:
         v4, v6 = generate_iptables_rules(nf)
         assert any("2001:db8::/32" in r for r in v6)
 
-    @patch("net.utils.resolve_hostname")
-    def test_hostname_resolution(self, mock_resolve):
-        """Hostnames are resolved to IPs."""
-        mock_resolve.return_value = (["93.184.216.34"], [])
+    def test_hostname_filtering_uses_dns_proxy(self):
+        """Hostname filtering uses DNS proxy, not iptables IP rules."""
+        # With DNS proxy active, hostname filtering is handled at DNS layer
+        # so no IP-based iptables rules should be generated for hostnames
         nf = NetworkFilter(
             hostname_filter=HostnameFilter(
                 mode=FilterMode.WHITELIST,
@@ -286,7 +286,11 @@ class TestGenerateIptablesRules:
             ),
         )
         v4, v6 = generate_iptables_rules(nf)
-        assert any("93.184.216.34" in r for r in v4)
+        # DNS proxy handles filtering, so no hostname IPs in iptables
+        # Only loopback/established rules should exist
+        assert not any("93.184.216.34" in r for r in v4)
+        # Should have basic rules (loopback, DNS)
+        assert any("lo" in r for r in v4)
 
 
 class TestGenerateInitScript:

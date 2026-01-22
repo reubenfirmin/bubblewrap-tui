@@ -56,6 +56,7 @@ def generate_iptables_rules(nf: NetworkFilter) -> tuple[list[str], list[str]]:
         Tuple of (iptables_rules, ip6tables_rules) as command strings.
     """
     from model.network_filter import FilterMode
+    from net.dns_proxy import get_host_nameservers, needs_dns_proxy
     from net.utils import is_ipv6, resolve_hostname, validate_ip_for_shell
 
     v4_rules: list[str] = []
@@ -67,6 +68,9 @@ def generate_iptables_rules(nf: NetworkFilter) -> tuple[list[str], list[str]]:
     v6_rules.append("ip6tables -A OUTPUT -o lo -j ACCEPT")
     v6_rules.append("ip6tables -A INPUT -i lo -j ACCEPT")
 
+    # Check if DNS proxy handles hostname filtering
+    dns_proxy_active = needs_dns_proxy(nf.hostname_filter)
+
     # Collect all IPs to allow/block
     v4_allow: list[str] = []
     v6_allow: list[str] = []
@@ -74,8 +78,12 @@ def generate_iptables_rules(nf: NetworkFilter) -> tuple[list[str], list[str]]:
     v6_block: list[str] = []
 
     # Process hostname filter
+    # When DNS proxy is active, it handles all hostname filtering via DNS interception
+    # We don't add iptables rules for hostnames - the proxy is the gatekeeper
+    # This allows the proxy to forward DNS queries and resolved IPs to be accessed
     hf = nf.hostname_filter
-    if hf.mode != FilterMode.OFF:
+    if hf.mode != FilterMode.OFF and not dns_proxy_active:
+        # Only use iptables for hostname filtering if DNS proxy is NOT active
         for host in hf.hosts:
             ipv4s, ipv6s = resolve_hostname(host)
             if hf.mode == FilterMode.WHITELIST:
@@ -129,9 +137,12 @@ def generate_iptables_rules(nf: NetworkFilter) -> tuple[list[str], list[str]]:
         if validated:
             v6_rules.append(f"ip6tables -A OUTPUT -d {validated} -j ACCEPT")
 
-    # If any whitelist is active, drop everything else
-    has_whitelist = hf.mode == FilterMode.WHITELIST or ipf.mode == FilterMode.WHITELIST
-    if has_whitelist:
+    # If IP whitelist is active, drop everything else
+    # Note: hostname whitelist with DNS proxy does NOT use iptables DROP all
+    # because the DNS proxy needs to forward queries and the proxy IS the filter
+    ip_whitelist_active = ipf.mode == FilterMode.WHITELIST
+    hostname_whitelist_without_proxy = hf.mode == FilterMode.WHITELIST and not dns_proxy_active
+    if ip_whitelist_active or hostname_whitelist_without_proxy:
         v4_rules.append("iptables -A OUTPUT -j DROP")
         v6_rules.append("ip6tables -A OUTPUT -j DROP")
 

@@ -53,6 +53,7 @@ MODULE_ORDER = [
     "commandoutput.py",               # Command output formatting
     "net/utils.py",                   # Network utilities (resolve hostname, validate, etc.)
     "net/iptables.py",                # iptables rule generation
+    "net/dns_proxy.py",               # DNS proxy generation for hostname filtering
     "net/pasta_install.py",           # pasta installation detection
     "net/pasta_args.py",              # pasta command argument generation
     "net/filtering.py",               # Network filtering validation/script generation
@@ -96,7 +97,7 @@ MODULE_ORDER = [
 LOCAL_MODULES = {
     "constants", "detection", "environment", "installer", "sandbox", "profiles", "app", "cli", "styles", "bwrap",
     "commandoutput",
-    "net", "net.utils", "net.iptables", "net.pasta", "net.audit",
+    "net", "net.utils", "net.iptables", "net.dns_proxy", "net.pasta", "net.audit",
     "net.pasta_install", "net.pasta_args", "net.filtering", "net.pasta_exec",
     "model",
     "model.ui_field", "model.bound_directory", "model.overlay_config", "model.network_filter",
@@ -312,6 +313,29 @@ def process_app_module(content: str, css_content: str) -> str:
     return '\n'.join(result)
 
 
+def process_dns_proxy_module(content: str, script_content: str) -> str:
+    """Process dns_proxy.py to inline the DNS proxy script."""
+    lines = content.split('\n')
+    result = []
+    skip_until_assignment = False
+
+    for line in lines:
+        # Skip the _load_dns_proxy_script function and its call
+        if 'def _load_dns_proxy_script()' in line:
+            skip_until_assignment = True
+            continue
+        if skip_until_assignment:
+            if line.startswith('DNS_PROXY_SCRIPT = _load_dns_proxy_script()'):
+                # Replace with inlined script using repr() to properly escape quotes
+                result.append(f'DNS_PROXY_SCRIPT = {repr(script_content)}')
+                skip_until_assignment = False
+            continue
+
+        result.append(line)
+
+    return '\n'.join(result)
+
+
 def clean():
     """Remove __pycache__ directories and .pyc files."""
     root = Path(__file__).parent
@@ -346,6 +370,13 @@ def bundle():
         return False
     css_content = css_path.read_text()
 
+    # Load DNS proxy script
+    dns_proxy_script_path = src_dir / "net" / "dns_proxy_script.py"
+    if not dns_proxy_script_path.exists():
+        print(f"Error: {dns_proxy_script_path} does not exist")
+        return False
+    dns_proxy_script_content = dns_proxy_script_path.read_text()
+
     all_imports = set()
     all_code = []
 
@@ -360,6 +391,10 @@ def bundle():
         # Special handling for app.py - inline CSS
         if module_name == "app.py":
             content = process_app_module(content, css_content)
+
+        # Special handling for dns_proxy.py - inline DNS proxy script
+        if module_name == "net/dns_proxy.py":
+            content = process_dns_proxy_module(content, dns_proxy_script_content)
 
         imports, code = extract_imports(content)
         all_imports.update(imports)

@@ -38,6 +38,13 @@ from net.utils import (
     validate_cidr,
     validate_port,
 )
+from net.filtering import uses_dns_proxy
+from net.dns_proxy import (
+    generate_dns_proxy_script,
+    get_dns_proxy_init_commands,
+    get_host_nameservers,
+    needs_dns_proxy,
+)
 
 # Alias for backwards compatibility
 execute_with_network_filter = execute_with_pasta
@@ -60,6 +67,12 @@ __all__ = [
     "find_iptables",
     "generate_init_script",
     "generate_iptables_rules",
+    # dns proxy
+    "generate_dns_proxy_script",
+    "get_dns_proxy_init_commands",
+    "get_host_nameservers",
+    "needs_dns_proxy",
+    "uses_dns_proxy",
     # utils
     "HostnameResolutionError",
     "detect_distro",

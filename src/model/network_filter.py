@@ -126,7 +126,7 @@ class NetworkFilter:
         if self.hostname_filter.mode.value != "off":
             mode = self.hostname_filter.mode.value
             hosts = ", ".join(self.hostname_filter.hosts) if self.hostname_filter.hosts else "none"
-            lines.append(f"Hostname {mode}: {hosts}")
+            lines.append(f"Hostname {mode} (via DNS proxy): {hosts}")
         if self.ip_filter.mode.value != "off":
             mode = self.ip_filter.mode.value
             cidrs = ", ".join(self.ip_filter.cidrs) if self.ip_filter.cidrs else "none"

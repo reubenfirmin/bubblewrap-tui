@@ -78,6 +78,7 @@ def network_to_args(group: ConfigGroup, network_filter: "NetworkFilter | None" =
         network_filter: Optional NetworkFilter config for pasta filtering
     """
     from detection import find_dns_paths, find_ssl_cert_paths
+    from net import uses_dns_proxy
 
     args = []
 
@@ -91,11 +92,13 @@ def network_to_args(group: ConfigGroup, network_filter: "NetworkFilter | None" =
         # Full network access
         args.append("--share-net")
 
-    # DNS and SSL bindings are needed for both full access and filtered network
-    if group.get("bind_resolv_conf"):
+    # DNS bindings - skip if DNS proxy is active (proxy creates its own /etc/resolv.conf)
+    dns_proxy_active = network_filter and uses_dns_proxy(network_filter)
+    if group.get("bind_resolv_conf") and not dns_proxy_active:
         for dns_path in find_dns_paths():
             args.extend(["--ro-bind", dns_path, dns_path])
 
+    # SSL bindings are always needed for both full access and filtered network
     if group.get("bind_ssl_certs"):
         for cert_path in find_ssl_cert_paths():
             args.extend(["--ro-bind", cert_path, cert_path])
