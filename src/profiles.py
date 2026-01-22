@@ -60,8 +60,8 @@ def validate_config(config: SandboxConfig, profile_name: str | None = None) -> l
         if overlay.mode not in ("tmpfs", "persistent"):
             warnings.append(f"Overlay {i}: unknown mode '{overlay.mode}', using 'tmpfs'")
             overlay.mode = "tmpfs"
-        if overlay.mode == "persistent" and not overlay.write_dir:
-            warnings.append(f"Overlay {i}: persistent mode requires write_dir")
+        # Note: persistent overlays without write_dir are valid - write_dir is computed
+        # at runtime from --sandbox name in apply_sandbox_to_overlays()
         if overlay.mode == "persistent" and overlay.write_dir:
             # Check for conflicting paths - these are critical misconfigs
             src = Path(overlay.source).resolve() if overlay.source else None

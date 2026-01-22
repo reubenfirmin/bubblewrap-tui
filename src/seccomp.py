@@ -74,9 +74,10 @@ def generate_bpf_filter(arch: str = "x86_64") -> bytes:
     3. For clone/unshare: checks if CLONE_NEWUSER flag is set in arg0
     4. For clone3: checks clone_args.flags (arg0 is pointer, so we check differently)
 
-    Note: clone3 uses a struct pointer, making flag checking complex.
-    We take a conservative approach and block clone3 entirely when this filter is active,
-    since clone3 is primarily used for new features and clone() remains available.
+    Note: clone3 uses a struct pointer (clone_args*), making flag checking impossible
+    with seccomp's BPF (can't dereference userspace pointers). We allow clone3 since
+    blocking it breaks threading in Node.js and other modern applications. The tradeoff
+    is that CLONE_NEWUSER via clone3 is not blocked, but clone/unshare are still blocked.
 
     Args:
         arch: Target architecture ("x86_64" or "aarch64")
@@ -174,8 +175,8 @@ def _build_filter_bytes(arch: str) -> bytes:
     # 3: Check for clone
     insts.append((BPF_JMP | BPF_JEQ | BPF_K, 0, 0, syscalls["clone"]))  # placeholder
 
-    # 4: Check for clone3 - block entirely
-    insts.append((BPF_JMP | BPF_JEQ | BPF_K, 0, 0, syscalls["clone3"]))  # placeholder
+    # 4: Check for clone3 - allow (can't check struct pointer flags)
+    insts.append((BPF_JMP | BPF_JEQ | BPF_K, 0, 0, syscalls["clone3"]))  # match -> allow
 
     # 5: Check for unshare
     insts.append((BPF_JMP | BPF_JEQ | BPF_K, 0, 0, syscalls["unshare"]))  # placeholder
@@ -216,8 +217,8 @@ def _build_filter_bytes(arch: str) -> bytes:
             jt, jf = 0, 6 - i - 1  # 6 - 1 - 1 = 4
         elif i == 3:  # clone: match -> inst 7, no match -> continue
             jt, jf = 7 - i - 1, 0  # 7 - 3 - 1 = 3
-        elif i == 4:  # clone3: match -> block (inst 11), no match -> continue
-            jt, jf = 11 - i - 1, 0  # 11 - 4 - 1 = 6
+        elif i == 4:  # clone3: match -> allow (inst 6), no match -> continue
+            jt, jf = 6 - i - 1, 0  # 6 - 4 - 1 = 1
         elif i == 5:  # unshare: match -> inst 7, no match -> continue (allow at 6)
             jt, jf = 7 - i - 1, 0  # 7 - 5 - 1 = 1
         elif i == 9:  # arg0 check: if 0 -> allow (inst 10), else -> block (inst 11)
@@ -304,7 +305,7 @@ prog += bpf_stmt(BPF_LD | BPF_W | BPF_ABS, OFF_ARCH)
 prog += bpf_jump(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH, 0, 4)
 prog += bpf_stmt(BPF_LD | BPF_W | BPF_ABS, OFF_NR)
 prog += bpf_jump(BPF_JMP | BPF_JEQ | BPF_K, CLONE_NR, 3, 0)
-prog += bpf_jump(BPF_JMP | BPF_JEQ | BPF_K, CLONE3_NR, 6, 0)
+prog += bpf_jump(BPF_JMP | BPF_JEQ | BPF_K, CLONE3_NR, 1, 0)  # clone3: allow (cant check flags)
 prog += bpf_jump(BPF_JMP | BPF_JEQ | BPF_K, UNSHARE_NR, 1, 0)
 prog += bpf_stmt(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)
 prog += bpf_stmt(BPF_LD | BPF_W | BPF_ABS, OFF_ARG0)

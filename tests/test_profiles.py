@@ -350,15 +350,17 @@ class TestValidateConfig:
         assert any("unknown mode" in w for w in warnings)
         assert config.overlays[0].mode == "tmpfs"
 
-    def test_persistent_overlay_without_write_dir_warns(self):
-        """Persistent overlay without write_dir produces warning."""
+    def test_persistent_overlay_without_write_dir_is_valid(self):
+        """Persistent overlay without write_dir is valid (computed at runtime)."""
+        # Persistent overlays without write_dir are valid - write_dir is computed
+        # at runtime from --sandbox name in apply_sandbox_to_overlays()
         config = make_config(
             overlays=[
                 OverlayConfig(source="/src", dest="/dest", mode="persistent", write_dir="")
             ],
         )
         warnings = validate_config(config)
-        assert any("write_dir" in w for w in warnings)
+        assert not any("write_dir" in w for w in warnings)
 
     def test_nonexistent_bound_dir_warns(self, tmp_path):
         """Non-existent bound directory produces warning."""

@@ -29,6 +29,7 @@ def generate_pasta_args(nf: "NetworkFilter", pcap_path: Path | None = None) -> l
     args = [
         "pasta",
         "--config-net",  # Auto-configure networking
+        "--foreground",  # Stay in foreground (default backgrounds, breaking terminal)
         "--quiet",  # Suppress output
     ]
 

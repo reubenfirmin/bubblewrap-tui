@@ -45,8 +45,6 @@ def execute_with_pasta(
         Exit code from the sandboxed process
     """
     import os
-    import signal
-    import subprocess
     import sys
 
     nf = config.network_filter
@@ -102,50 +100,10 @@ def execute_with_pasta(
     pasta_args = generate_pasta_args(nf)
     full_cmd = pasta_args + ["--"] + cmd
 
-    # Execute with subprocess so we can handle signals properly
-    # bwrap's --new-session creates a new session/process group, so signals
-    # from the terminal don't reach the sandbox directly. We need to forward them.
-    #
-    # Process tree:
-    #   bui (this process)
-    #     └── pasta (subprocess)
-    #           └── bwrap (--new-session, --die-with-parent)
-    #                 └── init.sh → user command
-    #
-    # When we terminate pasta, bwrap's --die-with-parent will kill bwrap,
-    # and bwrap will kill its children.
-    proc = subprocess.Popen(full_cmd, start_new_session=False)
-
-    def signal_handler(signum: int, frame: object) -> None:
-        """Forward signals to pasta, which will cascade to bwrap via --die-with-parent."""
-        if proc.poll() is None:  # Process still running
-            # Send SIGTERM to pasta to trigger clean shutdown
-            # bwrap's --die-with-parent will cause it to exit when pasta dies
-            try:
-                proc.terminate()  # SIGTERM
-            except ProcessLookupError:
-                pass
-
-    # Install signal handlers to forward SIGINT and SIGTERM
-    original_sigint = signal.signal(signal.SIGINT, signal_handler)
-    original_sigterm = signal.signal(signal.SIGTERM, signal_handler)
-
-    try:
-        exit_code = proc.wait()
-    except KeyboardInterrupt:
-        # Handle case where signal handler didn't catch it
-        proc.terminate()
-        try:
-            exit_code = proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            exit_code = proc.wait()
-    finally:
-        # Restore original signal handlers
-        signal.signal(signal.SIGINT, original_sigint)
-        signal.signal(signal.SIGTERM, original_sigterm)
-
-    return exit_code
+    # Use execvp to replace this process with pasta
+    # This gives clean terminal handling - pasta inherits our tty directly
+    os.execvp("pasta", full_cmd)
+    return 0  # Never reached
 
 
 def execute_with_audit(
