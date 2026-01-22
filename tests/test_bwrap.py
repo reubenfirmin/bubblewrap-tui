@@ -580,18 +580,19 @@ class TestVirtualUser:
         data = serializer.get_virtual_user_data()
         assert data == []
 
-    def test_serialize_virtual_user_args_with_fd_map(self):
-        """Virtual user args include FD bindings when fd_map provided."""
+    def test_serialize_virtual_user_args_with_file_map(self):
+        """Virtual user args include file bindings when file_map provided."""
         config = make_config(
-            user={"unshare_user": True, "uid": 1000, "gid": 1000, "username": "testuser"}
+            user={"unshare_user": True, "uid": 1000, "gid": 1000, "username": "testuser",
+                  "synthetic_passwd": True}
         )
         serializer = BubblewrapSerializer(config)
-        fd_map = {"/etc/passwd": 4, "/etc/group": 5}
-        args = serializer.serialize(fd_map=fd_map)
-        # Should have FD bindings
-        assert "--ro-bind-data" in args
-        assert "4" in args
-        assert "5" in args
+        file_map = {"/etc/passwd": "/tmp/passwd", "/etc/group": "/tmp/group"}
+        args = serializer.serialize(file_map=file_map)
+        # Should have ro-bind for the files
+        assert "--ro-bind" in args
+        assert "/tmp/passwd" in args
+        assert "/tmp/group" in args
         assert "/etc/passwd" in args
         assert "/etc/group" in args
 
@@ -607,8 +608,8 @@ class TestVirtualUser:
             }
         )
         serializer = BubblewrapSerializer(config)
-        fd_map = {"/etc/passwd": 4, "/etc/group": 5}
-        args = serializer.serialize(fd_map=fd_map)
+        file_map = {"/etc/passwd": "/tmp/passwd", "/etc/group": "/tmp/group"}
+        args = serializer.serialize(file_map=file_map)
         # Should create /home and /home/testuser directories
         home_dir_indices = [i for i, x in enumerate(args) if x == "--dir"]
         home_dirs = [args[i + 1] for i in home_dir_indices if i + 1 < len(args)]
@@ -635,8 +636,8 @@ class TestVirtualUser:
             }
         )
         serializer = BubblewrapSerializer(config)
-        fd_map = {"/etc/passwd": 4, "/etc/group": 5}
-        args = serializer.serialize(fd_map=fd_map)
+        file_map = {"/etc/passwd": "/tmp/passwd", "/etc/group": "/tmp/group"}
+        args = serializer.serialize(file_map=file_map)
         # Should have --dir /etc for synthetic passwd/group
         dir_indices = [i for i, x in enumerate(args) if x == "--dir"]
         dirs_created = [args[i + 1] for i in dir_indices if i + 1 < len(args)]
@@ -655,8 +656,8 @@ class TestVirtualUser:
             overlays=[OverlayConfig(source="", dest="/home/testuser", mode="tmpfs")],
         )
         serializer = BubblewrapSerializer(config)
-        fd_map = {"/etc/passwd": 4, "/etc/group": 5}
-        args = serializer.serialize(fd_map=fd_map)
+        file_map = {"/etc/passwd": "/tmp/passwd", "/etc/group": "/tmp/group"}
+        args = serializer.serialize(file_map=file_map)
         # Should NOT have --dir /home or --dir /home/testuser (overlay handles it)
         dir_indices = [i for i, x in enumerate(args) if x == "--dir"]
         dirs_created = [args[i + 1] for i in dir_indices if i + 1 < len(args)]

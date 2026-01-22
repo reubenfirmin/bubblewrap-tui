@@ -319,12 +319,13 @@ class TestExecuteWithPasta:
     def mock_build_command(self):
         """Mock build command function."""
 
-        def build_fn(config, fd_map):
+        def build_fn(config, file_map):
             return ["bwrap", "--unshare-net", "--ro-bind", "/usr", "/usr", "--"] + config.command
 
         return build_fn
 
-    @patch("os.execvp")
+    @patch("sys.exit")
+    @patch("subprocess.Popen")
     @patch("commandoutput.print_execution_header")
     @patch("net.pasta_exec.create_init_script")
     @patch("net.pasta_exec.validate_filtering_requirements")
@@ -333,7 +334,8 @@ class TestExecuteWithPasta:
         mock_validate,
         mock_create_script,
         mock_print_header,
-        mock_execvp,
+        mock_popen,
+        mock_exit,
         minimal_config,
         mock_build_command,
         tmp_path,
@@ -347,6 +349,7 @@ class TestExecuteWithPasta:
         )
         mock_create_script.return_value = tmp_path / "init.sh"
         (tmp_path / "init.sh").write_text("#!/bin/sh\necho test")
+        mock_popen.return_value = MagicMock(wait=MagicMock(return_value=0), poll=MagicMock(return_value=0))
 
         from net.pasta_exec import execute_with_pasta
 
@@ -354,7 +357,8 @@ class TestExecuteWithPasta:
 
         mock_validate.assert_called_once_with(minimal_config.network_filter)
 
-    @patch("os.execvp")
+    @patch("sys.exit")
+    @patch("subprocess.Popen")
     @patch("commandoutput.print_execution_header")
     @patch("net.pasta_exec.create_init_script")
     @patch("net.pasta_exec.validate_filtering_requirements")
@@ -363,7 +367,8 @@ class TestExecuteWithPasta:
         mock_validate,
         mock_create_script,
         mock_print_header,
-        mock_execvp,
+        mock_popen,
+        mock_exit,
         minimal_config,
         mock_build_command,
         tmp_path,
@@ -378,6 +383,7 @@ class TestExecuteWithPasta:
         script_path = tmp_path / "init.sh"
         script_path.write_text("#!/bin/sh\necho test")
         mock_create_script.return_value = script_path
+        mock_popen.return_value = MagicMock(wait=MagicMock(return_value=0), poll=MagicMock(return_value=0))
 
         from net.pasta_exec import execute_with_pasta
 
@@ -385,21 +391,23 @@ class TestExecuteWithPasta:
 
         mock_create_script.assert_called_once()
 
-    @patch("os.execvp")
+    @patch("sys.exit")
+    @patch("subprocess.Popen")
     @patch("commandoutput.print_execution_header")
     @patch("net.pasta_exec.create_init_script")
     @patch("net.pasta_exec.validate_filtering_requirements")
-    def test_calls_execvp_with_pasta(
+    def test_calls_popen_with_pasta(
         self,
         mock_validate,
         mock_create_script,
         mock_print_header,
-        mock_execvp,
+        mock_popen,
+        mock_exit,
         minimal_config,
         mock_build_command,
         tmp_path,
     ):
-        """Calls os.execvp with pasta command."""
+        """Calls subprocess.Popen with pasta command."""
         mock_validate.return_value = (
             "/usr/bin/iptables",
             "/usr/bin/ip6tables",
@@ -409,15 +417,16 @@ class TestExecuteWithPasta:
         script_path = tmp_path / "init.sh"
         script_path.write_text("#!/bin/sh\necho test")
         mock_create_script.return_value = script_path
+        mock_popen.return_value = MagicMock(wait=MagicMock(return_value=0), poll=MagicMock(return_value=0))
 
         from net.pasta_exec import execute_with_pasta
 
         execute_with_pasta(minimal_config, None, mock_build_command)
 
-        mock_execvp.assert_called_once()
-        args = mock_execvp.call_args
-        assert args[0][0] == "pasta"  # First arg is program name
-        assert "--" in args[0][1]  # Second arg is full command list with separator
+        mock_popen.assert_called_once()
+        args = mock_popen.call_args[0][0]  # First positional arg is the command list
+        assert args[0] == "pasta"  # First element is program name
+        assert "--" in args  # Separator is in command list
 
     @patch("net.pasta_exec.create_init_script")
     @patch("net.pasta_exec.validate_filtering_requirements")
@@ -458,7 +467,7 @@ class TestExecuteWithAudit:
     def mock_build_command(self):
         """Mock build command function."""
 
-        def build_fn(config, fd_map):
+        def build_fn(config, file_map):
             return ["bwrap", "--unshare-net", "--ro-bind", "/usr", "/usr", "--"] + config.command
 
         return build_fn
