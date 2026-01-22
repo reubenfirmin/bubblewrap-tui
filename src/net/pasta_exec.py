@@ -23,7 +23,7 @@ def execute_with_pasta(
     build_command_fn: Callable[["SandboxConfig", dict[str, str] | None], list[str]],
     sandbox_name: str | None = None,
     overlay_dirs: list[str] | None = None,
-) -> None:
+) -> int:
     """Execute bwrap with network filtering via pasta spawn mode.
 
     pasta creates a new user+network namespace and runs bwrap inside.
@@ -40,6 +40,9 @@ def execute_with_pasta(
         build_command_fn: Function to build bwrap command from config
         sandbox_name: Optional sandbox name for overlay info
         overlay_dirs: Optional list of overlay directories
+
+    Returns:
+        Exit code from the sandboxed process
     """
     import os
     import signal
@@ -142,7 +145,7 @@ def execute_with_pasta(
         signal.signal(signal.SIGINT, original_sigint)
         signal.signal(signal.SIGTERM, original_sigterm)
 
-    sys.exit(exit_code)
+    return exit_code
 
 
 def execute_with_audit(
@@ -151,7 +154,7 @@ def execute_with_audit(
     build_command_fn: Callable[["SandboxConfig", dict[str, str] | None], list[str]],
     sandbox_name: str | None = None,
     overlay_dirs: list[str] | None = None,
-) -> None:
+) -> int:
     """Execute bwrap with network auditing via pasta.
 
     Similar to execute_with_pasta but captures traffic instead of filtering.
@@ -169,6 +172,9 @@ def execute_with_audit(
         build_command_fn: Function to build bwrap command from config
         sandbox_name: Optional sandbox name for overlay info
         overlay_dirs: Optional list of overlay directories
+
+    Returns:
+        Exit code from the sandboxed process
     """
     import shutil
     import subprocess
@@ -230,4 +236,4 @@ def execute_with_audit(
         except Exception:
             pass
 
-    sys.exit(exit_code)
+    return exit_code

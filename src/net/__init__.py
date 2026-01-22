@@ -31,7 +31,6 @@ from net.pasta import (
 )
 from net.utils import (
     HostnameResolutionError,
-    detect_distro,
     get_www_variant,
     is_ipv6,
     resolve_hostname,
@@ -75,7 +74,6 @@ __all__ = [
     "uses_dns_proxy",
     # utils
     "HostnameResolutionError",
-    "detect_distro",
     "get_www_variant",
     "is_ipv6",
     "resolve_hostname",

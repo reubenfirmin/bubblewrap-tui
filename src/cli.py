@@ -13,20 +13,23 @@ if TYPE_CHECKING:
     from model import SandboxConfig
 
 from app import BubblewrapTUI
-from commandoutput import print_execution_header
+from command_execution import execute_sandbox
 from installer import check_for_updates, do_install, do_update, show_update_notice
 from model import BoundDirectory, SandboxConfig
-from net import check_pasta, execute_with_audit, execute_with_network_filter, get_install_instructions
+from net import check_pasta, get_install_instructions
 from profiles import BUI_PROFILES_DIR, Profile
-from seccomp import create_seccomp_init_script
 from sandbox import (
     BUI_STATE_DIR,
     clean_temp_files,
     find_executables,
+    get_overlay_write_dir,
+    get_sandbox_dir,
+    get_sandbox_work_dir,
     install_sandbox_binary,
     list_overlays,
     list_profiles,
     list_sandboxes,
+    migrate_legacy_overlay,
     register_sandbox,
     uninstall_sandbox,
 )
@@ -332,21 +335,31 @@ def execute_bwrap(config: SandboxConfig) -> None:
 def apply_sandbox_to_overlays(config: SandboxConfig, sandbox_name: str) -> list[Path]:
     """Apply sandbox name to overlay write directories.
 
+    Creates hierarchical structure:
+        sandboxes/{sandbox_name}/overlays/{normalized_dest}/  - per-overlay write dir
+        sandboxes/{sandbox_name}/.overlay-work/               - shared work dir
+
     Returns list of overlay write directories that may be written to.
     """
-    overlay_dirs = []
-    for overlay in config.overlays:
-        if overlay.write_dir:
-            # Replace the base write_dir with sandbox-specific path
-            base_dir = BUI_STATE_DIR / "overlays" / sandbox_name
-            base_dir.mkdir(parents=True, exist_ok=True)
-            overlay.write_dir = str(base_dir)
-            overlay_dirs.append(base_dir)
+    # Migrate from flat structure if needed
+    migrate_legacy_overlay(sandbox_name)
 
-            # Ensure the derived work_dir also exists
-            # (get_work_dir() computes parent / ".overlay-work")
-            work_dir = Path(overlay.get_work_dir())
-            work_dir.mkdir(parents=True, exist_ok=True)
+    overlay_dirs = []
+    shared_work_dir = get_sandbox_work_dir(sandbox_name)
+
+    for overlay in config.overlays:
+        if overlay.mode == "persistent":
+            # Compute overlay-specific write directory based on mount destination
+            write_dir = get_overlay_write_dir(sandbox_name, overlay.dest)
+            write_dir.mkdir(parents=True, exist_ok=True)
+            overlay.write_dir = str(write_dir)
+            overlay.work_dir = str(shared_work_dir)
+            overlay_dirs.append(write_dir)
+
+    # Create shared work directory
+    if overlay_dirs:
+        shared_work_dir.mkdir(parents=True, exist_ok=True)
+
     return overlay_dirs
 
 
@@ -407,10 +420,12 @@ def main() -> None:
         overlay_dirs = []
         sandbox_name = args.sandbox_name
         user_provided_sandbox = sandbox_name is not None
+        ephemeral_sandbox_dir = None
         if config.overlays:
-            # Generate UUID if no sandbox name specified
+            # Generate UUID if no sandbox name specified (ephemeral sandbox)
             if sandbox_name is None:
                 sandbox_name = str(uuid.uuid4())[:8]
+                ephemeral_sandbox_dir = get_sandbox_dir(sandbox_name)
             overlay_dirs = apply_sandbox_to_overlays(config, sandbox_name)
 
         # Register sandbox metadata (so --install can pick up binds later)
@@ -431,59 +446,16 @@ def main() -> None:
             not config.network_filter.requires_pasta()
         )
 
-        # Dispatch based on network mode
-        if config.network_filter.is_audit_mode():
-            # Network auditing - capture traffic and show summary after exit
-            execute_with_audit(
-                config,
-                file_map if file_map else None,
-                _build_bwrap_command,
-                sandbox_name if overlay_dirs else None,
-                overlay_dirs,
-            )
-        elif config.network_filter.is_filter_mode():
-            # Network filtering - apply iptables rules
-            execute_with_network_filter(
-                config,
-                file_map if file_map else None,
-                _build_bwrap_command,
-                sandbox_name if overlay_dirs else None,
-                overlay_dirs,
-            )
-        elif use_standalone_seccomp:
-            # Seccomp-only mode - wrap command in seccomp init script
-            init_script_path = create_seccomp_init_script(config.command)
-            tmp_dir = str(init_script_path.parent)
-            original_command = config.command
-            config.command = [str(init_script_path)]
-            cmd = config.build_command(file_map if file_map else None)
-            config.command = original_command  # Restore for display
-
-            # Bind mount the temp directory so the script is accessible inside sandbox
-            try:
-                separator_idx = cmd.index("--")
-                cmd.insert(separator_idx, "--bind")
-                cmd.insert(separator_idx + 1, tmp_dir)
-                cmd.insert(separator_idx + 2, tmp_dir)
-            except ValueError:
-                cmd.extend(["--bind", tmp_dir, tmp_dir])
-
-            print_execution_header(
-                cmd,
-                sandbox_name=sandbox_name if overlay_dirs else None,
-                overlay_dirs=overlay_dirs,
-                seccomp_enabled=True,
-            )
-            os.execvp("bwrap", cmd)
-        else:
-            # Normal execution without pasta or seccomp
-            cmd = config.build_command(file_map if file_map else None)
-            print_execution_header(
-                cmd,
-                sandbox_name=sandbox_name if overlay_dirs else None,
-                overlay_dirs=overlay_dirs,
-            )
-            os.execvp("bwrap", cmd)
+        # Execute command (handles dispatch, cleanup, and exit)
+        execute_sandbox(
+            config,
+            file_map if file_map else None,
+            _build_bwrap_command,
+            sandbox_name,
+            overlay_dirs,
+            ephemeral_sandbox_dir,
+            use_standalone_seccomp,
+        )
 
     # Otherwise show TUI for configuration
     app = BubblewrapTUI(args.command, version=BUI_VERSION)

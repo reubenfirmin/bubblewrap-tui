@@ -11,10 +11,10 @@ from model.network_filter import (
     NetworkFilter,
     PortForwarding,
 )
+from distro import detect_distro_id
 from net import (
     HostnameResolutionError,
     check_pasta,
-    detect_distro,
     generate_iptables_rules,
     generate_init_script,
     generate_pasta_args,
@@ -50,29 +50,29 @@ class TestCheckPasta:
 
 
 class TestDetectDistro:
-    """Test detect_distro function."""
+    """Test detect_distro_id function."""
 
-    @patch("pathlib.Path.exists")
+    @patch("distro.detector.Path.exists")
     def test_returns_none_when_no_os_release(self, mock_exists):
-        """detect_distro returns None when /etc/os-release doesn't exist."""
+        """detect_distro_id returns None when /etc/os-release doesn't exist."""
         mock_exists.return_value = False
-        assert detect_distro() is None
+        assert detect_distro_id() is None
 
-    @patch("pathlib.Path.read_text")
-    @patch("pathlib.Path.exists")
+    @patch("distro.detector.Path.read_text")
+    @patch("distro.detector.Path.exists")
     def test_detects_fedora(self, mock_exists, mock_read):
-        """detect_distro detects Fedora."""
+        """detect_distro_id detects Fedora."""
         mock_exists.return_value = True
         mock_read.return_value = 'NAME="Fedora Linux"\nID=fedora\nVERSION_ID=39'
-        assert detect_distro() == "fedora"
+        assert detect_distro_id() == "fedora"
 
-    @patch("pathlib.Path.read_text")
-    @patch("pathlib.Path.exists")
+    @patch("distro.detector.Path.read_text")
+    @patch("distro.detector.Path.exists")
     def test_detects_ubuntu(self, mock_exists, mock_read):
-        """detect_distro detects Ubuntu."""
+        """detect_distro_id detects Ubuntu."""
         mock_exists.return_value = True
         mock_read.return_value = 'NAME="Ubuntu"\nID=ubuntu\nVERSION_ID="22.04"'
-        assert detect_distro() == "ubuntu"
+        assert detect_distro_id() == "ubuntu"
 
 
 class TestGetInstallInstructions:

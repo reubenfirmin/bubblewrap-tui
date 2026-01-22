@@ -612,15 +612,15 @@ class TestExecuteWithAudit:
         mock_build_command,
         tmp_path,
     ):
-        """Exits with code 130 on Ctrl+C."""
+        """Returns exit code 130 on Ctrl+C."""
         mock_mkdtemp.return_value = str(tmp_path)
         mock_run.side_effect = KeyboardInterrupt()
 
         from net.pasta_exec import execute_with_audit
 
-        execute_with_audit(audit_config, None, mock_build_command)
+        exit_code = execute_with_audit(audit_config, None, mock_build_command)
 
-        mock_exit.assert_called_with(130)
+        assert exit_code == 130
 
 
 class TestFindIptables:

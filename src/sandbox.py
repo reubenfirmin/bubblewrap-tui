@@ -11,8 +11,127 @@ from profiles import BUI_PROFILES_DIR, Profile
 # Base directory for overlay storage
 BUI_STATE_DIR = Path.home() / ".local" / "state" / "bui"
 
+# New hierarchical sandbox directory structure
+# Each sandbox contains its own overlays subdirectory
+BUI_SANDBOXES_DIR = BUI_STATE_DIR / "sandboxes"
+
+# Legacy flat overlay directory (for migration)
+BUI_LEGACY_OVERLAYS_DIR = BUI_STATE_DIR / "overlays"
+
 # Metadata file tracking installed wrapper scripts
 INSTALLED_SCRIPTS_FILE = BUI_STATE_DIR / "installed.json"
+
+
+def normalize_dest_path(dest: str) -> str:
+    """Normalize a mount destination path to a safe directory name.
+
+    Converts paths like '/home/sandbox' to 'home-sandbox' and '/usr' to 'usr'.
+
+    Args:
+        dest: The mount destination path (e.g., '/home/sandbox', '/usr')
+
+    Returns:
+        A normalized string safe for use as a directory name
+    """
+    # Strip leading/trailing slashes and replace remaining slashes with dashes
+    normalized = dest.strip("/").replace("/", "-")
+    # Handle edge case of empty string (root mount)
+    return normalized if normalized else "root"
+
+
+def get_sandbox_dir(sandbox_name: str) -> Path:
+    """Get the root directory for a sandbox.
+
+    Args:
+        sandbox_name: Name of the sandbox
+
+    Returns:
+        Path to sandbox directory: ~/.local/state/bui/sandboxes/{sandbox_name}/
+    """
+    return BUI_SANDBOXES_DIR / sandbox_name
+
+
+def get_overlay_write_dir(sandbox_name: str, dest: str) -> Path:
+    """Get the write directory for a specific overlay within a sandbox.
+
+    Args:
+        sandbox_name: Name of the sandbox
+        dest: Mount destination path (e.g., '/home/sandbox', '/usr')
+
+    Returns:
+        Path to overlay write directory:
+        ~/.local/state/bui/sandboxes/{sandbox_name}/overlays/{normalized_dest}/
+    """
+    normalized = normalize_dest_path(dest)
+    return get_sandbox_dir(sandbox_name) / "overlays" / normalized
+
+
+def get_sandbox_work_dir(sandbox_name: str) -> Path:
+    """Get the shared work directory for a sandbox.
+
+    All overlays in a sandbox share a single work directory.
+
+    Args:
+        sandbox_name: Name of the sandbox
+
+    Returns:
+        Path to work directory: ~/.local/state/bui/sandboxes/{sandbox_name}/.overlay-work/
+    """
+    return get_sandbox_dir(sandbox_name) / ".overlay-work"
+
+
+def migrate_legacy_overlay(sandbox_name: str) -> bool:
+    """Migrate a legacy overlay to the new sandbox structure.
+
+    Moves from: ~/.local/state/bui/overlays/{sandbox_name}/
+    To: ~/.local/state/bui/sandboxes/{sandbox_name}/overlays/home-sandbox/
+
+    This preserves existing overlay data while adopting the new structure.
+    The migration assumes the legacy overlay was for /home/sandbox.
+
+    Args:
+        sandbox_name: Name of the sandbox to migrate
+
+    Returns:
+        True if migration was performed, False if not needed
+    """
+    legacy_dir = BUI_LEGACY_OVERLAYS_DIR / sandbox_name
+    legacy_work_dir = BUI_STATE_DIR / ".overlay-work"
+
+    if not legacy_dir.exists():
+        return False
+
+    # Check if already migrated
+    new_sandbox_dir = get_sandbox_dir(sandbox_name)
+    if new_sandbox_dir.exists():
+        # Already migrated - remove legacy if still present
+        if legacy_dir.exists():
+            shutil.rmtree(legacy_dir)
+        return False
+
+    # Create new structure
+    new_overlay_dir = get_overlay_write_dir(sandbox_name, "/home/sandbox")
+    new_work_dir = get_sandbox_work_dir(sandbox_name)
+
+    new_overlay_dir.parent.mkdir(parents=True, exist_ok=True)
+    new_work_dir.mkdir(parents=True, exist_ok=True)
+
+    # Move the legacy overlay contents to the new location
+    shutil.move(str(legacy_dir), str(new_overlay_dir))
+
+    # Check if legacy overlays dir is now empty and remove it
+    if BUI_LEGACY_OVERLAYS_DIR.exists():
+        try:
+            remaining = list(BUI_LEGACY_OVERLAYS_DIR.iterdir())
+            # Only remove if empty or only contains hidden files (like .overlay-work)
+            if not remaining or all(p.name.startswith(".") for p in remaining):
+                if legacy_work_dir.exists() and legacy_work_dir.parent == BUI_STATE_DIR:
+                    # Keep the legacy work dir for now, it might be in use
+                    pass
+        except OSError:
+            pass
+
+    return True
 
 
 def _load_installed() -> dict[str, dict]:
@@ -100,10 +219,18 @@ def install_sandbox_binary(
     bind_env: list[str] | None = None,
 ) -> None:
     """Install selected binary from sandbox to ~/.local/bin."""
-    overlay_dir = BUI_STATE_DIR / "overlays" / sandbox_name
+    sandbox_dir = get_sandbox_dir(sandbox_name)
+    overlays_dir = sandbox_dir / "overlays"
+
+    # Support flat overlay structure from older versions
+    legacy_overlay_dir = BUI_LEGACY_OVERLAYS_DIR / sandbox_name
+    if not overlays_dir.exists() and legacy_overlay_dir.exists():
+        migrate_legacy_overlay(sandbox_name)
+        overlays_dir = sandbox_dir / "overlays"
+
     bin_dir = Path.home() / ".local" / "bin"
 
-    if not overlay_dir.exists():
+    if not overlays_dir.exists():
         print(f"Sandbox '{sandbox_name}' not found", file=sys.stderr)
         sys.exit(1)
 
@@ -118,26 +245,36 @@ def install_sandbox_binary(
         if bind_env is None:
             bind_env = entry.get("bind_env")
 
-    executables = find_executables(overlay_dir)
-    if not executables:
+    # Search all overlay subdirectories for executables
+    all_executables: list[tuple[Path, str]] = []  # (path, sandbox_mount_point)
+    for overlay_subdir in overlays_dir.iterdir():
+        if not overlay_subdir.is_dir():
+            continue
+        # Map overlay dirname back to mount point (e.g., "home-sandbox" -> "/home/sandbox")
+        mount_point = "/" + overlay_subdir.name.replace("-", "/")
+        executables = find_executables(overlay_subdir)
+        for exe in executables:
+            rel_path = exe.relative_to(overlay_subdir)
+            all_executables.append((exe, f"{mount_point}/{rel_path}"))
+
+    if not all_executables:
         print(f"No executables found in sandbox '{sandbox_name}'", file=sys.stderr)
         sys.exit(1)
 
     print(f"Executables in sandbox '{sandbox_name}':")
-    for i, exe in enumerate(executables, 1):
-        print(f"  {i}. {exe.relative_to(overlay_dir)}")
+    for i, (exe, sandbox_path) in enumerate(all_executables, 1):
+        print(f"  {i}. {sandbox_path}")
 
     try:
         choice = input("\nSelect binary (number): ")
-        selected = executables[int(choice) - 1]
+        selected_exe, selected_sandbox_path = all_executables[int(choice) - 1]
     except (ValueError, IndexError, EOFError):
         print("Invalid selection", file=sys.stderr)
         sys.exit(1)
 
-    binary_name = selected.name
-    # Path inside sandbox - overlay is bound to /home/sandbox
-    sandbox_home = "/home/sandbox"
-    home_path = f"{sandbox_home}/{selected.relative_to(overlay_dir)}"
+    binary_name = selected_exe.name
+    # Path inside sandbox is already computed
+    home_path = selected_sandbox_path
     script_path = bin_dir / binary_name
 
     bin_dir.mkdir(parents=True, exist_ok=True)
@@ -162,19 +299,19 @@ exec bui --profile {profile} --sandbox {sandbox_name} --bind-cwd{extra_flags} --
 
 def uninstall_sandbox(sandbox_name: str) -> None:
     """Remove sandbox: wrapper scripts in ~/.local/bin and overlay data."""
-    overlay_dir = BUI_STATE_DIR / "overlays" / sandbox_name
+    sandbox_dir = get_sandbox_dir(sandbox_name)
+    legacy_overlay_dir = BUI_LEGACY_OVERLAYS_DIR / sandbox_name
     bin_dir = Path.home() / ".local" / "bin"
 
-    # Check if sandbox exists (either overlay dir or metadata)
     installed = _load_installed()
-    has_overlay = overlay_dir.exists()
+    has_sandbox = sandbox_dir.exists()
+    has_legacy_overlay = legacy_overlay_dir.exists()
     has_metadata = sandbox_name in installed
 
-    if not has_overlay and not has_metadata:
+    if not has_sandbox and not has_legacy_overlay and not has_metadata:
         print(f"Sandbox '{sandbox_name}' not found", file=sys.stderr)
         sys.exit(1)
 
-    # Remove wrapper scripts tracked in metadata
     scripts_to_remove = _remove_installed(sandbox_name)
     for script_name in scripts_to_remove:
         script_path = bin_dir / script_name
@@ -182,10 +319,13 @@ def uninstall_sandbox(sandbox_name: str) -> None:
             script_path.unlink()
             print(f"Removed: {script_path}")
 
-    # Remove overlay directory if it exists
-    if has_overlay:
-        shutil.rmtree(overlay_dir)
-        print(f"Removed: {overlay_dir}/")
+    if has_sandbox:
+        shutil.rmtree(sandbox_dir)
+        print(f"Removed: {sandbox_dir}/")
+
+    if has_legacy_overlay:
+        shutil.rmtree(legacy_overlay_dir)
+        print(f"Removed: {legacy_overlay_dir}/")
 
 
 def list_sandboxes() -> None:
@@ -217,38 +357,61 @@ def list_sandboxes() -> None:
 
 
 def list_overlays() -> None:
-    """List all overlay directories with details."""
-    overlays_dir = BUI_STATE_DIR / "overlays"
-
-    if not overlays_dir.exists():
-        print("No overlays found")
-        return
-
-    overlays = sorted(
-        d for d in overlays_dir.iterdir() if d.is_dir() and not d.name.startswith(".")
-    )
-
-    if not overlays:
-        print("No overlays found")
-        return
-
-    # Load installed sandboxes to check associations
+    """List all sandbox directories with their overlays."""
     installed = _load_installed()
+    found_any = False
 
-    print("Overlays:")
-    for overlay in overlays:
-        name = overlay.name
-        # Count files
-        file_count = sum(1 for _ in overlay.rglob("*") if _.is_file())
-        # Check if associated with installed sandbox
-        has_sandbox = name in installed
+    # List sandboxes in hierarchical structure
+    if BUI_SANDBOXES_DIR.exists():
+        sandboxes = sorted(
+            d for d in BUI_SANDBOXES_DIR.iterdir()
+            if d.is_dir() and not d.name.startswith(".")
+        )
+        for sandbox_dir in sandboxes:
+            name = sandbox_dir.name
+            overlays_subdir = sandbox_dir / "overlays"
+            if not overlays_subdir.exists():
+                continue
+            found_any = True
+            file_count = sum(1 for _ in sandbox_dir.rglob("*") if _.is_file())
+            has_installed = name in installed
+            overlay_names = sorted(
+                d.name for d in overlays_subdir.iterdir()
+                if d.is_dir() and not d.name.startswith(".")
+            )
 
-        print(f"  {overlay}/")
-        print(f"    files: {file_count}")
-        if has_sandbox:
-            print(f"    To remove: bui --sandbox {name} --uninstall")
-        else:
-            print("    No sandbox installed (safe to delete)")
+            print(f"  {sandbox_dir}/")
+            print(f"    overlays: {', '.join(overlay_names) if overlay_names else '(empty)'}")
+            print(f"    files: {file_count}")
+            if has_installed:
+                print(f"    To remove: bui --sandbox {name} --uninstall")
+            else:
+                print("    No scripts installed (safe to delete)")
+
+    # List overlays in flat structure (from older versions)
+    if BUI_LEGACY_OVERLAYS_DIR.exists():
+        overlays = sorted(
+            d for d in BUI_LEGACY_OVERLAYS_DIR.iterdir()
+            if d.is_dir() and not d.name.startswith(".")
+        )
+        for overlay in overlays:
+            name = overlay.name
+            # Skip if already shown in sandboxes
+            if (BUI_SANDBOXES_DIR / name).exists():
+                continue
+            found_any = True
+            file_count = sum(1 for _ in overlay.rglob("*") if _.is_file())
+            has_installed = name in installed
+
+            print(f"  {overlay}/ (flat structure)")
+            print(f"    files: {file_count}")
+            if has_installed:
+                print(f"    To remove: bui --sandbox {name} --uninstall")
+            else:
+                print("    No scripts installed (safe to delete)")
+
+    if not found_any:
+        print("No sandboxes found")
 
 
 def list_profiles() -> None:
