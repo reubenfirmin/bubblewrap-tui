@@ -57,6 +57,7 @@ def prepare_bwrap_command(cmd: list[str], tmp_dir: str) -> list[str]:
     Modifies the command to:
     - Remove --unshare-net (pasta provides the namespace)
     - Add bind mount for temp directory
+    - Add ro-bind for resolv.conf if DNS proxy is active
     - Remove --cap-drop CAP_NET_ADMIN (needed for iptables)
     - Add --cap-add CAP_NET_ADMIN
 
@@ -83,6 +84,24 @@ def prepare_bwrap_command(cmd: list[str], tmp_dir: str) -> list[str]:
         cmd.insert(separator_idx + 2, tmp_dir)
     except ValueError:
         cmd.extend(["--bind", tmp_dir, tmp_dir])
+
+    # If DNS proxy is active, ro-bind both the resolv.conf and the proxy script
+    # This makes them completely immutable from inside the sandbox
+    resolv_conf_path = Path(tmp_dir) / "resolv.conf"
+    dns_proxy_path = Path(tmp_dir) / "dns_proxy.py"
+
+    for filepath, dest in [
+        (resolv_conf_path, "/etc/resolv.conf"),
+        (dns_proxy_path, str(dns_proxy_path)),  # ro-bind in place
+    ]:
+        if filepath.exists():
+            try:
+                separator_idx = cmd.index("--")
+                cmd.insert(separator_idx, "--ro-bind")
+                cmd.insert(separator_idx + 1, str(filepath))
+                cmd.insert(separator_idx + 2, dest)
+            except ValueError:
+                cmd.extend(["--ro-bind", str(filepath), dest])
 
     # Remove CAP_NET_ADMIN from drop_caps if present
     new_cmd: list[str] = []

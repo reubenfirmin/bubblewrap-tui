@@ -538,6 +538,13 @@ SaveProfileModal {
     padding: 0 1;
 }
 
+.network-success {
+    color: $success;
+    height: auto;
+    margin-bottom: 1;
+    padding: 0 1;
+}
+
 .audit-info-text {
     color: $text;
     height: auto;
