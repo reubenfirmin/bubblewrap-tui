@@ -82,6 +82,7 @@ def compose_sandbox_tab(on_dev_mode_change: Callable[[str], None]) -> ComposeRes
                     yield OptionCard(groups.unshare_ipc)
                     yield OptionCard(groups.unshare_cgroup)
                     yield OptionCard(groups.disable_userns)
+                    yield OptionCard(groups.seccomp_block_userns)
                 with Container(classes="options-section"):
                     yield Label(groups.process_group.title, classes="section-label")
                     yield OptionCard(groups.die_with_parent)

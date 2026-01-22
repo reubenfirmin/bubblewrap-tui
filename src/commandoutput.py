@@ -14,6 +14,7 @@ def print_execution_header(
     network_filter: "NetworkFilter | None" = None,
     sandbox_name: str | None = None,
     overlay_dirs: list[str] | None = None,
+    seccomp_enabled: bool = False,
 ) -> None:
     """Print the execution header with command and optional details.
 
@@ -22,11 +23,19 @@ def print_execution_header(
         network_filter: Optional network filter config (if filtering enabled)
         sandbox_name: Optional sandbox name for overlay info
         overlay_dirs: Optional list of overlay directories
+        seccomp_enabled: Whether seccomp user namespace blocking is enabled
     """
     print("=" * 60)
 
+    # Build feature list for header
+    features = []
     if network_filter and network_filter.requires_pasta():
-        print("Executing (with network filtering):")
+        features.append("network filtering")
+    if seccomp_enabled:
+        features.append("seccomp userns block")
+
+    if features:
+        print(f"Executing (with {', '.join(features)}):")
     else:
         print("Executing:")
 

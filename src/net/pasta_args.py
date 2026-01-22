@@ -51,7 +51,7 @@ def generate_pasta_args(nf: "NetworkFilter", pcap_path: Path | None = None) -> l
     return args
 
 
-def prepare_bwrap_command(cmd: list[str], tmp_dir: str) -> list[str]:
+def prepare_bwrap_command(cmd: list[str], tmp_dir: str, use_seccomp: bool = False) -> list[str]:
     """Prepare bwrap command for pasta execution.
 
     Modifies the command to:
@@ -60,10 +60,12 @@ def prepare_bwrap_command(cmd: list[str], tmp_dir: str) -> list[str]:
     - Add ro-bind for resolv.conf if DNS proxy is active
     - Remove --cap-drop CAP_NET_ADMIN (needed for iptables)
     - Add --cap-add CAP_NET_ADMIN
+    - Remove --disable-userns if using seccomp alternative
 
     Args:
         cmd: The bwrap command list
         tmp_dir: Temp directory to bind mount
+        use_seccomp: If True, remove --disable-userns (seccomp handles it instead)
 
     Returns:
         Modified command list
@@ -75,6 +77,30 @@ def prepare_bwrap_command(cmd: list[str], tmp_dir: str) -> list[str]:
     cmd = [arg for arg in cmd if arg != "--unshare-net"]
     if len(cmd) == original_len:
         logger.debug("--unshare-net not found in command, pasta may already handle namespace")
+
+    # Remove --unshare-user since pasta provides the user namespace
+    # bwrap's user namespace would be NESTED inside pasta's, and capabilities
+    # in a nested user namespace cannot administer the parent's network namespace.
+    # This is required for CAP_NET_ADMIN to work with iptables.
+    cmd = [arg for arg in cmd if arg != "--unshare-user"]
+    logger.debug("Removed --unshare-user, using pasta's user namespace for CAP_NET_ADMIN")
+
+    # Also remove --uid and --gid since they require --unshare-user
+    new_cmd: list[str] = []
+    i = 0
+    while i < len(cmd):
+        if cmd[i] in ("--uid", "--gid") and i + 1 < len(cmd):
+            i += 2  # Skip both the flag and its value
+        else:
+            new_cmd.append(cmd[i])
+            i += 1
+    cmd = new_cmd
+
+    # Remove --disable-userns if using seccomp alternative
+    # This is needed because bwrap's --disable-userns prevents CAP_NET_ADMIN from working
+    if use_seccomp:
+        cmd = [arg for arg in cmd if arg != "--disable-userns"]
+        logger.debug("Removed --disable-userns, using seccomp filter instead")
 
     # Find the "--" separator and insert bind mount BEFORE it
     try:

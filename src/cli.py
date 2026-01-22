@@ -18,6 +18,7 @@ from installer import check_for_updates, do_install, do_update, show_update_noti
 from model import BoundDirectory, SandboxConfig
 from net import check_pasta, execute_with_audit, execute_with_network_filter, get_install_instructions
 from profiles import BUI_PROFILES_DIR, Profile
+from seccomp import create_seccomp_init_script
 from sandbox import (
     BUI_STATE_DIR,
     clean_temp_files,
@@ -301,59 +302,30 @@ def parse_args() -> ParsedArgs:
     )
 
 
-def cleanup_fds(fd_map: dict[str, int]) -> None:
-    """Close all file descriptors in the map.
+def setup_virtual_files(config: SandboxConfig) -> "VirtualFileManager":
+    """Set up virtual files for the sandbox.
 
-    Used to clean up FDs on error paths before exit.
-    """
-    for fd in fd_map.values():
-        try:
-            os.close(fd)
-        except OSError:
-            pass
-
-
-def setup_virtual_user_fds(config: SandboxConfig) -> dict[str, int]:
-    """Set up file descriptors for virtual user files.
-
-    Creates pipes and writes passwd/group content to them. The read ends
-    are kept open for bwrap to read from.
+    Creates temp files for passwd/group and any other virtual files needed.
+    This approach works consistently whether using pasta or not.
 
     Args:
         config: The sandbox configuration
 
     Returns:
-        Mapping of dest_path -> FD number for use with --ro-bind-data
+        VirtualFileManager with all files created
     """
-    virtual_user_data = config.get_virtual_user_data()
-    if not virtual_user_data:
-        return {}
-
-    fd_map = {}
-    for content, dest_path in virtual_user_data:
-        # Create a pipe
-        read_fd, write_fd = os.pipe()
-
-        # Write content to the pipe
-        os.write(write_fd, content.encode())
-        os.close(write_fd)
-
-        # Make the read FD inheritable (Python 3.4+ creates non-inheritable FDs by default)
-        os.set_inheritable(read_fd, True)
-
-        # Keep the read FD open for bwrap
-        fd_map[dest_path] = read_fd
-
-    return fd_map
+    from virtual_files import create_virtual_files
+    return create_virtual_files(config)
 
 
 def execute_bwrap(config: SandboxConfig) -> None:
     """Execute bwrap with virtual user support.
 
-    Sets up FDs for virtual user files if needed, then execs bwrap.
+    Sets up virtual files if needed, then execs bwrap.
     """
-    fd_map = setup_virtual_user_fds(config)
-    cmd = config.build_command(fd_map if fd_map else None)
+    vfiles = setup_virtual_files(config)
+    file_map = vfiles.get_file_map()
+    cmd = config.build_command(file_map if file_map else None)
     os.execvp("bwrap", cmd)
 
 
@@ -399,9 +371,9 @@ def validate_network_filter(config: SandboxConfig) -> bool:
     return True
 
 
-def _build_bwrap_command(config: SandboxConfig, fd_map: dict[str, int] | None) -> list[str]:
+def _build_bwrap_command(config: SandboxConfig, file_map: dict[str, str] | None) -> list[str]:
     """Helper to build bwrap command from config."""
-    return config.build_command(fd_map)
+    return config.build_command(file_map)
 
 
 def main() -> None:
@@ -450,14 +422,21 @@ def main() -> None:
         if not validate_network_filter(config):
             sys.exit(1)
 
-        fd_map = setup_virtual_user_fds(config)
+        vfiles = setup_virtual_files(config)
+        file_map = vfiles.get_file_map()
+
+        # Check if standalone seccomp is needed (seccomp enabled but no network filtering)
+        use_standalone_seccomp = (
+            config.namespace.seccomp_block_userns and
+            not config.network_filter.requires_pasta()
+        )
 
         # Dispatch based on network mode
         if config.network_filter.is_audit_mode():
             # Network auditing - capture traffic and show summary after exit
             execute_with_audit(
                 config,
-                fd_map if fd_map else None,
+                file_map if file_map else None,
                 _build_bwrap_command,
                 sandbox_name if overlay_dirs else None,
                 overlay_dirs,
@@ -466,14 +445,39 @@ def main() -> None:
             # Network filtering - apply iptables rules
             execute_with_network_filter(
                 config,
-                fd_map if fd_map else None,
+                file_map if file_map else None,
                 _build_bwrap_command,
                 sandbox_name if overlay_dirs else None,
                 overlay_dirs,
             )
+        elif use_standalone_seccomp:
+            # Seccomp-only mode - wrap command in seccomp init script
+            init_script_path = create_seccomp_init_script(config.command)
+            tmp_dir = str(init_script_path.parent)
+            original_command = config.command
+            config.command = [str(init_script_path)]
+            cmd = config.build_command(file_map if file_map else None)
+            config.command = original_command  # Restore for display
+
+            # Bind mount the temp directory so the script is accessible inside sandbox
+            try:
+                separator_idx = cmd.index("--")
+                cmd.insert(separator_idx, "--bind")
+                cmd.insert(separator_idx + 1, tmp_dir)
+                cmd.insert(separator_idx + 2, tmp_dir)
+            except ValueError:
+                cmd.extend(["--bind", tmp_dir, tmp_dir])
+
+            print_execution_header(
+                cmd,
+                sandbox_name=sandbox_name if overlay_dirs else None,
+                overlay_dirs=overlay_dirs,
+                seccomp_enabled=True,
+            )
+            os.execvp("bwrap", cmd)
         else:
-            # Normal execution without pasta
-            cmd = config.build_command(fd_map if fd_map else None)
+            # Normal execution without pasta or seccomp
+            cmd = config.build_command(file_map if file_map else None)
             print_execution_header(
                 cmd,
                 sandbox_name=sandbox_name if overlay_dirs else None,
@@ -494,26 +498,53 @@ def main() -> None:
         if not validate_network_filter(app.config):
             sys.exit(1)
 
-        fd_map = setup_virtual_user_fds(app.config)
+        vfiles = setup_virtual_files(app.config)
+        file_map = vfiles.get_file_map()
+
+        # Check if standalone seccomp is needed (seccomp enabled but no network filtering)
+        use_standalone_seccomp = (
+            app.config.namespace.seccomp_block_userns and
+            not app.config.network_filter.requires_pasta()
+        )
 
         # Dispatch based on network mode
         if app.config.network_filter.is_audit_mode():
             # Network auditing - capture traffic and show summary after exit
             execute_with_audit(
                 app.config,
-                fd_map if fd_map else None,
+                file_map if file_map else None,
                 _build_bwrap_command,
             )
         elif app.config.network_filter.is_filter_mode():
             # Network filtering - apply iptables rules
             execute_with_network_filter(
                 app.config,
-                fd_map if fd_map else None,
+                file_map if file_map else None,
                 _build_bwrap_command,
             )
+        elif use_standalone_seccomp:
+            # Seccomp-only mode - wrap command in seccomp init script
+            init_script_path = create_seccomp_init_script(app.config.command)
+            tmp_dir = str(init_script_path.parent)
+            original_command = app.config.command
+            app.config.command = [str(init_script_path)]
+            cmd = app.config.build_command(file_map if file_map else None)
+            app.config.command = original_command  # Restore for display
+
+            # Bind mount the temp directory so the script is accessible inside sandbox
+            try:
+                separator_idx = cmd.index("--")
+                cmd.insert(separator_idx, "--bind")
+                cmd.insert(separator_idx + 1, tmp_dir)
+                cmd.insert(separator_idx + 2, tmp_dir)
+            except ValueError:
+                cmd.extend(["--bind", tmp_dir, tmp_dir])
+
+            print_execution_header(cmd, seccomp_enabled=True)
+            os.execvp("bwrap", cmd)
         else:
-            # Normal execution without pasta
-            cmd = app.config.build_command(fd_map if fd_map else None)
+            # Normal execution without pasta or seccomp
+            cmd = app.config.build_command(file_map if file_map else None)
             print_execution_header(cmd)
             os.execvp("bwrap", cmd)
     else:

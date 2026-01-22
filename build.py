@@ -32,6 +32,7 @@ MODULE_ORDER = [
     "environment.py",                 # No dependencies (env var utilities)
     "installer.py",                   # No dependencies (install/update)
     "sandbox.py",                     # Sandbox lifecycle management
+    "seccomp.py",                     # No dependencies - seccomp filter generation
     "model/ui_field.py",              # No dependencies - UIField, Field, ConfigBase
     "model/bound_directory.py",       # No dependencies
     "model/overlay_config.py",        # No dependencies
@@ -62,6 +63,7 @@ MODULE_ORDER = [
     "net/audit.py",                   # Network audit/pcap analysis
     "net/__init__.py",                # Network module exports
     "bwrap.py",                       # Depends on detection, model (serialization/summary)
+    "virtual_files.py",               # Virtual file management (depends on bwrap for user data)
     "profiles.py",                    # Depends on model (JSON serialization)
     "ui/ids.py",                      # No dependencies - widget ID constants (needed early for ids.X refs)
     "controller/validators.py",       # Validation functions for sync
@@ -95,8 +97,8 @@ MODULE_ORDER = [
 
 # Local modules (imports to filter out)
 LOCAL_MODULES = {
-    "constants", "detection", "environment", "installer", "sandbox", "profiles", "app", "cli", "styles", "bwrap",
-    "commandoutput",
+    "constants", "detection", "environment", "installer", "sandbox", "seccomp", "profiles", "app", "cli", "styles", "bwrap",
+    "commandoutput", "virtual_files",
     "net", "net.utils", "net.iptables", "net.dns_proxy", "net.pasta", "net.audit",
     "net.pasta_install", "net.pasta_args", "net.filtering", "net.pasta_exec",
     "model",
