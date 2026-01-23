@@ -6,34 +6,95 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from detection import (
+    RuntimeDirError,
     detect_dbus_session,
     detect_display_server,
     find_dns_paths,
     find_ssl_cert_paths,
+    get_runtime_dir,
     is_path_covered,
     resolve_command_executable,
 )
 from model import BoundDirectory
 
 
+class TestGetRuntimeDir:
+    """Test get_runtime_dir() function."""
+
+    def test_valid_runtime_dir(self, tmp_path):
+        """Valid XDG_RUNTIME_DIR is returned."""
+        # Create a temp dir with correct permissions
+        runtime_dir = tmp_path / "runtime"
+        runtime_dir.mkdir(mode=0o700)
+
+        with patch.dict("os.environ", {"XDG_RUNTIME_DIR": str(runtime_dir)}, clear=True):
+            with patch("os.getuid", return_value=runtime_dir.stat().st_uid):
+                result = get_runtime_dir()
+                assert result == runtime_dir
+
+    def test_nonexistent_runtime_dir_raises(self, tmp_path):
+        """Non-existent XDG_RUNTIME_DIR raises RuntimeDirError."""
+        nonexistent = tmp_path / "does_not_exist"
+
+        with patch.dict("os.environ", {"XDG_RUNTIME_DIR": str(nonexistent)}, clear=True):
+            with pytest.raises(RuntimeDirError) as exc_info:
+                get_runtime_dir()
+            assert "does not exist" in str(exc_info.value)
+
+    def test_wrong_owner_raises(self, tmp_path):
+        """XDG_RUNTIME_DIR owned by wrong user raises RuntimeDirError."""
+        runtime_dir = tmp_path / "runtime"
+        runtime_dir.mkdir(mode=0o700)
+        actual_uid = runtime_dir.stat().st_uid
+
+        with patch.dict("os.environ", {"XDG_RUNTIME_DIR": str(runtime_dir)}, clear=True):
+            # Pretend we're a different user
+            with patch("os.getuid", return_value=actual_uid + 1):
+                with pytest.raises(RuntimeDirError) as exc_info:
+                    get_runtime_dir()
+                assert "not owned by current user" in str(exc_info.value)
+
+    def test_wrong_permissions_raises(self, tmp_path):
+        """XDG_RUNTIME_DIR with wrong permissions raises RuntimeDirError."""
+        runtime_dir = tmp_path / "runtime"
+        runtime_dir.mkdir(mode=0o755)  # Wrong: group/other readable
+
+        with patch.dict("os.environ", {"XDG_RUNTIME_DIR": str(runtime_dir)}, clear=True):
+            with patch("os.getuid", return_value=runtime_dir.stat().st_uid):
+                with pytest.raises(RuntimeDirError) as exc_info:
+                    get_runtime_dir()
+                assert "insecure permissions" in str(exc_info.value)
+
+    def test_no_env_uses_default(self):
+        """No XDG_RUNTIME_DIR uses default /run/user/{uid}."""
+        with patch.dict("os.environ", {}, clear=True):
+            with patch("os.getuid", return_value=1000):
+                result = get_runtime_dir()
+                assert result == Path("/run/user/1000")
+
+
 class TestDetectDisplayServer:
     """Test detect_display_server() function."""
 
-    def test_no_display_server(self, mock_env):
+    @patch("detection.get_runtime_dir")
+    def test_no_display_server(self, mock_runtime_dir, mock_env):
         """No display server when env vars unset."""
+        mock_runtime_dir.return_value = Path("/run/user/1000")
         result = detect_display_server()
         assert result.type is None
         assert result.paths == []
         assert result.env_vars == []
 
+    @patch("detection.get_runtime_dir")
     @patch("detection.Path.exists")
     @patch.dict(
         "os.environ",
-        {"WAYLAND_DISPLAY": "wayland-0", "XDG_RUNTIME_DIR": "/run/user/1000"},
+        {"WAYLAND_DISPLAY": "wayland-0"},
         clear=True,
     )
-    def test_wayland_detected(self, mock_exists):
+    def test_wayland_detected(self, mock_exists, mock_runtime_dir):
         """Wayland detected when socket exists."""
+        mock_runtime_dir.return_value = Path("/run/user/1000")
         mock_exists.return_value = True
         result = detect_display_server()
         assert result.type == "wayland"
@@ -41,54 +102,61 @@ class TestDetectDisplayServer:
         assert "WAYLAND_DISPLAY" in result.env_vars
         assert "XDG_RUNTIME_DIR" in result.env_vars
 
+    @patch("detection.get_runtime_dir")
     @patch("detection.Path.exists")
     @patch.dict(
         "os.environ",
-        {"WAYLAND_DISPLAY": "wayland-0", "XDG_RUNTIME_DIR": "/run/user/1000"},
+        {"WAYLAND_DISPLAY": "wayland-0"},
         clear=True,
     )
-    def test_wayland_socket_missing(self, mock_exists):
+    def test_wayland_socket_missing(self, mock_exists, mock_runtime_dir):
         """Wayland not detected if socket doesn't exist."""
+        mock_runtime_dir.return_value = Path("/run/user/1000")
         mock_exists.return_value = False
         result = detect_display_server()
         assert result.type is None
 
+    @patch("detection.get_runtime_dir")
     @patch("detection.Path.exists")
     @patch.dict("os.environ", {"DISPLAY": ":0"}, clear=True)
-    def test_x11_detected(self, mock_exists):
+    def test_x11_detected(self, mock_exists, mock_runtime_dir):
         """X11 detected when socket exists."""
+        mock_runtime_dir.return_value = Path("/run/user/1000")
         mock_exists.return_value = True
         result = detect_display_server()
         assert result.type == "x11"
         assert "DISPLAY" in result.env_vars
         assert "/tmp/.X11-unix" in result.paths
 
+    @patch("detection.get_runtime_dir")
     @patch("detection.Path.exists")
     @patch.dict(
         "os.environ",
         {
             "WAYLAND_DISPLAY": "wayland-0",
             "DISPLAY": ":0",
-            "XDG_RUNTIME_DIR": "/run/user/1000",
         },
         clear=True,
     )
-    def test_both_detected(self, mock_exists):
+    def test_both_detected(self, mock_exists, mock_runtime_dir):
         """Both X11 and Wayland detected."""
+        mock_runtime_dir.return_value = Path("/run/user/1000")
         mock_exists.return_value = True
         result = detect_display_server()
         assert result.type == "both"
         assert "DISPLAY" in result.env_vars
         assert "WAYLAND_DISPLAY" in result.env_vars
 
+    @patch("detection.get_runtime_dir")
     @patch("detection.Path.exists")
     @patch.dict(
         "os.environ",
         {"DISPLAY": ":0", "XAUTHORITY": "/home/user/.Xauthority"},
         clear=True,
     )
-    def test_xauthority_included(self, mock_exists):
+    def test_xauthority_included(self, mock_exists, mock_runtime_dir):
         """XAUTHORITY path included when it exists."""
+        mock_runtime_dir.return_value = Path("/run/user/1000")
         mock_exists.return_value = True
         result = detect_display_server()
         assert "/home/user/.Xauthority" in result.paths
@@ -140,28 +208,33 @@ class TestFindDnsPaths:
 class TestDetectDbusSession:
     """Test detect_dbus_session() function."""
 
-    def test_no_dbus_without_env(self, mock_env):
+    @patch("detection.get_runtime_dir")
+    def test_no_dbus_without_env(self, mock_runtime_dir, mock_env):
         """No D-Bus paths without relevant env vars."""
+        mock_runtime_dir.return_value = Path("/run/user/1000")
         with patch("detection.Path.exists", return_value=False):
             paths = detect_dbus_session()
             assert paths == []
 
+    @patch("detection.get_runtime_dir")
     @patch("detection.Path.exists")
-    @patch.dict("os.environ", {"XDG_RUNTIME_DIR": "/run/user/1000"}, clear=True)
-    def test_standard_bus_path(self, mock_exists):
+    def test_standard_bus_path(self, mock_exists, mock_runtime_dir):
         """Finds standard bus path in XDG_RUNTIME_DIR."""
+        mock_runtime_dir.return_value = Path("/run/user/1000")
         mock_exists.return_value = True
         paths = detect_dbus_session()
         assert "/run/user/1000/bus" in paths
 
+    @patch("detection.get_runtime_dir")
     @patch("detection.Path.exists")
     @patch.dict(
         "os.environ",
         {"DBUS_SESSION_BUS_ADDRESS": "unix:path=/custom/socket"},
         clear=True,
     )
-    def test_custom_dbus_address(self, mock_exists):
+    def test_custom_dbus_address(self, mock_exists, mock_runtime_dir):
         """Parses DBUS_SESSION_BUS_ADDRESS for custom socket."""
+        mock_runtime_dir.return_value = Path("/run/user/1000")
         mock_exists.return_value = True
         paths = detect_dbus_session()
         assert "/custom/socket" in paths
