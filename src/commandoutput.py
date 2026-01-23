@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -14,7 +15,6 @@ def print_execution_header(
     network_filter: "NetworkFilter | None" = None,
     sandbox_name: str | None = None,
     overlay_dirs: list[str] | None = None,
-    seccomp_enabled: bool = False,
 ) -> None:
     """Print the execution header with command and optional details.
 
@@ -23,23 +23,22 @@ def print_execution_header(
         network_filter: Optional network filter config (if filtering enabled)
         sandbox_name: Optional sandbox name for overlay info
         overlay_dirs: Optional list of overlay directories
-        seccomp_enabled: Whether seccomp user namespace blocking is enabled
     """
     print("=" * 60)
 
-    # Build feature list for header
-    features = []
     if network_filter and network_filter.requires_pasta():
-        features.append("network filtering")
-    if seccomp_enabled:
-        features.append("seccomp userns block")
-
-    if features:
-        print(f"Executing (with {', '.join(features)}):")
+        print("Executing (with network filtering):")
     else:
         print("Executing:")
 
-    print(" ".join(cmd))
+    # Show the full command including pasta wrapper if network filtering
+    if network_filter and network_filter.requires_pasta():
+        from net.pasta_args import generate_pasta_args
+        pasta_args = generate_pasta_args(network_filter)
+        full_cmd = pasta_args + ["--"] + cmd
+        print(shlex.join(full_cmd))
+    else:
+        print(shlex.join(cmd))
 
     if sandbox_name and overlay_dirs:
         print(f"\nSandbox: {sandbox_name}")
@@ -48,13 +47,6 @@ def print_execution_header(
             print(f"  {d}/")
 
     if network_filter and network_filter.requires_pasta():
-        # Show pasta command template
-        from net.pasta import generate_pasta_args
-        print()
-        pasta_args = generate_pasta_args(network_filter)
-        # Add placeholder for bwrap command
-        print(" ".join(pasta_args) + " -- <bwrap...>")
-
         # Show filtering summary
         summary_lines = network_filter.get_filtering_summary()
         if summary_lines:
@@ -81,7 +73,7 @@ def print_audit_header(
     """
     print("=" * 60)
     print("Executing (with network auditing):")
-    print(" ".join(cmd))
+    print(shlex.join(cmd))
 
     if sandbox_name and overlay_dirs:
         print(f"\nSandbox: {sandbox_name}")

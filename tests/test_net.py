@@ -11,7 +11,6 @@ from model.network_filter import (
     NetworkFilter,
     PortForwarding,
 )
-from distro import detect_distro_id
 from net import (
     HostnameResolutionError,
     check_pasta,
@@ -47,32 +46,6 @@ class TestCheckPasta:
         """check_pasta returns False when not installed."""
         mock_which.return_value = None
         assert check_pasta() is False
-
-
-class TestDetectDistro:
-    """Test detect_distro_id function."""
-
-    @patch("distro.detector.Path.exists")
-    def test_returns_none_when_no_os_release(self, mock_exists):
-        """detect_distro_id returns None when /etc/os-release doesn't exist."""
-        mock_exists.return_value = False
-        assert detect_distro_id() is None
-
-    @patch("distro.detector.Path.read_text")
-    @patch("distro.detector.Path.exists")
-    def test_detects_fedora(self, mock_exists, mock_read):
-        """detect_distro_id detects Fedora."""
-        mock_exists.return_value = True
-        mock_read.return_value = 'NAME="Fedora Linux"\nID=fedora\nVERSION_ID=39'
-        assert detect_distro_id() == "fedora"
-
-    @patch("distro.detector.Path.read_text")
-    @patch("distro.detector.Path.exists")
-    def test_detects_ubuntu(self, mock_exists, mock_read):
-        """detect_distro_id detects Ubuntu."""
-        mock_exists.return_value = True
-        mock_read.return_value = 'NAME="Ubuntu"\nID=ubuntu\nVERSION_ID="22.04"'
-        assert detect_distro_id() == "ubuntu"
 
 
 class TestGetInstallInstructions:

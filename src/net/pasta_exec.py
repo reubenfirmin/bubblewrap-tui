@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from model.network_filter import NetworkFilter
     from model.sandbox_config import SandboxConfig
 
-from net.filtering import validate_filtering_requirements, create_init_script
+from net.filtering import validate_filtering_requirements
 from net.pasta_args import generate_pasta_args, prepare_bwrap_command
 from net.utils import HostnameResolutionError
 
@@ -26,13 +26,18 @@ def execute_with_pasta(
 ) -> int:
     """Execute bwrap with network filtering via pasta spawn mode.
 
-    pasta creates a new user+network namespace and runs bwrap inside.
-    This is much simpler than the attach mode and requires no special privileges.
+    pasta creates a new user+network namespace and runs a wrapper script inside.
+    The wrapper applies iptables rules, starts DNS proxy if needed, then execs bwrap.
+
+    This architecture allows bwrap to use --unshare-user --disable-userns for full
+    namespace isolation, because iptables runs BEFORE bwrap (doesn't need CAP_NET_ADMIN
+    inside the sandbox).
 
     Architecture:
-        pasta --config-net -- bwrap [args] -- init_script
-
-    The init script applies iptables rules, drops CAP_NET_ADMIN, then runs the user command.
+        pasta --config-net -- wrapper.sh
+                                 |-> iptables rules
+                                 |-> start DNS proxy (if needed)
+                                 |-> exec bwrap --unshare-user --disable-userns ... -- user_cmd
 
     Args:
         config: SandboxConfig with network_filter enabled
@@ -48,21 +53,29 @@ def execute_with_pasta(
 
     nf = config.network_filter
 
-    # Determine if we need to use seccomp for user namespace blocking
-    # Use seccomp if explicitly enabled OR if network filtering + bwrap's disable_userns
-    # (bwrap's --disable-userns prevents CAP_NET_ADMIN from working)
-    use_seccomp = config.namespace.seccomp_block_userns or (
-        nf.requires_pasta() and config.namespace.disable_userns
-    )
-
     # Validate all required tools are available
-    iptables_path, ip6tables_path, is_multicall, cap_drop_template = validate_filtering_requirements(nf)
+    iptables_path, ip6tables_path, is_multicall = validate_filtering_requirements(nf)
 
-    # Create init script (resolves hostnames to IPs)
+    # Build bwrap command (this is what wrapper.sh will exec)
+    bwrap_cmd = build_command_fn(config, file_map)
+
+    # Create wrapper script in a location pasta can execute from
+    # SELinux on Fedora prevents pasta from executing scripts in dirs with
+    # cache_home_t or data_home_t contexts. Only user_home_t works.
+    # ~/.bui-run/ inherits user_home_t from $HOME
+    import tempfile
+    run_dir = Path.home() / ".bui-run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir = tempfile.mkdtemp(prefix="net-", dir=run_dir)
+    tmp_path = Path(tmp_dir)
+
+    # Prepare bwrap command (removes --unshare-net, adds bind mounts)
+    bwrap_cmd = prepare_bwrap_command(bwrap_cmd, tmp_dir)
+
+    # Create wrapper script that does iptables setup then execs bwrap
     try:
-        init_script_path = create_init_script(
-            nf, config.command, iptables_path, ip6tables_path, is_multicall, cap_drop_template,
-            use_seccomp=use_seccomp
+        wrapper_script_path = _create_wrapper_with_tmp(
+            nf, bwrap_cmd, iptables_path, ip6tables_path, is_multicall, tmp_path
         )
     except HostnameResolutionError as e:
         print("=" * 60, file=sys.stderr)
@@ -75,37 +88,84 @@ def execute_with_pasta(
         print("=" * 60, file=sys.stderr)
         sys.exit(1)
 
-    tmp_dir = str(init_script_path.parent)
-
-    # Build bwrap command with init script as the command
-    original_command = config.command
-    config.command = [str(init_script_path)]
-    cmd = build_command_fn(config, file_map)
-    config.command = original_command
-
-    # Prepare command for pasta execution (removes --disable-userns if using seccomp)
-    cmd = prepare_bwrap_command(cmd, tmp_dir, use_seccomp=use_seccomp)
-
     # Print header
     from commandoutput import print_execution_header
     print_execution_header(
-        cmd,
+        bwrap_cmd,
         network_filter=nf,
         sandbox_name=sandbox_name,
         overlay_dirs=overlay_dirs,
     )
 
-    # Build pasta command: pasta [args] -- bwrap [args]
+    # Build pasta command: pasta [args] -- /bin/sh wrapper.sh
+    # We use /bin/sh to execute the script rather than directly because
+    # SELinux prevents pasta from executing scripts directly in some contexts
     pasta_args = generate_pasta_args(nf)
-    full_cmd = pasta_args + ["--"] + cmd
+    full_cmd = pasta_args + ["--", "/bin/sh", str(wrapper_script_path)]
 
     # Use pty to run pasta - this prevents terminal corruption when bwrap
     # --new-session receives SIGINT (a known bwrap issue #369)
-    # We use pty.fork() instead of pty.spawn() to properly handle cleanup
-    # when the child exits, as pasta may leave orphaned bwrap processes
     sys.stdout.flush()
     sys.stderr.flush()
     return _run_with_pty(full_cmd)
+
+
+def _create_wrapper_with_tmp(
+    nf: "NetworkFilter",
+    bwrap_cmd: list[str],
+    iptables_path: str,
+    ip6tables_path: str | None,
+    is_multicall: bool,
+    tmp_path: Path,
+) -> Path:
+    """Create wrapper script in the given tmp directory.
+
+    This is a helper that creates the wrapper script components in a pre-existing
+    temp directory (which is needed because prepare_bwrap_command needs to know
+    the tmp_dir before we create the wrapper).
+    """
+    import shlex
+
+    from net.dns_proxy import generate_dns_proxy_script, get_dns_proxy_init_commands, needs_dns_proxy
+    from net.iptables import generate_init_script
+
+    wrapper_script_path = tmp_path / "wrapper.sh"
+
+    iptables_script = generate_init_script(nf, iptables_path, ip6tables_path, is_multicall)
+
+    # Check if DNS proxy is needed for hostname filtering
+    dns_proxy_setup = ""
+    if needs_dns_proxy(nf.hostname_filter):
+        dns_proxy_script_path = tmp_path / "dns_proxy.py"
+        dns_proxy_script = generate_dns_proxy_script(nf.hostname_filter)
+        dns_proxy_script_path.write_text(dns_proxy_script)
+        dns_proxy_script_path.chmod(0o755)
+        dns_proxy_setup = get_dns_proxy_init_commands(str(dns_proxy_script_path))
+
+        # Write resolv.conf to temp dir - will be ro-bind mounted by bwrap
+        resolv_conf_path = tmp_path / "resolv.conf"
+        resolv_conf_path.write_text("# DNS handled by bubblewrap-tui DNS proxy\nnameserver 127.0.0.1\n")
+        resolv_conf_path.chmod(0o444)
+
+    # Build the bwrap command string
+    bwrap_cmd_str = " ".join(shlex.quote(arg) for arg in bwrap_cmd)
+
+    wrapper_script = f'''#!/bin/sh
+set -e
+
+# Set up iptables rules (requires CAP_NET_ADMIN from pasta)
+{iptables_script}
+{dns_proxy_setup}
+# Execute bwrap with full namespace isolation
+# --unshare-user creates nested user namespace
+# --disable-userns blocks further namespace creation (prevents escapes)
+exec {bwrap_cmd_str}
+'''
+
+    wrapper_script_path.write_text(wrapper_script)
+    wrapper_script_path.chmod(0o755)
+
+    return wrapper_script_path
 
 
 def _run_with_pty(cmd: list[str]) -> int:
@@ -114,10 +174,10 @@ def _run_with_pty(cmd: list[str]) -> int:
     This handles the case where pasta exits but bwrap gets orphaned to init,
     which would otherwise leave pty.spawn() hanging.
     """
+    import io
     import os
     import pty
     import select
-    import signal
     import sys
     import termios
     import tty
@@ -131,9 +191,13 @@ def _run_with_pty(cmd: list[str]) -> int:
 
     # Parent - copy data between pty and stdin/stdout
     old_settings = None
-    if os.isatty(sys.stdin.fileno()):
-        old_settings = termios.tcgetattr(sys.stdin)
-        tty.setraw(sys.stdin.fileno())
+    try:
+        stdin_fd = sys.stdin.fileno()
+        if os.isatty(stdin_fd):
+            old_settings = termios.tcgetattr(stdin_fd)
+            tty.setraw(stdin_fd)
+    except (io.UnsupportedOperation, OSError):
+        stdin_fd = None
 
     try:
         while True:
@@ -148,13 +212,14 @@ def _run_with_pty(cmd: list[str]) -> int:
 
             # Wait for data on stdin or pty
             try:
-                r, _, _ = select.select([sys.stdin, fd], [], [], 0.1)
+                read_fds = [fd] if stdin_fd is None else [stdin_fd, fd]
+                r, _, _ = select.select(read_fds, [], [], 0.1)
             except (select.error, ValueError):
                 break
 
-            if sys.stdin in r:
+            if stdin_fd is not None and stdin_fd in r:
                 try:
-                    data = os.read(sys.stdin.fileno(), 1024)
+                    data = os.read(stdin_fd, 1024)
                     if data:
                         os.write(fd, data)
                 except OSError:
@@ -164,7 +229,11 @@ def _run_with_pty(cmd: list[str]) -> int:
                 try:
                     data = os.read(fd, 1024)
                     if data:
-                        os.write(sys.stdout.fileno(), data)
+                        try:
+                            os.write(sys.stdout.fileno(), data)
+                        except (io.UnsupportedOperation, OSError):
+                            sys.stdout.buffer.write(data)
+                            sys.stdout.buffer.flush()
                     else:
                         # EOF on pty - child closed it
                         break
@@ -172,16 +241,17 @@ def _run_with_pty(cmd: list[str]) -> int:
                     break
     finally:
         # Restore terminal settings
-        if old_settings is not None:
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+        if old_settings is not None and stdin_fd is not None:
+            termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_settings)
 
-        # Reap child if not already reaped
-        try:
-            os.waitpid(pid, os.WNOHANG)
-        except ChildProcessError:
-            pass
-
-    return 0
+    # Reap child and get exit status
+    try:
+        _, status = os.waitpid(pid, 0)
+        if os.WIFEXITED(status):
+            return os.WEXITSTATUS(status)
+        return 1
+    except ChildProcessError:
+        return 0
 
 
 def execute_with_audit(
@@ -222,8 +292,10 @@ def execute_with_audit(
     nf = config.network_filter
 
     # Create temp directory for pcap file
-    # Use a directory that pasta can write to (it drops privileges)
-    tmp_dir = tempfile.mkdtemp(prefix="bui-audit-")
+    # Use ~/.bui-run for SELinux compatibility (user_home_t context)
+    run_dir = Path.home() / ".bui-run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir = tempfile.mkdtemp(prefix="audit-", dir=run_dir)
     tmp_path = Path(tmp_dir)
 
     # Make directory world-writable for pasta's dropped privileges

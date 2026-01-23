@@ -722,3 +722,43 @@ class TestOverlayModes:
         src_idx = args.index("--overlay-src")
         assert args[src_idx + 1] == "/src"
         assert "--overlay" in args
+
+
+class TestArgumentOrdering:
+    """Test that bwrap arguments are ordered correctly."""
+
+    def test_overlays_come_after_bound_dirs(self):
+        """Overlays must come after bound_dirs so they can override subdirectories.
+
+        This is critical for package manager overlays: if /usr is bound read-only,
+        an overlay on /usr/lib/sysimage/rpm must come AFTER to override it.
+        """
+        config = make_config(
+            bound_dirs=[BoundDirectory(path=Path("/usr"), readonly=True)],
+            overlays=[
+                OverlayConfig(
+                    source="/usr/lib/sysimage/rpm",
+                    dest="/usr/lib/sysimage/rpm",
+                    mode="persistent",
+                    write_dir="/tmp/overlay-writes",
+                )
+            ],
+        )
+        args = BubblewrapSerializer(config).serialize()
+
+        # Find positions of the ro-bind for /usr and overlay-src for the rpm dir
+        ro_bind_usr_idx = None
+        overlay_src_idx = None
+
+        for i, arg in enumerate(args):
+            if arg == "--ro-bind" and i + 1 < len(args) and args[i + 1] == "/usr":
+                ro_bind_usr_idx = i
+            if arg == "--overlay-src" and i + 1 < len(args) and args[i + 1] == "/usr/lib/sysimage/rpm":
+                overlay_src_idx = i
+
+        assert ro_bind_usr_idx is not None, "Expected --ro-bind /usr in args"
+        assert overlay_src_idx is not None, "Expected --overlay-src /usr/lib/sysimage/rpm in args"
+        assert overlay_src_idx > ro_bind_usr_idx, (
+            f"Overlay ({overlay_src_idx}) must come after bound dir ({ro_bind_usr_idx}) "
+            "so it can override the read-only bind"
+        )

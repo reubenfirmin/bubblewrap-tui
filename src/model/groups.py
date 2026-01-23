@@ -22,7 +22,7 @@ from model.fields import (
     unshare_user, synthetic_passwd, overlay_home,
     uid_field, gid_field, username_field,
     # Isolation fields
-    unshare_pid, unshare_ipc, unshare_uts, unshare_cgroup, disable_userns, seccomp_block_userns,
+    unshare_pid, unshare_ipc, unshare_uts, unshare_cgroup, disable_userns,
     # Process fields
     die_with_parent, new_session, as_pid_1, chdir,
     # Network fields
@@ -120,7 +120,7 @@ user_group = ConfigGroup(
 isolation_group = ConfigGroup(
     name="isolation",
     title="Isolate",
-    items=[unshare_pid, unshare_ipc, unshare_cgroup, disable_userns, seccomp_block_userns],
+    items=[unshare_pid, unshare_ipc, unshare_cgroup, disable_userns],
     _to_summary_fn=_isolation_to_summary,
 )
 

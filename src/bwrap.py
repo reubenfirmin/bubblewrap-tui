@@ -153,7 +153,11 @@ class BubblewrapSerializer:
             else:
                 args.extend(group.to_args())
 
-        # Overlays (must come before virtual user file bindings)
+        # Bound directories (must come before overlays so overlays can override)
+        for bound_dir in self.config.bound_dirs:
+            args.extend(bound_dir.to_args())
+
+        # Overlays (override bound directories for specific subdirectories)
         for overlay in self.config.overlays:
             args.extend(overlay.to_args())
 
@@ -164,10 +168,6 @@ class BubblewrapSerializer:
         # Capability drops
         for cap in self.config.drop_caps:
             args.extend(["--cap-drop", cap])
-
-        # Bound directories
-        for bound_dir in self.config.bound_dirs:
-            args.extend(bound_dir.to_args())
 
         # Command separator and command
         args.append("--")
@@ -262,15 +262,6 @@ class BubblewrapSerializer:
             pasta_parts.append("[dim]<bwrap...>[/]")
             result += "\n\n" + " ".join(pasta_parts)
 
-        # Check if seccomp will be used (standalone or with network filter)
-        seccomp_explicit = self.config._isolation_group.get("seccomp_block_userns")
-        seccomp_auto = (
-            nf.requires_pasta() and
-            self.config._isolation_group.get("disable_userns")
-        )
-        if seccomp_explicit or seccomp_auto:
-            result += "\n\n[bold yellow]+ seccomp filter[/] [dim](blocks user namespace creation)[/]"
-
         return result
 
 
@@ -297,7 +288,7 @@ class BubblewrapSummarizer:
             # Special handling for process group
             if group.name == "process":
                 summary = self._get_process_summary()
-            # Special handling for isolation group (needs network_filter for seccomp warning)
+            # Special handling for isolation group
             elif group.name == "isolation":
                 summary = self._get_isolation_summary()
             else:
@@ -359,7 +350,7 @@ class BubblewrapSummarizer:
         )
 
     def _get_isolation_summary(self) -> str | None:
-        """Get isolation summary (needs network_filter for seccomp auto-enable warning)."""
+        """Get isolation summary."""
         from model.groups import _isolation_to_summary
         return _isolation_to_summary(
             self.config._isolation_group,
@@ -383,7 +374,7 @@ class BubblewrapSummarizer:
             if group.name == "process":
                 args = BubblewrapSerializer(self.config)._get_process_args()
                 summary = self._get_process_summary()
-            # Special handling for isolation group (needs network_filter for seccomp warning)
+            # Special handling for isolation group
             elif group.name == "isolation":
                 args = group.to_args()
                 summary = self._get_isolation_summary()
@@ -448,15 +439,6 @@ class BubblewrapSummarizer:
             lines.append(f"[{color}]• Network filtering (pasta):[/]")
             for summary_line in nf.get_filtering_summary():
                 lines.append(f"[{color}]  - {summary_line}[/]")
-
-        # Seccomp filter (prominent display)
-        seccomp_explicit = self.config._isolation_group.get("seccomp_block_userns")
-        seccomp_auto = (
-            nf.requires_pasta() and
-            self.config._isolation_group.get("disable_userns")
-        )
-        if seccomp_explicit or seccomp_auto:
-            lines.append("[bold yellow]• Seccomp filter ACTIVE — blocks nested sandbox/container creation[/]")
 
         # Command (white, not colored - it's what the user asked to run)
         lines.append(f"• Running: {' '.join(self.config.command)}")

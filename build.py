@@ -28,23 +28,10 @@ Usage: bui -- <command> [args...]
 # Order matters - modules must be concatenated in dependency order
 MODULE_ORDER = [
     "constants.py",                   # No dependencies - shared constants
-    "distro/base.py",                 # No dependencies - distro base class
-    "distro/detector.py",             # Depends on base
-    "distro/generic.py",              # Depends on base, detector
-    "distro/fedora.py",               # Depends on base, detector
-    "distro/debian.py",               # Depends on base, detector
-    "distro/arch.py",                 # Depends on base, detector
-    "distro/opensuse.py",             # Depends on base, detector
-    "distro/alpine.py",               # Depends on base, detector
-    "distro/gentoo.py",               # Depends on base, detector
-    "distro/void.py",                 # Depends on base, detector
-    "distro/nix.py",                  # Depends on base, detector
-    "distro/__init__.py",             # Depends on all distro modules
     "detection.py",                   # No dependencies (system detection)
     "environment.py",                 # No dependencies (env var utilities)
-    "installer.py",                   # Depends on distro (for installable profile)
+    "installer.py",                   # Profile installation
     "sandbox.py",                     # Sandbox lifecycle management
-    "seccomp.py",                     # No dependencies - seccomp filter generation
     "model/ui_field.py",              # No dependencies - UIField, Field, ConfigBase
     "model/bound_directory.py",       # No dependencies
     "model/overlay_config.py",        # No dependencies
@@ -79,8 +66,7 @@ MODULE_ORDER = [
     "profiles.py",                    # Depends on model (JSON serialization)
     "ui/ids.py",                      # No dependencies - widget ID constants (needed early for ids.X refs)
     "controller/validators.py",       # Validation functions for sync
-    "controller/field_mappings.py",   # Field mapping registry (depends on validators, ids)
-    "controller/sync.py",             # UI ↔ Config sync (depends on field_mappings)
+    "controller/sync.py",             # UI ↔ Config sync (depends on validators)
     "ui/widgets/directory.py",        # Directory widgets (FilteredDirectoryTree, BoundDirItem)
     "ui/widgets/overlay.py",          # Overlay widget (OverlayItem)
     "ui/widgets/environment.py",      # Environment widgets (EnvVarItem, EnvVarRow, AddEnvDialog)
@@ -110,11 +96,8 @@ MODULE_ORDER = [
 
 # Local modules (imports to filter out)
 LOCAL_MODULES = {
-    "constants", "detection", "environment", "installer", "sandbox", "seccomp", "profiles", "app", "cli", "styles", "bwrap",
+    "constants", "detection", "environment", "installer", "sandbox", "profiles", "app", "cli", "styles", "bwrap",
     "commandoutput", "virtual_files", "command_execution",
-    "distro", "distro.base", "distro.detector", "distro.generic",
-    "distro.fedora", "distro.debian", "distro.arch", "distro.opensuse",
-    "distro.alpine", "distro.gentoo", "distro.void", "distro.nix",
     "net", "net.utils", "net.iptables", "net.dns_proxy", "net.pasta", "net.audit",
     "net.pasta_install", "net.pasta_args", "net.filtering", "net.pasta_exec",
     "model",
@@ -125,7 +108,7 @@ LOCAL_MODULES = {
     "model.fields.desktop", "model.fields.environment",
     "controller", "controller.sync", "controller.directories", "controller.overlays",
     "controller.environment", "controller.execute", "controller.network",
-    "controller.validators", "controller.field_mappings",
+    "controller.validators",
     "ui", "ui.ids", "ui.widgets", "ui.widgets.directory", "ui.widgets.overlay",
     "ui.widgets.environment", "ui.widgets.sandbox", "ui.widgets.profiles", "ui.widgets.network",
     "ui.helpers", "ui.modals",

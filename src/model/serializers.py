@@ -214,9 +214,9 @@ def isolation_to_summary(group: ConfigGroup, network_filter: "NetworkFilter | No
 
     Args:
         group: The isolation ConfigGroup
-        network_filter: Optional NetworkFilter to detect seccomp auto-enable
+        network_filter: Optional NetworkFilter (unused, kept for API compatibility)
     """
-    from model.fields.isolation import unshare_pid, unshare_ipc, unshare_cgroup, disable_userns, seccomp_block_userns
+    from model.fields.isolation import unshare_pid, unshare_ipc, unshare_cgroup, disable_userns
 
     items = []
     # Note: unshare_user is now in user_group, not here
@@ -236,21 +236,8 @@ def isolation_to_summary(group: ConfigGroup, network_filter: "NetworkFilter | No
         for item in items:
             lines.append(f"  - {item}")
 
-    # Check if seccomp will be auto-enabled due to network filtering + disable_userns conflict
-    seccomp_auto_enabled = (
-        network_filter is not None
-        and network_filter.requires_pasta()
-        and group.get("disable_userns")
-        and not group.get("seccomp_block_userns")
-    )
-
     # Handle nested sandboxing blocking
-    if group.get("seccomp_block_userns"):
-        lines.append(f"Nested sandboxing: DISABLED via seccomp — {seccomp_block_userns.summary}")
-    elif seccomp_auto_enabled:
-        lines.append(f"Nested sandboxing: DISABLED via seccomp (auto-enabled for network filtering compatibility)")
-        lines.append("  WARNING: Using seccomp filter instead of bwrap's --disable-userns")
-    elif group.get("disable_userns"):
+    if group.get("disable_userns"):
         lines.append(f"Nested sandboxing: DISABLED — {disable_userns.summary}")
 
     return "\n".join(lines) if lines else None

@@ -162,17 +162,13 @@ class BuiHelpFormatter(argparse.RawDescriptionHelpFormatter):
             "  bui --profile untrusted --sandbox deno -- 'curl -fsSL https://deno.land/install.sh | sh'",
             "  bui --sandbox deno --install",
             "",
-            "  # Install claude-code - requires binding npm dir and setting NPM_CONFIG_PREFIX",
-            "  # (Potentially cleaner: fork 'untrusted' in TUI with npm dir + NPM_CONFIG_PREFIX)",
+            "  # Install claude-code",
             "  bui --profile untrusted --sandbox claude --bind $(dirname $(which npm)) \\",
             "       --bind-env NPM_CONFIG_PREFIX=/home/sandbox/.npm-global \\",
             "       -- npm install -g @anthropic-ai/claude-code",
             "",
             "Built-in Profiles:",
-            "  untrusted    Safe sandbox for running untrusted code (curl|bash scripts)",
-            "               - Read-only system paths, isolated namespaces",
-            "               - Home directory overlay (isolated per --sandbox or UUID)",
-            "               - Network enabled for downloads",
+            "  untrusted             Safe sandbox blocking localhost/private networks",
             "",
             "  Example: bui --profile untrusted --sandbox myapp -- bash",
         ]
@@ -448,12 +444,6 @@ def main() -> None:
         vfiles = setup_virtual_files(config)
         file_map = vfiles.get_file_map()
 
-        # Check if standalone seccomp is needed (seccomp enabled but no network filtering)
-        use_standalone_seccomp = (
-            config.namespace.seccomp_block_userns and
-            not config.network_filter.requires_pasta()
-        )
-
         # Execute command (handles dispatch, cleanup, and exit)
         execute_sandbox(
             config,
@@ -462,7 +452,6 @@ def main() -> None:
             sandbox_name,
             overlay_dirs,
             ephemeral_sandbox_dir,
-            use_standalone_seccomp,
         )
 
     # Otherwise show TUI for configuration
@@ -481,12 +470,6 @@ def main() -> None:
         vfiles = setup_virtual_files(app.config)
         file_map = vfiles.get_file_map()
 
-        # Check if standalone seccomp is needed (seccomp enabled but no network filtering)
-        use_standalone_seccomp = (
-            app.config.namespace.seccomp_block_userns and
-            not app.config.network_filter.requires_pasta()
-        )
-
         # Dispatch based on network mode
         if app.config.network_filter.is_audit_mode():
             # Network auditing - capture traffic and show summary after exit
@@ -502,28 +485,8 @@ def main() -> None:
                 file_map if file_map else None,
                 _build_bwrap_command,
             )
-        elif use_standalone_seccomp:
-            # Seccomp-only mode - wrap command in seccomp init script
-            init_script_path = create_seccomp_init_script(app.config.command)
-            tmp_dir = str(init_script_path.parent)
-            original_command = app.config.command
-            app.config.command = [str(init_script_path)]
-            cmd = app.config.build_command(file_map if file_map else None)
-            app.config.command = original_command  # Restore for display
-
-            # Bind mount the temp directory so the script is accessible inside sandbox
-            try:
-                separator_idx = cmd.index("--")
-                cmd.insert(separator_idx, "--bind")
-                cmd.insert(separator_idx + 1, tmp_dir)
-                cmd.insert(separator_idx + 2, tmp_dir)
-            except ValueError:
-                cmd.extend(["--bind", tmp_dir, tmp_dir])
-
-            print_execution_header(cmd, seccomp_enabled=True)
-            os.execvp("bwrap", cmd)
         else:
-            # Normal execution without pasta or seccomp
+            # Normal execution without pasta
             cmd = app.config.build_command(file_map if file_map else None)
             print_execution_header(cmd)
             os.execvp("bwrap", cmd)

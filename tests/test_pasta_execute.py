@@ -21,7 +21,7 @@ from model.network_filter import (
     PortForwarding,
 )
 from model.sandbox_config import SandboxConfig
-from net.filtering import create_init_script, validate_filtering_requirements
+from net.filtering import validate_filtering_requirements
 from net.pasta_args import prepare_bwrap_command
 
 
@@ -38,14 +38,10 @@ class TestValidateFilteringRequirements:
             validate_filtering_requirements(nf)
         assert exc_info.value.code == 1
 
-    @patch("net.utils.find_cap_drop_tool")
     @patch("net.iptables.find_iptables")
-    def test_exits_when_ip6tables_missing_but_needed(
-        self, mock_find_iptables, mock_find_cap_drop
-    ):
+    def test_exits_when_ip6tables_missing_but_needed(self, mock_find_iptables):
         """Exits when IPv6 filtering needed but no ip6tables."""
         mock_find_iptables.return_value = ("/usr/bin/iptables", None, False)
-        mock_find_cap_drop.return_value = ("/usr/bin/setpriv", "exec setpriv ...")
 
         # Hostname filter enables IPv6 filtering
         nf = NetworkFilter(
@@ -59,39 +55,13 @@ class TestValidateFilteringRequirements:
             validate_filtering_requirements(nf)
         assert exc_info.value.code == 1
 
-    @patch("net.filtering.find_cap_drop_tool")
     @patch("net.iptables.find_iptables")
-    def test_exits_when_cap_drop_tool_missing(
-        self, mock_find_iptables, mock_find_cap_drop
-    ):
-        """Exits when no setpriv/capsh available."""
+    def test_returns_paths_when_all_available(self, mock_find_iptables):
+        """Returns (iptables, ip6tables, is_multicall) when all available."""
         mock_find_iptables.return_value = (
             "/usr/bin/iptables",
             "/usr/bin/ip6tables",
             False,
-        )
-        mock_find_cap_drop.return_value = (None, "")
-
-        nf = NetworkFilter(mode=NetworkMode.FILTER)
-
-        with pytest.raises(SystemExit) as exc_info:
-            validate_filtering_requirements(nf)
-        assert exc_info.value.code == 1
-
-    @patch("net.filtering.find_cap_drop_tool")
-    @patch("net.iptables.find_iptables")
-    def test_returns_paths_when_all_available(
-        self, mock_find_iptables, mock_find_cap_drop
-    ):
-        """Returns (iptables, ip6tables, is_multicall, template) when all available."""
-        mock_find_iptables.return_value = (
-            "/usr/bin/iptables",
-            "/usr/bin/ip6tables",
-            False,
-        )
-        mock_find_cap_drop.return_value = (
-            "/usr/bin/setpriv",
-            "exec setpriv --bounding-set=-net_admin -- {command}",
         )
 
         nf = NetworkFilter(mode=NetworkMode.FILTER)
@@ -100,19 +70,11 @@ class TestValidateFilteringRequirements:
         assert result[0] == "/usr/bin/iptables"
         assert result[1] == "/usr/bin/ip6tables"
         assert result[2] is False
-        assert "{command}" in result[3]
 
-    @patch("net.filtering.find_cap_drop_tool")
     @patch("net.iptables.find_iptables")
-    def test_allows_missing_ip6tables_for_ipv4_only(
-        self, mock_find_iptables, mock_find_cap_drop
-    ):
+    def test_allows_missing_ip6tables_for_ipv4_only(self, mock_find_iptables):
         """Doesn't require ip6tables for IPv4-only filters."""
         mock_find_iptables.return_value = ("/usr/bin/iptables", None, False)
-        mock_find_cap_drop.return_value = (
-            "/usr/bin/setpriv",
-            "exec setpriv --bounding-set=-net_admin -- {command}",
-        )
 
         # IPv4 only filter
         nf = NetworkFilter(
@@ -123,108 +85,6 @@ class TestValidateFilteringRequirements:
         result = validate_filtering_requirements(nf)
         assert result[0] == "/usr/bin/iptables"
         assert result[1] is None  # ip6tables not required
-
-
-class TestCreateInitScript:
-    """Tests for create_init_script function."""
-
-    def test_creates_executable_script(self, tmp_path):
-        """Script has 755 permissions."""
-        nf = NetworkFilter(
-            mode=NetworkMode.FILTER,
-            ip_filter=IPFilter(mode=FilterMode.WHITELIST, cidrs=["8.8.8.8"]),
-        )
-
-        with patch("tempfile.mkdtemp", return_value=str(tmp_path)):
-            script_path = create_init_script(
-                nf,
-                user_command=["echo", "hello"],
-                iptables_path="/usr/bin/iptables",
-                ip6tables_path="/usr/bin/ip6tables",
-                is_multicall=False,
-                cap_drop_template="exec setpriv --bounding-set=-net_admin -- {command}",
-            )
-
-        assert script_path.exists()
-        mode = script_path.stat().st_mode
-        assert mode & stat.S_IXUSR  # Owner execute
-        assert mode & stat.S_IXGRP  # Group execute
-        assert mode & stat.S_IXOTH  # Other execute
-
-    def test_script_contains_iptables_rules(self, tmp_path):
-        """Script includes iptables commands."""
-        nf = NetworkFilter(
-            mode=NetworkMode.FILTER,
-            ip_filter=IPFilter(mode=FilterMode.WHITELIST, cidrs=["8.8.8.8"]),
-        )
-
-        with patch("tempfile.mkdtemp", return_value=str(tmp_path)):
-            script_path = create_init_script(
-                nf,
-                user_command=["bash"],
-                iptables_path="/usr/bin/iptables",
-                ip6tables_path="/usr/bin/ip6tables",
-                is_multicall=False,
-                cap_drop_template="exec setpriv --bounding-set=-net_admin -- {command}",
-            )
-
-        content = script_path.read_text()
-        assert "/usr/bin/iptables" in content
-        assert "-j ACCEPT" in content or "-j DROP" in content
-
-    def test_script_contains_user_command_quoted(self, tmp_path):
-        """Script includes user command properly quoted."""
-        nf = NetworkFilter(mode=NetworkMode.FILTER)
-
-        with patch("tempfile.mkdtemp", return_value=str(tmp_path)):
-            script_path = create_init_script(
-                nf,
-                user_command=["python", "-c", "print('hello world')"],
-                iptables_path="/usr/bin/iptables",
-                ip6tables_path="/usr/bin/ip6tables",
-                is_multicall=False,
-                cap_drop_template="exec setpriv --bounding-set=-net_admin -- {command}",
-            )
-
-        content = script_path.read_text()
-        assert "python" in content
-        # Should be quoted to handle spaces/special chars
-        assert "print" in content
-
-    def test_script_contains_cap_drop(self, tmp_path):
-        """Script includes capability drop command."""
-        nf = NetworkFilter(mode=NetworkMode.FILTER)
-
-        with patch("tempfile.mkdtemp", return_value=str(tmp_path)):
-            script_path = create_init_script(
-                nf,
-                user_command=["bash"],
-                iptables_path="/usr/bin/iptables",
-                ip6tables_path="/usr/bin/ip6tables",
-                is_multicall=False,
-                cap_drop_template="exec setpriv --bounding-set=-net_admin -- {command}",
-            )
-
-        content = script_path.read_text()
-        assert "setpriv" in content
-        assert "net_admin" in content
-
-    def test_returns_path_to_script(self, tmp_path):
-        """Returns Path object to created script."""
-        nf = NetworkFilter(mode=NetworkMode.FILTER)
-
-        with patch("tempfile.mkdtemp", return_value=str(tmp_path)):
-            script_path = create_init_script(
-                nf,
-                user_command=["bash"],
-                iptables_path="/usr/bin/iptables",
-                ip6tables_path="/usr/bin/ip6tables",
-                is_multicall=False,
-                cap_drop_template="exec {command}",
-            )
-
-        assert isinstance(script_path, Path)
-        assert script_path.name == "init.sh"
 
 
 class TestPrepareBwrapCommand:
@@ -243,38 +103,17 @@ class TestPrepareBwrapCommand:
         assert "--bind" in result
         assert "/tmp/bui-net-xyz" in result
 
-    def test_removes_cap_drop_net_admin(self):
-        """Removes --cap-drop CAP_NET_ADMIN pair."""
-        cmd = [
-            "bwrap",
-            "--cap-drop",
-            "CAP_NET_ADMIN",
-            "--cap-drop",
-            "CAP_SYS_ADMIN",
-            "--",
-            "bash",
-        ]
+    def test_keeps_unshare_user(self):
+        """Keeps --unshare-user in command (needed for --disable-userns)."""
+        cmd = ["bwrap", "--unshare-user", "--unshare-net", "--ro-bind", "/usr", "/usr", "--", "bash"]
         result = prepare_bwrap_command(cmd, "/tmp/test")
-        # CAP_NET_ADMIN should be removed, CAP_SYS_ADMIN should remain
-        assert "CAP_NET_ADMIN" not in result or result[
-            result.index("CAP_NET_ADMIN") - 1
-        ] != "--cap-drop"
-        assert "CAP_SYS_ADMIN" in result
+        assert "--unshare-user" in result
 
-    def test_adds_cap_add_net_admin(self):
-        """Adds --cap-add CAP_NET_ADMIN."""
-        cmd = ["bwrap", "--ro-bind", "/usr", "/usr", "--", "bash"]
+    def test_keeps_disable_userns(self):
+        """Keeps --disable-userns in command."""
+        cmd = ["bwrap", "--unshare-user", "--disable-userns", "--ro-bind", "/usr", "/usr", "--", "bash"]
         result = prepare_bwrap_command(cmd, "/tmp/test")
-        assert "--cap-add" in result
-        cap_add_idx = result.index("--cap-add")
-        assert result[cap_add_idx + 1] == "CAP_NET_ADMIN"
-
-    def test_exits_when_no_separator(self):
-        """Exits with error when no -- separator found."""
-        cmd = ["bwrap", "--ro-bind", "/usr", "/usr", "bash"]  # Missing --
-        with pytest.raises(SystemExit) as exc_info:
-            prepare_bwrap_command(cmd, "/tmp/test")
-        assert exc_info.value.code == 1
+        assert "--disable-userns" in result
 
     def test_preserves_other_arguments(self):
         """Preserves other bwrap arguments."""
@@ -320,36 +159,28 @@ class TestExecuteWithPasta:
         """Mock build command function."""
 
         def build_fn(config, file_map):
-            return ["bwrap", "--unshare-net", "--ro-bind", "/usr", "/usr", "--"] + config.command
+            return ["bwrap", "--unshare-net", "--unshare-user", "--ro-bind", "/usr", "/usr", "--"] + config.command
 
         return build_fn
 
-    @patch("sys.exit")
-    @patch("subprocess.Popen")
+    @patch("net.pasta_exec._run_with_pty")
     @patch("commandoutput.print_execution_header")
-    @patch("net.pasta_exec.create_init_script")
     @patch("net.pasta_exec.validate_filtering_requirements")
     def test_validates_requirements_before_execution(
         self,
         mock_validate,
-        mock_create_script,
         mock_print_header,
-        mock_popen,
-        mock_exit,
+        mock_run_pty,
         minimal_config,
         mock_build_command,
-        tmp_path,
     ):
         """Calls validation function before proceeding."""
         mock_validate.return_value = (
             "/usr/bin/iptables",
             "/usr/bin/ip6tables",
             False,
-            "exec {command}",
         )
-        mock_create_script.return_value = tmp_path / "init.sh"
-        (tmp_path / "init.sh").write_text("#!/bin/sh\necho test")
-        mock_popen.return_value = MagicMock(wait=MagicMock(return_value=0), poll=MagicMock(return_value=0))
+        mock_run_pty.return_value = 0
 
         from net.pasta_exec import execute_with_pasta
 
@@ -357,81 +188,38 @@ class TestExecuteWithPasta:
 
         mock_validate.assert_called_once_with(minimal_config.network_filter)
 
-    @patch("sys.exit")
-    @patch("subprocess.Popen")
+    @patch("net.pasta_exec._run_with_pty")
     @patch("commandoutput.print_execution_header")
-    @patch("net.pasta_exec.create_init_script")
     @patch("net.pasta_exec.validate_filtering_requirements")
-    def test_creates_init_script(
+    def test_creates_wrapper_script(
         self,
         mock_validate,
-        mock_create_script,
         mock_print_header,
-        mock_popen,
-        mock_exit,
+        mock_run_pty,
         minimal_config,
         mock_build_command,
         tmp_path,
     ):
-        """Creates init script with correct content."""
+        """Creates wrapper script in temp directory."""
         mock_validate.return_value = (
             "/usr/bin/iptables",
             "/usr/bin/ip6tables",
             False,
-            "exec {command}",
         )
-        script_path = tmp_path / "init.sh"
-        script_path.write_text("#!/bin/sh\necho test")
-        mock_create_script.return_value = script_path
-        mock_popen.return_value = MagicMock(wait=MagicMock(return_value=0), poll=MagicMock(return_value=0))
+        mock_run_pty.return_value = 0
 
         from net.pasta_exec import execute_with_pasta
 
-        execute_with_pasta(minimal_config, None, mock_build_command)
+        with patch("tempfile.mkdtemp", return_value=str(tmp_path)):
+            execute_with_pasta(minimal_config, None, mock_build_command)
 
-        mock_create_script.assert_called_once()
+        # Wrapper script should be created
+        wrapper_path = tmp_path / "wrapper.sh"
+        assert wrapper_path.exists()
 
-    @patch("sys.exit")
-    @patch("subprocess.Popen")
-    @patch("commandoutput.print_execution_header")
-    @patch("net.pasta_exec.create_init_script")
-    @patch("net.pasta_exec.validate_filtering_requirements")
-    def test_calls_popen_with_pasta(
-        self,
-        mock_validate,
-        mock_create_script,
-        mock_print_header,
-        mock_popen,
-        mock_exit,
-        minimal_config,
-        mock_build_command,
-        tmp_path,
-    ):
-        """Calls subprocess.Popen with pasta command."""
-        mock_validate.return_value = (
-            "/usr/bin/iptables",
-            "/usr/bin/ip6tables",
-            False,
-            "exec {command}",
-        )
-        script_path = tmp_path / "init.sh"
-        script_path.write_text("#!/bin/sh\necho test")
-        mock_create_script.return_value = script_path
-        mock_popen.return_value = MagicMock(wait=MagicMock(return_value=0), poll=MagicMock(return_value=0))
-
-        from net.pasta_exec import execute_with_pasta
-
-        execute_with_pasta(minimal_config, None, mock_build_command)
-
-        mock_popen.assert_called_once()
-        args = mock_popen.call_args[0][0]  # First positional arg is the command list
-        assert args[0] == "pasta"  # First element is program name
-        assert "--" in args  # Separator is in command list
-
-    @patch("net.pasta_exec.create_init_script")
     @patch("net.pasta_exec.validate_filtering_requirements")
     def test_handles_hostname_resolution_error(
-        self, mock_validate, mock_create_script, minimal_config, mock_build_command
+        self, mock_validate, minimal_config, mock_build_command
     ):
         """Exits cleanly on DNS failure."""
         from net.utils import HostnameResolutionError
@@ -440,17 +228,19 @@ class TestExecuteWithPasta:
             "/usr/bin/iptables",
             "/usr/bin/ip6tables",
             False,
-            "exec {command}",
-        )
-        mock_create_script.side_effect = HostnameResolutionError(
-            "Failed to resolve 'bad.hostname'"
         )
 
         from net.pasta_exec import execute_with_pasta
 
-        with pytest.raises(SystemExit) as exc_info:
-            execute_with_pasta(minimal_config, None, mock_build_command)
-        assert exc_info.value.code == 1
+        # Mock _create_wrapper_with_tmp to raise HostnameResolutionError
+        with patch("net.pasta_exec._create_wrapper_with_tmp") as mock_create:
+            mock_create.side_effect = HostnameResolutionError(
+                "Failed to resolve 'bad.hostname'"
+            )
+
+            with pytest.raises(SystemExit) as exc_info:
+                execute_with_pasta(minimal_config, None, mock_build_command)
+            assert exc_info.value.code == 1
 
 
 class TestExecuteWithAudit:

@@ -254,12 +254,11 @@ Creating a network namespace normally requires root privileges. Pasta provides u
 ### How filtering works
 
 1. Pasta creates an isolated user+network namespace
-2. An init script runs inside with `CAP_NET_ADMIN` to apply iptables rules
-3. If "Block nested sandboxing" is enabled, a seccomp filter is applied to block user namespace creation
-4. `CAP_NET_ADMIN` is dropped before your command executes
-5. Your command runs unprivileged and cannot modify the firewall rules or create nested sandboxes
+2. A wrapper script applies iptables rules with `CAP_NET_ADMIN`
+3. The wrapper execs bwrap with `--unshare-user --disable-userns` for full namespace isolation
+4. Your command runs unprivileged and cannot modify the firewall rules or create nested sandboxes
 
-This ensures filtering decisions made at launch cannot be bypassed by the sandboxed application. The seccomp filter prevents escape attempts via nested user namespaces.
+This ensures filtering decisions made at launch cannot be bypassed by the sandboxed application.
 
 ### Hostname filtering
 

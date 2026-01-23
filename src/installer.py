@@ -157,10 +157,7 @@ def create_default_profiles() -> None:
                 "unshare_pid": True,
                 "unshare_ipc": True,
                 "unshare_cgroup": True,
-                "disable_userns": False,
-                # Use seccomp instead of bwrap's --disable-userns because network
-                # filtering requires CAP_NET_ADMIN which conflicts with --disable-userns
-                "seccomp_block_userns": True,
+                "disable_userns": True,  # Block nested namespace creation
             }
         },
         "_hostname_group": {
@@ -239,21 +236,6 @@ def create_default_profiles() -> None:
 
     untrusted_profile.write_text(json.dumps(profile_data, indent=2))
     print(f"Created default profile: {untrusted_profile}")
-
-    # Create untrusted-installable profile using distro-specific settings
-    create_installable_profile(profiles_dir)
-
-
-def create_installable_profile(profiles_dir: Path) -> None:
-    """Create untrusted-installable profile with distro-specific settings."""
-    from distro import get_current_distro
-
-    distro = get_current_distro()
-    profile_data = distro.generate_installable_profile()
-
-    installable_profile = profiles_dir / "untrusted-installable.json"
-    installable_profile.write_text(json.dumps(profile_data, indent=2))
-    print(f"Created installable profile: {installable_profile} (distro: {distro.name})")
 
 
 def do_install(version: str, source_path: Path | None = None) -> None:

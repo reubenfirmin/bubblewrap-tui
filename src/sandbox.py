@@ -297,6 +297,24 @@ exec bui --profile {profile} --sandbox {sandbox_name} --bind-cwd{extra_flags} --
     print(f"Installed: {script_path}")
 
 
+def _fix_overlay_workdir_permissions(path: Path) -> None:
+    """Fix permissions on overlayfs workdir before deletion.
+
+    Overlayfs sets workdir permissions to 000 to prevent direct access.
+    Since the user owns the directory, we can chmod it to allow deletion.
+    """
+    for root, dirs, files in os.walk(path, topdown=True):
+        for d in dirs:
+            dir_path = Path(root) / d
+            try:
+                # Ensure we can read/write/execute the directory
+                current_mode = dir_path.stat().st_mode
+                if current_mode & 0o700 != 0o700:
+                    os.chmod(dir_path, current_mode | 0o700)
+            except OSError:
+                pass
+
+
 def uninstall_sandbox(sandbox_name: str) -> None:
     """Remove sandbox: wrapper scripts in ~/.local/bin and overlay data."""
     sandbox_dir = get_sandbox_dir(sandbox_name)
@@ -320,10 +338,13 @@ def uninstall_sandbox(sandbox_name: str) -> None:
             print(f"Removed: {script_path}")
 
     if has_sandbox:
+        # Fix permissions on overlay workdir (overlayfs sets to 000)
+        _fix_overlay_workdir_permissions(sandbox_dir)
         shutil.rmtree(sandbox_dir)
         print(f"Removed: {sandbox_dir}/")
 
     if has_legacy_overlay:
+        _fix_overlay_workdir_permissions(legacy_overlay_dir)
         shutil.rmtree(legacy_overlay_dir)
         print(f"Removed: {legacy_overlay_dir}/")
 
@@ -430,27 +451,28 @@ def list_profiles() -> None:
 
 
 def clean_temp_files() -> None:
-    """Remove temporary network filter directories from /tmp."""
+    """Remove temporary network filter directories."""
     import shutil
-    import tempfile
 
-    tmp_dir = Path(tempfile.gettempdir())
     removed = 0
     errors = 0
 
-    # Find bui-net-* directories
-    for item in tmp_dir.glob("bui-net-*"):
-        if item.is_dir():
-            try:
-                shutil.rmtree(item)
-                print(f"  Removed: {item}")
-                removed += 1
-            except OSError as e:
-                print(f"  Error removing {item}: {e}")
-                errors += 1
+    # Check ~/.bui-run/ for net-* and audit-* directories
+    run_dir = Path.home() / ".bui-run"
+    if run_dir.exists():
+        for pattern in ["net-*", "audit-*"]:
+            for item in run_dir.glob(pattern):
+                if item.is_dir():
+                    try:
+                        shutil.rmtree(item)
+                        print(f"  Removed: {item}")
+                        removed += 1
+                    except OSError as e:
+                        print(f"  Error removing {item}: {e}")
+                        errors += 1
 
     if removed == 0 and errors == 0:
-        print("No temporary network filter files found.")
+        print("No temporary files found.")
     else:
         print(f"\nCleaned up {removed} temporary director{'y' if removed == 1 else 'ies'}.")
         if errors:

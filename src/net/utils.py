@@ -5,12 +5,33 @@ from __future__ import annotations
 import ipaddress
 import shutil
 import socket
+from pathlib import Path
 
 
 class HostnameResolutionError(Exception):
     """Raised when hostname resolution fails."""
 
     pass
+
+
+def detect_distro() -> str | None:
+    """Detect Linux distribution from /etc/os-release.
+
+    Returns:
+        Distribution ID (e.g., 'fedora', 'ubuntu', 'arch') or None if not detected.
+    """
+    os_release = Path("/etc/os-release")
+    if not os_release.exists():
+        return None
+
+    try:
+        content = os_release.read_text()
+        for line in content.splitlines():
+            if line.startswith("ID="):
+                return line.split("=", 1)[1].strip().strip('"').lower()
+    except OSError:
+        pass
+    return None
 
 
 def resolve_hostname(host: str) -> tuple[list[str], list[str]]:
