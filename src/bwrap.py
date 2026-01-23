@@ -67,11 +67,12 @@ class BubblewrapSerializer:
         uid = self.config._user_group.get("uid")
         gid = self.config._user_group.get("gid")
 
-        # Only generate when synthetic_passwd enabled, username set, and uid > 0
-        if not synthetic_passwd or not username or uid == 0:
+        # Only generate when synthetic_passwd enabled and username set
+        if not synthetic_passwd or not username:
             return []
 
-        home = f"/home/{username}"
+        # Use /root for uid 0, otherwise /home/{username}
+        home = "/root" if uid == 0 else f"/home/{username}"
 
         # Generate passwd: username:x:uid:gid::{home}:/bin/sh
         passwd_content = f"{username}:x:{uid}:{gid}::{home}:/bin/sh\n"
@@ -109,10 +110,11 @@ class BubblewrapSerializer:
         username = self.config._user_group.get("username")
         uid = self.config._user_group.get("uid")
 
-        if not synthetic_passwd or not username or uid == 0:
+        if not synthetic_passwd or not username:
             return []
 
-        home = f"/home/{username}"
+        # Use /root for uid 0, otherwise /home/{username}
+        home = "/root" if uid == 0 else f"/home/{username}"
         args = []
 
         # Create /etc directory for passwd/group
