@@ -9,6 +9,12 @@ def _named(name: str, field: UIField) -> UIField:
     return field
 
 
+def _validate_hostname(value: str) -> str | None:
+    """Lazy import wrapper for validate_hostname to avoid circular imports."""
+    from controller.validators import validate_hostname
+    return validate_hostname(value)
+
+
 clear_env = _named("clear_env", UIField(
     bool, False, "toggle-clear-btn",
     "Clear environment", "Start with empty environment",
@@ -17,8 +23,9 @@ clear_env = _named("clear_env", UIField(
 
 custom_hostname = _named("custom_hostname", UIField(
     str, "", "opt-hostname",
-    "Custom hostname", "Hostname inside the sandbox",
+    "Custom hostname", "Hostname inside the sandbox (1-63 chars, alphanumeric/hyphens)",
     bwrap_args=lambda v: ["--hostname", v] if v else [],
+    value_transform=_validate_hostname,
 ))
 
 # Data fields for environment
