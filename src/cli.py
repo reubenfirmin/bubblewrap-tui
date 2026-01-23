@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from app import BubblewrapTUI
 from command_execution import execute_sandbox
+from detection import is_path_covered, resolve_command_executable
 from installer import check_for_updates, do_install, do_update, show_update_notice
 from model import BoundDirectory, SandboxConfig
 from net import check_pasta, get_install_instructions
@@ -400,6 +401,13 @@ def main() -> None:
     # If profile specified, run directly without TUI
     if args.profile_path:
         config = load_profile(args.profile_path, args.command)
+
+        # Resolve command to absolute path and bind its directory
+        resolved_path = resolve_command_executable(config.command)
+        if resolved_path:
+            if not is_path_covered(resolved_path, config.bound_dirs):
+                config.bound_dirs.append(BoundDirectory(path=resolved_path.parent, readonly=True))
+            config.command[0] = str(resolved_path)
 
         # Apply --bind: add paths as read-only bound directories
         for path in args.bind_paths:

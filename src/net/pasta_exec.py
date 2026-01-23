@@ -44,7 +44,6 @@ def execute_with_pasta(
     Returns:
         Exit code from the sandboxed process
     """
-    import os
     import sys
 
     nf = config.network_filter
@@ -100,10 +99,89 @@ def execute_with_pasta(
     pasta_args = generate_pasta_args(nf)
     full_cmd = pasta_args + ["--"] + cmd
 
-    # Use execvp to replace this process with pasta
-    # This gives clean terminal handling - pasta inherits our tty directly
-    os.execvp("pasta", full_cmd)
-    return 0  # Never reached
+    # Use pty to run pasta - this prevents terminal corruption when bwrap
+    # --new-session receives SIGINT (a known bwrap issue #369)
+    # We use pty.fork() instead of pty.spawn() to properly handle cleanup
+    # when the child exits, as pasta may leave orphaned bwrap processes
+    sys.stdout.flush()
+    sys.stderr.flush()
+    return _run_with_pty(full_cmd)
+
+
+def _run_with_pty(cmd: list[str]) -> int:
+    """Run command in a pty with proper cleanup of orphaned processes.
+
+    This handles the case where pasta exits but bwrap gets orphaned to init,
+    which would otherwise leave pty.spawn() hanging.
+    """
+    import os
+    import pty
+    import select
+    import signal
+    import sys
+    import termios
+    import tty
+
+    pid, fd = pty.fork()
+
+    if pid == 0:
+        # Child - exec the command
+        os.execvp(cmd[0], cmd)
+        sys.exit(1)  # Never reached
+
+    # Parent - copy data between pty and stdin/stdout
+    old_settings = None
+    if os.isatty(sys.stdin.fileno()):
+        old_settings = termios.tcgetattr(sys.stdin)
+        tty.setraw(sys.stdin.fileno())
+
+    try:
+        while True:
+            # Check if child is still alive
+            result = os.waitpid(pid, os.WNOHANG)
+            if result[0] != 0:
+                # Child exited
+                status = result[1]
+                if os.WIFEXITED(status):
+                    return os.WEXITSTATUS(status)
+                return 1
+
+            # Wait for data on stdin or pty
+            try:
+                r, _, _ = select.select([sys.stdin, fd], [], [], 0.1)
+            except (select.error, ValueError):
+                break
+
+            if sys.stdin in r:
+                try:
+                    data = os.read(sys.stdin.fileno(), 1024)
+                    if data:
+                        os.write(fd, data)
+                except OSError:
+                    break
+
+            if fd in r:
+                try:
+                    data = os.read(fd, 1024)
+                    if data:
+                        os.write(sys.stdout.fileno(), data)
+                    else:
+                        # EOF on pty - child closed it
+                        break
+                except OSError:
+                    break
+    finally:
+        # Restore terminal settings
+        if old_settings is not None:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+
+        # Reap child if not already reaped
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+
+    return 0
 
 
 def execute_with_audit(
