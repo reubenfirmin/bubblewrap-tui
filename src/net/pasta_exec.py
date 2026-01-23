@@ -311,6 +311,12 @@ def execute_with_audit(
     except KeyboardInterrupt:
         print("\nInterrupted by user")
         exit_code = 130
+    except FileNotFoundError as e:
+        print(f"Error: Command not found: {e}", file=sys.stderr)
+        exit_code = 127
+    except OSError as e:
+        print(f"Error: Failed to run command: {e}", file=sys.stderr)
+        exit_code = 1
 
     # Parse and display audit results
     if pcap_path.exists():

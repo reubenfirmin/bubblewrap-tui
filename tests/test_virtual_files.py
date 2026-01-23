@@ -3,6 +3,7 @@
 import os
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -177,3 +178,31 @@ class TestCreateVirtualFiles:
         summary = manager.get_summary()
         assert any("Synthetic user identity" in s for s in summary)
         assert any("Synthetic group" in s for s in summary)
+
+
+class TestVirtualFileManagerCleanup:
+    """Tests for temp directory cleanup on failure."""
+
+    def test_add_file_cleans_up_on_write_failure(self):
+        """Temp directory is cleaned up if file write fails."""
+        manager = VirtualFileManager()
+        tmp_dir = manager.tmp_dir
+
+        # Verify temp dir exists
+        assert os.path.isdir(tmp_dir)
+
+        # Mock write_file_atomic to raise OSError
+        with patch("virtual_files.write_file_atomic", side_effect=OSError("Disk full")):
+            with pytest.raises(OSError):
+                manager.add_file("content", "/etc/passwd", "Test")
+
+        # Temp directory should be cleaned up
+        assert not os.path.exists(tmp_dir)
+
+    def test_add_file_reraises_exception(self):
+        """OSError is re-raised after cleanup."""
+        manager = VirtualFileManager()
+
+        with patch("virtual_files.write_file_atomic", side_effect=OSError("Permission denied")):
+            with pytest.raises(OSError, match="Permission denied"):
+                manager.add_file("content", "/etc/passwd", "Test")
