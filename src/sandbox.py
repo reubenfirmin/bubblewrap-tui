@@ -11,12 +11,9 @@ from profiles import BUI_PROFILES_DIR, Profile
 # Base directory for overlay storage
 BUI_STATE_DIR = Path.home() / ".local" / "state" / "bui"
 
-# New hierarchical sandbox directory structure
+# Sandbox directory structure
 # Each sandbox contains its own overlays subdirectory
 BUI_SANDBOXES_DIR = BUI_STATE_DIR / "sandboxes"
-
-# Legacy flat overlay directory (for migration)
-BUI_LEGACY_OVERLAYS_DIR = BUI_STATE_DIR / "overlays"
 
 # Metadata file tracking installed wrapper scripts
 INSTALLED_SCRIPTS_FILE = BUI_STATE_DIR / "installed.json"
@@ -32,11 +29,37 @@ def normalize_dest_path(dest: str) -> str:
 
     Returns:
         A normalized string safe for use as a directory name
+
+    Note:
+        Paths with dashes in component names (e.g., '/my-app') cannot be
+        perfectly round-tripped. See denormalize_dest_path().
     """
     # Strip leading/trailing slashes and replace remaining slashes with dashes
     normalized = dest.strip("/").replace("/", "-")
     # Handle edge case of empty string (root mount)
     return normalized if normalized else "root"
+
+
+def denormalize_dest_path(normalized: str) -> str:
+    """Convert normalized directory name back to mount path.
+
+    Converts 'home-sandbox' to '/home/sandbox' and 'usr' to '/usr'.
+
+    Args:
+        normalized: The normalized directory name
+
+    Returns:
+        The reconstructed mount path
+
+    Note:
+        This is a best-effort reverse of normalize_dest_path(). Paths with
+        dashes in component names (e.g., '/my-app') will be incorrectly
+        reconstructed as '/my/app'. This only affects the display of
+        executable paths in --install mode.
+    """
+    if normalized == "root":
+        return "/"
+    return "/" + normalized.replace("-", "/")
 
 
 def get_sandbox_dir(sandbox_name: str) -> Path:
@@ -80,60 +103,6 @@ def get_sandbox_work_dir(sandbox_name: str) -> Path:
     return get_sandbox_dir(sandbox_name) / ".overlay-work"
 
 
-def migrate_legacy_overlay(sandbox_name: str) -> bool:
-    """Migrate a legacy overlay to the new sandbox structure.
-
-    Moves from: ~/.local/state/bui/overlays/{sandbox_name}/
-    To: ~/.local/state/bui/sandboxes/{sandbox_name}/overlays/home-sandbox/
-
-    This preserves existing overlay data while adopting the new structure.
-    The migration assumes the legacy overlay was for /home/sandbox.
-
-    Args:
-        sandbox_name: Name of the sandbox to migrate
-
-    Returns:
-        True if migration was performed, False if not needed
-    """
-    legacy_dir = BUI_LEGACY_OVERLAYS_DIR / sandbox_name
-    legacy_work_dir = BUI_STATE_DIR / ".overlay-work"
-
-    if not legacy_dir.exists():
-        return False
-
-    # Check if already migrated
-    new_sandbox_dir = get_sandbox_dir(sandbox_name)
-    if new_sandbox_dir.exists():
-        # Already migrated - remove legacy if still present
-        if legacy_dir.exists():
-            shutil.rmtree(legacy_dir)
-        return False
-
-    # Create new structure
-    new_overlay_dir = get_overlay_write_dir(sandbox_name, "/home/sandbox")
-    new_work_dir = get_sandbox_work_dir(sandbox_name)
-
-    new_overlay_dir.parent.mkdir(parents=True, exist_ok=True)
-    new_work_dir.mkdir(parents=True, exist_ok=True)
-
-    # Move the legacy overlay contents to the new location
-    shutil.move(str(legacy_dir), str(new_overlay_dir))
-
-    # Check if legacy overlays dir is now empty and remove it
-    if BUI_LEGACY_OVERLAYS_DIR.exists():
-        try:
-            remaining = list(BUI_LEGACY_OVERLAYS_DIR.iterdir())
-            # Only remove if empty or only contains hidden files (like .overlay-work)
-            if not remaining or all(p.name.startswith(".") for p in remaining):
-                if legacy_work_dir.exists() and legacy_work_dir.parent == BUI_STATE_DIR:
-                    # Keep the legacy work dir for now, it might be in use
-                    pass
-        except OSError:
-            pass
-
-    return True
-
-
 def _load_installed() -> dict[str, dict]:
     """Load installed scripts metadata. Returns {sandbox_name: {scripts: [...], profile: ...}}."""
     if not INSTALLED_SCRIPTS_FILE.exists():
@@ -142,6 +111,24 @@ def _load_installed() -> dict[str, dict]:
         return json.loads(INSTALLED_SCRIPTS_FILE.read_text())
     except (json.JSONDecodeError, OSError):
         return {}
+
+
+def cleanup_orphaned_sandboxes() -> None:
+    """Clean up orphaned sandboxes from previous runs.
+
+    Any sandbox directory not in installed.json is orphaned.
+    """
+    if not BUI_SANDBOXES_DIR.exists():
+        return
+
+    installed = _load_installed()
+
+    for sandbox_dir in BUI_SANDBOXES_DIR.iterdir():
+        if not sandbox_dir.is_dir():
+            continue
+        if sandbox_dir.name not in installed:
+            _fix_overlay_workdir_permissions(sandbox_dir)
+            shutil.rmtree(sandbox_dir, ignore_errors=True)
 
 
 def _save_installed(installed: dict[str, dict]) -> None:
@@ -221,13 +208,6 @@ def install_sandbox_binary(
     """Install selected binary from sandbox to ~/.local/bin."""
     sandbox_dir = get_sandbox_dir(sandbox_name)
     overlays_dir = sandbox_dir / "overlays"
-
-    # Support flat overlay structure from older versions
-    legacy_overlay_dir = BUI_LEGACY_OVERLAYS_DIR / sandbox_name
-    if not overlays_dir.exists() and legacy_overlay_dir.exists():
-        migrate_legacy_overlay(sandbox_name)
-        overlays_dir = sandbox_dir / "overlays"
-
     bin_dir = Path.home() / ".local" / "bin"
 
     if not overlays_dir.exists():
@@ -251,7 +231,7 @@ def install_sandbox_binary(
         if not overlay_subdir.is_dir():
             continue
         # Map overlay dirname back to mount point (e.g., "home-sandbox" -> "/home/sandbox")
-        mount_point = "/" + overlay_subdir.name.replace("-", "/")
+        mount_point = denormalize_dest_path(overlay_subdir.name)
         executables = find_executables(overlay_subdir)
         for exe in executables:
             rel_path = exe.relative_to(overlay_subdir)
@@ -318,15 +298,13 @@ def _fix_overlay_workdir_permissions(path: Path) -> None:
 def uninstall_sandbox(sandbox_name: str) -> None:
     """Remove sandbox: wrapper scripts in ~/.local/bin and overlay data."""
     sandbox_dir = get_sandbox_dir(sandbox_name)
-    legacy_overlay_dir = BUI_LEGACY_OVERLAYS_DIR / sandbox_name
     bin_dir = Path.home() / ".local" / "bin"
 
     installed = _load_installed()
     has_sandbox = sandbox_dir.exists()
-    has_legacy_overlay = legacy_overlay_dir.exists()
     has_metadata = sandbox_name in installed
 
-    if not has_sandbox and not has_legacy_overlay and not has_metadata:
+    if not has_sandbox and not has_metadata:
         print(f"Sandbox '{sandbox_name}' not found", file=sys.stderr)
         sys.exit(1)
 
@@ -342,11 +320,6 @@ def uninstall_sandbox(sandbox_name: str) -> None:
         _fix_overlay_workdir_permissions(sandbox_dir)
         shutil.rmtree(sandbox_dir)
         print(f"Removed: {sandbox_dir}/")
-
-    if has_legacy_overlay:
-        _fix_overlay_workdir_permissions(legacy_overlay_dir)
-        shutil.rmtree(legacy_overlay_dir)
-        print(f"Removed: {legacy_overlay_dir}/")
 
 
 def list_sandboxes() -> None:
@@ -382,7 +355,6 @@ def list_overlays() -> None:
     installed = _load_installed()
     found_any = False
 
-    # List sandboxes in hierarchical structure
     if BUI_SANDBOXES_DIR.exists():
         sandboxes = sorted(
             d for d in BUI_SANDBOXES_DIR.iterdir()
@@ -409,28 +381,6 @@ def list_overlays() -> None:
             else:
                 print("    No scripts installed (safe to delete)")
 
-    # List overlays in flat structure (from older versions)
-    if BUI_LEGACY_OVERLAYS_DIR.exists():
-        overlays = sorted(
-            d for d in BUI_LEGACY_OVERLAYS_DIR.iterdir()
-            if d.is_dir() and not d.name.startswith(".")
-        )
-        for overlay in overlays:
-            name = overlay.name
-            # Skip if already shown in sandboxes
-            if (BUI_SANDBOXES_DIR / name).exists():
-                continue
-            found_any = True
-            file_count = sum(1 for _ in overlay.rglob("*") if _.is_file())
-            has_installed = name in installed
-
-            print(f"  {overlay}/ (flat structure)")
-            print(f"    files: {file_count}")
-            if has_installed:
-                print(f"    To remove: bui --sandbox {name} --uninstall")
-            else:
-                print("    No scripts installed (safe to delete)")
-
     if not found_any:
         print("No sandboxes found")
 
@@ -451,25 +401,25 @@ def list_profiles() -> None:
 
 
 def clean_temp_files() -> None:
-    """Remove temporary network filter directories."""
+    """Remove temporary network filter directories from /tmp."""
     import shutil
+    import tempfile
 
     removed = 0
     errors = 0
 
-    # Check ~/.bui-run/ for net-* and audit-* directories
-    run_dir = Path.home() / ".bui-run"
-    if run_dir.exists():
-        for pattern in ["net-*", "audit-*"]:
-            for item in run_dir.glob(pattern):
-                if item.is_dir():
-                    try:
-                        shutil.rmtree(item)
-                        print(f"  Removed: {item}")
-                        removed += 1
-                    except OSError as e:
-                        print(f"  Error removing {item}: {e}")
-                        errors += 1
+    # Check /tmp for bui-* temp directories
+    tmp_dir = Path(tempfile.gettempdir())
+    for pattern in ["bui-net-*", "bui-audit-*", "bui-vfiles-*"]:
+        for item in tmp_dir.glob(pattern):
+            if item.is_dir():
+                try:
+                    shutil.rmtree(item)
+                    print(f"  Removed: {item}")
+                    removed += 1
+                except OSError as e:
+                    print(f"  Error removing {item}: {e}")
+                    errors += 1
 
     if removed == 0 and errors == 0:
         print("No temporary files found.")

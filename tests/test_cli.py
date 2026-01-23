@@ -8,7 +8,6 @@ import pytest
 
 from cli import needs_shell_wrap, parse_args
 from sandbox import (
-    BUI_LEGACY_OVERLAYS_DIR,
     BUI_SANDBOXES_DIR,
     find_executables,
     install_sandbox_binary,
@@ -353,9 +352,8 @@ class TestInstallSandboxBinary:
         sandboxes_dir = state_dir / "sandboxes"
         with patch("sandbox.BUI_STATE_DIR", state_dir):
             with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
-                with patch("sandbox.BUI_LEGACY_OVERLAYS_DIR", state_dir / "overlays"):
-                    with pytest.raises(SystemExit):
-                        install_sandbox_binary("nonexistent")
+                with pytest.raises(SystemExit):
+                    install_sandbox_binary("nonexistent")
 
     def test_no_executables_exits(self, tmp_path):
         """Exits with error if no executables found."""
@@ -722,10 +720,9 @@ class TestUninstallSandbox:
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
             with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
-                with patch("sandbox.BUI_LEGACY_OVERLAYS_DIR", state_dir / "overlays"):
-                    with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                        with pytest.raises(SystemExit):
-                            uninstall_sandbox("nonexistent")
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    with pytest.raises(SystemExit):
+                        uninstall_sandbox("nonexistent")
 
     def test_metadata_only_cleans_up(self, tmp_path, capsys):
         """Cleans up metadata even when sandbox was already deleted."""
@@ -745,10 +742,9 @@ class TestUninstallSandbox:
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
             with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
-                with patch("sandbox.BUI_LEGACY_OVERLAYS_DIR", state_dir / "overlays"):
-                    with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                        with patch("sandbox.Path.home", return_value=tmp_path):
-                            uninstall_sandbox("orphan")
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    with patch("sandbox.Path.home", return_value=tmp_path):
+                        uninstall_sandbox("orphan")
 
         captured = capsys.readouterr()
         assert f"Removed: {bin_dir / 'myapp'}" in captured.out
@@ -789,10 +785,9 @@ class TestUninstallSandbox:
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
             with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
-                with patch("sandbox.BUI_LEGACY_OVERLAYS_DIR", state_dir / "overlays"):
-                    with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                        with patch("sandbox.Path.home", return_value=tmp_path):
-                            uninstall_sandbox("test")
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    with patch("sandbox.Path.home", return_value=tmp_path):
+                        uninstall_sandbox("test")
 
         captured = capsys.readouterr()
         assert f"Removed: {bin_dir / 'myapp'}" in captured.out
@@ -819,10 +814,9 @@ class TestUninstallSandbox:
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
             with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
-                with patch("sandbox.BUI_LEGACY_OVERLAYS_DIR", state_dir / "overlays"):
-                    with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                        with patch("sandbox.Path.home", return_value=tmp_path):
-                            uninstall_sandbox("test")
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    with patch("sandbox.Path.home", return_value=tmp_path):
+                        uninstall_sandbox("test")
 
         captured = capsys.readouterr()
         assert f"Removed: {sandbox_dir}/" in captured.out
@@ -891,8 +885,7 @@ class TestListOverlays:
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
             with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
-                with patch("sandbox.BUI_LEGACY_OVERLAYS_DIR", state_dir / "overlays"):
-                    list_overlays()
+                list_overlays()
 
         captured = capsys.readouterr()
         assert "No sandboxes found" in captured.out
@@ -905,8 +898,7 @@ class TestListOverlays:
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
             with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
-                with patch("sandbox.BUI_LEGACY_OVERLAYS_DIR", state_dir / "overlays"):
-                    list_overlays()
+                list_overlays()
 
         captured = capsys.readouterr()
         assert "No sandboxes found" in captured.out
@@ -930,9 +922,8 @@ class TestListOverlays:
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
             with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
-                with patch("sandbox.BUI_LEGACY_OVERLAYS_DIR", state_dir / "overlays"):
-                    with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                        list_overlays()
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    list_overlays()
 
         captured = capsys.readouterr()
         assert "test-app" in captured.out
@@ -952,9 +943,8 @@ class TestListOverlays:
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
             with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
-                with patch("sandbox.BUI_LEGACY_OVERLAYS_DIR", state_dir / "overlays"):
-                    with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                        list_overlays()
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    list_overlays()
 
         captured = capsys.readouterr()
         assert "test-app" in captured.out
@@ -973,9 +963,8 @@ class TestListOverlays:
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
             with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
-                with patch("sandbox.BUI_LEGACY_OVERLAYS_DIR", state_dir / "overlays"):
-                    with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                        list_overlays()
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    list_overlays()
 
         captured = capsys.readouterr()
         assert "test-app" in captured.out

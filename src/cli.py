@@ -22,6 +22,7 @@ from profiles import BUI_PROFILES_DIR, Profile
 from sandbox import (
     BUI_STATE_DIR,
     clean_temp_files,
+    cleanup_orphaned_sandboxes,
     find_executables,
     get_overlay_write_dir,
     get_sandbox_dir,
@@ -30,7 +31,6 @@ from sandbox import (
     list_overlays,
     list_profiles,
     list_sandboxes,
-    migrate_legacy_overlay,
     register_sandbox,
     uninstall_sandbox,
 )
@@ -338,9 +338,6 @@ def apply_sandbox_to_overlays(config: SandboxConfig, sandbox_name: str) -> list[
 
     Returns list of overlay write directories that may be written to.
     """
-    # Migrate from flat structure if needed
-    migrate_legacy_overlay(sandbox_name)
-
     overlay_dirs = []
     shared_work_dir = get_sandbox_work_dir(sandbox_name)
 
@@ -390,6 +387,9 @@ def main() -> None:
     """Main entry point."""
     global _update_available
     args = parse_args()
+
+    # Clean up orphaned ephemeral sandboxes from previous runs
+    cleanup_orphaned_sandboxes()
 
     # Check for updates in background (non-blocking, cached for 1 day)
     _update_available = check_for_updates(BUI_VERSION)
@@ -470,26 +470,15 @@ def main() -> None:
         vfiles = setup_virtual_files(app.config)
         file_map = vfiles.get_file_map()
 
-        # Dispatch based on network mode
-        if app.config.network_filter.is_audit_mode():
-            # Network auditing - capture traffic and show summary after exit
-            execute_with_audit(
-                app.config,
-                file_map if file_map else None,
-                _build_bwrap_command,
-            )
-        elif app.config.network_filter.is_filter_mode():
-            # Network filtering - apply iptables rules
-            execute_with_network_filter(
-                app.config,
-                file_map if file_map else None,
-                _build_bwrap_command,
-            )
-        else:
-            # Normal execution without pasta
-            cmd = app.config.build_command(file_map if file_map else None)
-            print_execution_header(cmd)
-            os.execvp("bwrap", cmd)
+        # Execute via shared dispatcher (handles network mode dispatch and cleanup)
+        execute_sandbox(
+            app.config,
+            file_map if file_map else None,
+            _build_bwrap_command,
+            sandbox_name=None,
+            overlay_dirs=[],
+            ephemeral_sandbox_dir=None,
+        )
     else:
         print("Cancelled.")
         sys.exit(0)

@@ -13,6 +13,23 @@ if TYPE_CHECKING:
     from model.sandbox_config import SandboxConfig
 
 
+def _fix_overlay_workdir_permissions(path: Path) -> None:
+    """Fix permissions on overlayfs workdir before deletion.
+
+    Overlayfs sets workdir permissions to 000 to prevent direct access.
+    Since the user owns the directory, we can chmod it to allow deletion.
+    """
+    for root, dirs, files in os.walk(path, topdown=True):
+        for d in dirs:
+            dir_path = Path(root) / d
+            try:
+                current_mode = dir_path.stat().st_mode
+                if current_mode & 0o700 != 0o700:
+                    os.chmod(dir_path, current_mode | 0o700)
+            except OSError:
+                pass
+
+
 def execute_sandbox(
     config: "SandboxConfig",
     file_map: dict[str, str] | None,
@@ -60,6 +77,7 @@ def execute_sandbox(
             )
     finally:
         if ephemeral_sandbox_dir and ephemeral_sandbox_dir.exists():
+            _fix_overlay_workdir_permissions(ephemeral_sandbox_dir)
             shutil.rmtree(ephemeral_sandbox_dir, ignore_errors=True)
 
     sys.exit(exit_code)

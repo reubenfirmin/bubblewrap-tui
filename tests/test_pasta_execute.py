@@ -232,8 +232,8 @@ class TestExecuteWithPasta:
 
         from net.pasta_exec import execute_with_pasta
 
-        # Mock _create_wrapper_with_tmp to raise HostnameResolutionError
-        with patch("net.pasta_exec._create_wrapper_with_tmp") as mock_create:
+        # Mock create_wrapper_script to raise HostnameResolutionError
+        with patch("net.pasta_exec.create_wrapper_script") as mock_create:
             mock_create.side_effect = HostnameResolutionError(
                 "Failed to resolve 'bad.hostname'"
             )

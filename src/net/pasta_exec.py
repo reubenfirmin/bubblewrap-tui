@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from model.network_filter import NetworkFilter
     from model.sandbox_config import SandboxConfig
 
-from net.filtering import validate_filtering_requirements
+from net.filtering import create_wrapper_script, validate_filtering_requirements
 from net.pasta_args import generate_pasta_args, prepare_bwrap_command
 from net.utils import HostnameResolutionError
 
@@ -59,14 +59,9 @@ def execute_with_pasta(
     # Build bwrap command (this is what wrapper.sh will exec)
     bwrap_cmd = build_command_fn(config, file_map)
 
-    # Create wrapper script in a location pasta can execute from
-    # SELinux on Fedora prevents pasta from executing scripts in dirs with
-    # cache_home_t or data_home_t contexts. Only user_home_t works.
-    # ~/.bui-run/ inherits user_home_t from $HOME
+    # Create wrapper script in temp directory
     import tempfile
-    run_dir = Path.home() / ".bui-run"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    tmp_dir = tempfile.mkdtemp(prefix="net-", dir=run_dir)
+    tmp_dir = tempfile.mkdtemp(prefix="bui-net-")
     tmp_path = Path(tmp_dir)
 
     # Prepare bwrap command (removes --unshare-net, adds bind mounts)
@@ -74,7 +69,7 @@ def execute_with_pasta(
 
     # Create wrapper script that does iptables setup then execs bwrap
     try:
-        wrapper_script_path = _create_wrapper_with_tmp(
+        wrapper_script_path = create_wrapper_script(
             nf, bwrap_cmd, iptables_path, ip6tables_path, is_multicall, tmp_path
         )
     except HostnameResolutionError as e:
@@ -108,64 +103,6 @@ def execute_with_pasta(
     sys.stdout.flush()
     sys.stderr.flush()
     return _run_with_pty(full_cmd)
-
-
-def _create_wrapper_with_tmp(
-    nf: "NetworkFilter",
-    bwrap_cmd: list[str],
-    iptables_path: str,
-    ip6tables_path: str | None,
-    is_multicall: bool,
-    tmp_path: Path,
-) -> Path:
-    """Create wrapper script in the given tmp directory.
-
-    This is a helper that creates the wrapper script components in a pre-existing
-    temp directory (which is needed because prepare_bwrap_command needs to know
-    the tmp_dir before we create the wrapper).
-    """
-    import shlex
-
-    from net.dns_proxy import generate_dns_proxy_script, get_dns_proxy_init_commands, needs_dns_proxy
-    from net.iptables import generate_init_script
-
-    wrapper_script_path = tmp_path / "wrapper.sh"
-
-    iptables_script = generate_init_script(nf, iptables_path, ip6tables_path, is_multicall)
-
-    # Check if DNS proxy is needed for hostname filtering
-    dns_proxy_setup = ""
-    if needs_dns_proxy(nf.hostname_filter):
-        dns_proxy_script_path = tmp_path / "dns_proxy.py"
-        dns_proxy_script = generate_dns_proxy_script(nf.hostname_filter)
-        dns_proxy_script_path.write_text(dns_proxy_script)
-        dns_proxy_script_path.chmod(0o755)
-        dns_proxy_setup = get_dns_proxy_init_commands(str(dns_proxy_script_path))
-
-        # Write resolv.conf to temp dir - will be ro-bind mounted by bwrap
-        resolv_conf_path = tmp_path / "resolv.conf"
-        resolv_conf_path.write_text("# DNS handled by bubblewrap-tui DNS proxy\nnameserver 127.0.0.1\n")
-        resolv_conf_path.chmod(0o444)
-
-    # Build the bwrap command string
-    bwrap_cmd_str = " ".join(shlex.quote(arg) for arg in bwrap_cmd)
-
-    wrapper_script = f'''#!/bin/sh
-set -e
-
-# Set up iptables rules (requires CAP_NET_ADMIN from pasta)
-{iptables_script}
-{dns_proxy_setup}
-# Execute bwrap with full namespace isolation
-# --unshare-user creates nested user namespace
-# --disable-userns blocks further namespace creation (prevents escapes)
-exec {bwrap_cmd_str}
-'''
-
-    wrapper_script_path.write_text(wrapper_script)
-    wrapper_script_path.chmod(0o755)
-
-    return wrapper_script_path
 
 
 def _run_with_pty(cmd: list[str]) -> int:
@@ -292,10 +229,7 @@ def execute_with_audit(
     nf = config.network_filter
 
     # Create temp directory for pcap file
-    # Use ~/.bui-run for SELinux compatibility (user_home_t context)
-    run_dir = Path.home() / ".bui-run"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    tmp_dir = tempfile.mkdtemp(prefix="audit-", dir=run_dir)
+    tmp_dir = tempfile.mkdtemp(prefix="bui-audit-")
     tmp_path = Path(tmp_dir)
 
     # Make directory world-writable for pasta's dropped privileges

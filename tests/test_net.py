@@ -25,6 +25,7 @@ from net import (
     validate_cidr,
     validate_port,
 )
+from net.iptables import _overlaps_loopback_v4, _overlaps_loopback_v6
 
 
 class TestCheckPasta:
@@ -605,3 +606,88 @@ class TestIptablesRuleOrdering:
         ]
         assert len(general_lo_accept) == 0, \
             "No general loopback accept when blocking any 127.x.x.x"
+
+    def test_loopback_cidr_ranges_detected(self):
+        """Various loopback CIDR ranges should all block loopback accept."""
+        # Test multiple CIDR notations that overlap with loopback
+        test_cases = [
+            "127.0.0.0/8",    # Full loopback range
+            "127.0.0.0/24",   # Partial range
+            "127.0.0.0/16",   # Another partial range
+            "127.0.0.1",      # Single IP
+            "127.255.255.255",  # Last IP in range
+        ]
+        for cidr in test_cases:
+            nf = NetworkFilter(
+                ip_filter=IPFilter(
+                    mode=FilterMode.BLACKLIST,
+                    cidrs=[cidr],
+                ),
+            )
+            v4, v6 = generate_iptables_rules(nf)
+
+            general_lo_accept = [
+                r for r in v4
+                if "-o lo" in r and "-j ACCEPT" in r and "--dport" not in r
+            ]
+            assert len(general_lo_accept) == 0, \
+                f"CIDR {cidr} should block general loopback accept"
+
+
+class TestLoopbackOverlapDetection:
+    """Tests for CIDR overlap detection helper functions."""
+
+    def test_overlaps_loopback_v4_full_range(self):
+        """Full loopback range overlaps."""
+        assert _overlaps_loopback_v4("127.0.0.0/8") is True
+
+    def test_overlaps_loopback_v4_partial_ranges(self):
+        """Partial loopback ranges overlap."""
+        assert _overlaps_loopback_v4("127.0.0.0/24") is True
+        assert _overlaps_loopback_v4("127.0.0.0/16") is True
+        assert _overlaps_loopback_v4("127.128.0.0/16") is True
+
+    def test_overlaps_loopback_v4_single_ips(self):
+        """Single loopback IPs overlap."""
+        assert _overlaps_loopback_v4("127.0.0.1") is True
+        assert _overlaps_loopback_v4("127.255.255.255") is True
+        assert _overlaps_loopback_v4("127.0.0.0") is True
+
+    def test_overlaps_loopback_v4_non_loopback(self):
+        """Non-loopback addresses don't overlap."""
+        assert _overlaps_loopback_v4("10.0.0.0/8") is False
+        assert _overlaps_loopback_v4("192.168.1.1") is False
+        assert _overlaps_loopback_v4("0.0.0.0/0") is True  # /0 contains everything
+
+    def test_overlaps_loopback_v4_edge_cases(self):
+        """Edge cases for loopback detection."""
+        # 126.x.x.x is not loopback
+        assert _overlaps_loopback_v4("126.255.255.255") is False
+        # 128.x.x.x is not loopback
+        assert _overlaps_loopback_v4("128.0.0.0") is False
+
+    def test_overlaps_loopback_v4_invalid_input(self):
+        """Invalid input returns False."""
+        assert _overlaps_loopback_v4("not-an-ip") is False
+        assert _overlaps_loopback_v4("") is False
+
+    def test_overlaps_loopback_v6_exact(self):
+        """IPv6 loopback exact match."""
+        assert _overlaps_loopback_v6("::1") is True
+        assert _overlaps_loopback_v6("::1/128") is True
+
+    def test_overlaps_loopback_v6_containing_ranges(self):
+        """IPv6 ranges containing loopback."""
+        assert _overlaps_loopback_v6("::/0") is True  # All IPv6
+        assert _overlaps_loopback_v6("::0/64") is True
+
+    def test_overlaps_loopback_v6_non_loopback(self):
+        """Non-loopback IPv6 addresses don't overlap."""
+        assert _overlaps_loopback_v6("::2") is False
+        assert _overlaps_loopback_v6("fe80::/10") is False
+        assert _overlaps_loopback_v6("2001:db8::1") is False
+
+    def test_overlaps_loopback_v6_invalid_input(self):
+        """Invalid IPv6 input returns False."""
+        assert _overlaps_loopback_v6("not-an-ip") is False
+        assert _overlaps_loopback_v6("127.0.0.1") is False  # IPv4 in v6 function

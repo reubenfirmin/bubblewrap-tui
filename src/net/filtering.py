@@ -64,6 +64,7 @@ def create_wrapper_script(
     iptables_path: str,
     ip6tables_path: str | None,
     is_multicall: bool,
+    tmp_path: Path | None = None,
 ) -> Path:
     """Create the wrapper script that runs iptables/DNS setup then execs bwrap.
 
@@ -82,6 +83,7 @@ def create_wrapper_script(
         iptables_path: Path to iptables binary
         ip6tables_path: Path to ip6tables binary (or None)
         is_multicall: Whether iptables is a multicall binary
+        tmp_path: Optional temp directory to use. If None, creates a new one.
 
     Returns:
         Path to the created wrapper script
@@ -91,8 +93,10 @@ def create_wrapper_script(
 
     from net.iptables import generate_init_script
 
-    tmp_dir = tempfile.mkdtemp(prefix="bui-net-")
-    tmp_path = Path(tmp_dir)
+    if tmp_path is None:
+        tmp_dir = tempfile.mkdtemp(prefix="bui-net-")
+        tmp_path = Path(tmp_dir)
+
     wrapper_script_path = tmp_path / "wrapper.sh"
 
     iptables_script = generate_init_script(nf, iptables_path, ip6tables_path, is_multicall)
@@ -103,7 +107,7 @@ def create_wrapper_script(
         dns_proxy_script_path = tmp_path / "dns_proxy.py"
         dns_proxy_script = generate_dns_proxy_script(nf.hostname_filter)
         dns_proxy_script_path.write_text(dns_proxy_script)
-        dns_proxy_script_path.chmod(0o755)  # Executable
+        dns_proxy_script_path.chmod(0o755)
         dns_proxy_setup = get_dns_proxy_init_commands(str(dns_proxy_script_path))
 
         # Write resolv.conf to temp dir - will be ro-bind mounted by bwrap
