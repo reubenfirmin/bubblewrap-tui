@@ -189,12 +189,15 @@ def _parse_basic(pcap_path: Path) -> AuditResult:
             return result  # Not a valid pcap
 
         # Read packets
+        max_packet_size = 65535  # Maximum ethernet frame size
         while True:
             packet_header = f.read(16)
             if len(packet_header) < 16:
                 break
 
             _, _, incl_len, _ = struct.unpack(endian + "IIII", packet_header)
+            if incl_len > max_packet_size:
+                break  # Reject oversized packets to prevent memory exhaustion
             packet_data = f.read(incl_len)
             if len(packet_data) < incl_len:
                 break

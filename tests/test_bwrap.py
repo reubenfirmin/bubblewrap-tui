@@ -485,6 +485,16 @@ class TestDesktopIntegration:
         args = BubblewrapSerializer(config).serialize()
         assert "/run/user/1000/bus" in args
 
+    @patch("detection.detect_dbus_session")
+    def test_allow_dbus_raises_when_no_socket_found(self, mock_dbus):
+        """allow_dbus raises error when no D-Bus socket found."""
+        mock_dbus.return_value = []  # No D-Bus paths found
+        config = make_config(desktop={"allow_dbus": True})
+        with pytest.raises(ValueError) as exc_info:
+            BubblewrapSerializer(config).serialize()
+        assert "D-Bus" in str(exc_info.value)
+        assert "no D-Bus session socket found" in str(exc_info.value)
+
     @patch("detection.detect_display_server")
     def test_allow_display(self, mock_display):
         """allow_display binds display paths."""

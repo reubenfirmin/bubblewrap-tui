@@ -5,10 +5,13 @@ Uses the group-based architecture for color-matched command/summary display.
 
 from __future__ import annotations
 
+import logging
 import shlex
 from typing import TYPE_CHECKING
 
 from model.groups import COLORS, DEFAULT_COLOR
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from model.sandbox_config import SandboxConfig
@@ -70,6 +73,14 @@ class BubblewrapSerializer:
         # Only generate when synthetic_passwd enabled and username set
         if not synthetic_passwd or not username:
             return []
+
+        # User requested synthetic passwd but uid/gid not configured - this is an error
+        if uid is None or gid is None:
+            raise ValueError(
+                f"synthetic_passwd enabled with username '{username}' but "
+                f"{'uid' if uid is None else 'gid'} is not set. "
+                "Configure uid/gid in User Identity settings."
+            )
 
         # Use /root for uid 0, otherwise /home/{username}
         home = "/root" if uid == 0 else f"/home/{username}"

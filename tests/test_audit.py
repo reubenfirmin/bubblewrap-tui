@@ -334,6 +334,18 @@ class TestParseBasic:
         result = _parse_basic(pcap_file)
         assert result.total_connections() == 0
 
+    def test_oversized_packet_rejected(self, tmp_path):
+        """Packets claiming huge sizes are rejected to prevent memory exhaustion."""
+        pcap_file = tmp_path / "oversized.pcap"
+        global_header = _create_pcap_global_header(big_endian=False)
+        # Malicious packet header claiming 4GB (0xFFFFFFFF bytes)
+        # This would cause memory exhaustion if not handled
+        packet_header = struct.pack("<IIII", 0, 0, 0xFFFFFFFF, 0xFFFFFFFF)
+        pcap_file.write_bytes(global_header + packet_header)
+        # Should not crash or hang - should return early
+        result = _parse_basic(pcap_file)
+        assert result.total_connections() == 0
+
     def test_multiple_packets(self, tmp_path):
         """Correctly counts multiple packets to same destination."""
         pcap_file = tmp_path / "multi.pcap"

@@ -21,6 +21,10 @@ class ProfileValidationError(Exception):
     """Raised when profile validation fails."""
 
 
+class ProfileError(Exception):
+    """Raised when profile loading or saving fails."""
+
+
 def validate_config(config: SandboxConfig, profile_name: str | None = None) -> list[str]:
     """Validate a SandboxConfig and return list of warnings.
 
@@ -293,8 +297,11 @@ class Profile:
     def save(self, config: SandboxConfig) -> None:
         """Save config to profile file."""
         data = serialize(config)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(data, indent=2))
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(json.dumps(data, indent=2))
+        except OSError as e:
+            raise ProfileError(f"Failed to save profile to {self.path}: {e}") from e
 
     def load(self, command: list[str]) -> tuple[SandboxConfig, list[str]]:
         """Load profile and create config with given command.
@@ -303,9 +310,15 @@ class Profile:
             Tuple of (config, warnings) where warnings is a list of non-critical issues.
 
         Raises:
+            ProfileError: For file read or JSON parse failures.
             ProfileValidationError: For critical validation failures.
         """
-        data = json.loads(self.path.read_text())
+        try:
+            data = json.loads(self.path.read_text())
+        except json.JSONDecodeError as e:
+            raise ProfileError(f"Corrupted profile {self.path}: {e}") from e
+        except OSError as e:
+            raise ProfileError(f"Failed to read profile {self.path}: {e}") from e
         config = deserialize(SandboxConfig, data, command=command)
         warnings = validate_config(config, profile_name=self.name)
         return config, warnings
@@ -471,6 +484,9 @@ class ProfileManager:
         # Sync config from UI first
         sync_config()
         # Save to file
-        profile = Profile(self.profiles_dir / f"{name}.json")
-        profile.save(self._get_config())
-        self._on_status(f"Saved profile: {name}")
+        try:
+            profile = Profile(self.profiles_dir / f"{name}.json")
+            profile.save(self._get_config())
+            self._on_status(f"Saved profile: {name}")
+        except ProfileError as e:
+            self._on_status(f"Error saving profile: {e}")

@@ -12,6 +12,7 @@ from model import (
 )
 from profiles import (
     Profile,
+    ProfileError,
     ProfileValidationError,
     deserialize,
     serialize,
@@ -480,3 +481,43 @@ class TestProfile:
         profiles = Profile.list_profiles(tmp_profile)
         names = [p.name for p in profiles]
         assert names == sorted(names)
+
+    def test_load_corrupted_json_raises_profile_error(self, tmp_profile):
+        """Load raises ProfileError for corrupted JSON."""
+        profile_path = tmp_profile / "corrupted.json"
+        profile_path.write_text("invalid json{")
+
+        profile = Profile(profile_path)
+        with pytest.raises(ProfileError) as exc_info:
+            profile.load(["bash"])
+        assert "Corrupted profile" in str(exc_info.value)
+
+    def test_load_unreadable_file_raises_profile_error(self, tmp_profile):
+        """Load raises ProfileError for unreadable file."""
+        profile_path = tmp_profile / "unreadable.json"
+        profile_path.write_text("{}")
+        profile_path.chmod(0o000)
+
+        try:
+            profile = Profile(profile_path)
+            with pytest.raises(ProfileError) as exc_info:
+                profile.load(["bash"])
+            assert "Failed to read profile" in str(exc_info.value)
+        finally:
+            # Restore permissions for cleanup
+            profile_path.chmod(0o644)
+
+    def test_save_to_readonly_dir_raises_profile_error(self, tmp_path):
+        """Save raises ProfileError when directory is read-only."""
+        readonly_dir = tmp_path / "readonly"
+        readonly_dir.mkdir(mode=0o500)
+
+        try:
+            profile = Profile(readonly_dir / "profile.json")
+            config = SandboxConfig(command=["bash"])
+            with pytest.raises(ProfileError) as exc_info:
+                profile.save(config)
+            assert "Failed to save profile" in str(exc_info.value)
+        finally:
+            # Restore permissions for cleanup
+            readonly_dir.chmod(0o755)
