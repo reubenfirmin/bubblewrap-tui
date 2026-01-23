@@ -9,6 +9,12 @@ def _named(name: str, field: UIField) -> UIField:
     return field
 
 
+def _validate_chdir(value: str) -> str:
+    """Lazy import wrapper for validate_chdir to avoid circular imports."""
+    from controller.validators import validate_chdir
+    return validate_chdir(value)
+
+
 die_with_parent = _named("die_with_parent", UIField(
     bool, True, "opt-die-with-parent",
     "Kill with parent", "Dies when terminal closes",
@@ -31,4 +37,5 @@ chdir = _named("chdir", UIField(
     str, "", "opt-chdir",
     "Working dir", "Directory to start in",
     bwrap_args=lambda v: ["--chdir", v] if v else [],
+    value_transform=_validate_chdir,
 ))

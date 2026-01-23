@@ -9,6 +9,12 @@ def _named(name: str, field: UIField) -> UIField:
     return field
 
 
+def _validate_tmpfs_size(value: str) -> str | None:
+    """Lazy import wrapper for validate_tmpfs_size to avoid circular imports."""
+    from controller.validators import validate_tmpfs_size
+    return validate_tmpfs_size(value)
+
+
 dev_mode = _named("dev_mode", UIField(
     str, "minimal", "dev-mode-btn",
     "/dev mode", "Device access level",
@@ -31,4 +37,5 @@ mount_tmp = _named("mount_tmp", UIField(
 tmpfs_size = _named("tmpfs_size", UIField(
     str, "", "opt-tmpfs-size",
     "Tmpfs size", "Size limit for /tmp (e.g., 100M, 1G)",
+    value_transform=_validate_tmpfs_size,
 ))
