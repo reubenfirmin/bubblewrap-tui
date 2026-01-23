@@ -115,8 +115,10 @@ def _run_with_pty(cmd: list[str]) -> int:
     import os
     import pty
     import select
+    import signal
     import sys
     import termios
+    import time
     import tty
 
     pid, fd = pty.fork()
@@ -125,6 +127,54 @@ def _run_with_pty(cmd: list[str]) -> int:
         # Child - exec the command
         os.execvp(cmd[0], cmd)
         sys.exit(1)  # Never reached
+
+    def cleanup_child() -> int:
+        """Terminate and reap the child process, returning exit code."""
+        # Check if child already exited
+        try:
+            result = os.waitpid(pid, os.WNOHANG)
+            if result[0] != 0:
+                status = result[1]
+                if os.WIFEXITED(status):
+                    return os.WEXITSTATUS(status)
+                return 1
+        except ChildProcessError:
+            return 0
+
+        # Send SIGTERM to the process group
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            # Process already gone or we can't signal it
+            pass
+
+        # Wait up to 2 seconds for termination
+        for _ in range(20):
+            time.sleep(0.1)
+            try:
+                result = os.waitpid(pid, os.WNOHANG)
+                if result[0] != 0:
+                    status = result[1]
+                    if os.WIFEXITED(status):
+                        return os.WEXITSTATUS(status)
+                    return 1
+            except ChildProcessError:
+                return 0
+
+        # Still running - send SIGKILL
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+        # Reap with blocking wait
+        try:
+            _, status = os.waitpid(pid, 0)
+            if os.WIFEXITED(status):
+                return os.WEXITSTATUS(status)
+            return 1
+        except ChildProcessError:
+            return 0
 
     # Parent - copy data between pty and stdin/stdout
     old_settings = None
@@ -176,19 +226,20 @@ def _run_with_pty(cmd: list[str]) -> int:
                         break
                 except OSError:
                     break
+    except KeyboardInterrupt:
+        return cleanup_child()
     finally:
         # Restore terminal settings
         if old_settings is not None and stdin_fd is not None:
             termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_settings)
+        # Close pty fd
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
     # Reap child and get exit status
-    try:
-        _, status = os.waitpid(pid, 0)
-        if os.WIFEXITED(status):
-            return os.WEXITSTATUS(status)
-        return 1
-    except ChildProcessError:
-        return 0
+    return cleanup_child()
 
 
 def execute_with_audit(
