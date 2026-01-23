@@ -95,3 +95,32 @@ def validate_chdir(value: str) -> str:
         Stripped path string
     """
     return value.strip()
+
+
+def validate_username(value: str) -> str | None:
+    """Validate username format.
+
+    Valid usernames (following POSIX conventions):
+    - Start with letter or underscore
+    - Contain only letters, digits, underscores, hyphens
+    - No control characters, newlines, colons (would corrupt passwd file)
+
+    Args:
+        value: String value from input field
+
+    Returns:
+        Stripped username or None if invalid format
+    """
+    stripped = value.strip()
+    if not stripped:
+        return ""  # Empty is valid (no custom username)
+
+    # POSIX username: starts with letter or underscore, then alphanumeric/underscore/hyphen
+    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_-]*$', stripped):
+        return None
+
+    # Additional safety: reject if too long (max 32 chars is common limit)
+    if len(stripped) > 32:
+        return None
+
+    return stripped

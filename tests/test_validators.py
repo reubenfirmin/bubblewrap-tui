@@ -7,6 +7,7 @@ from controller.validators import (
     validate_hostname,
     validate_tmpfs_size,
     validate_uid_gid,
+    validate_username,
 )
 
 
@@ -154,3 +155,67 @@ class TestValidateChdir:
     def test_strips_whitespace(self):
         """Whitespace is stripped."""
         assert validate_chdir("  /home/user  ") == "/home/user"
+
+
+class TestValidateUsername:
+    """Tests for validate_username function."""
+
+    def test_empty_is_valid(self):
+        """Empty string is valid (no custom username)."""
+        assert validate_username("") == ""
+
+    def test_simple_username(self):
+        """Simple alphanumeric username is valid."""
+        assert validate_username("john") == "john"
+
+    def test_username_with_underscore(self):
+        """Username starting with underscore is valid."""
+        assert validate_username("_system") == "_system"
+
+    def test_username_with_hyphen(self):
+        """Username with hyphens is valid."""
+        assert validate_username("john-doe") == "john-doe"
+
+    def test_username_with_numbers(self):
+        """Username with numbers is valid."""
+        assert validate_username("user123") == "user123"
+
+    def test_max_length_username(self):
+        """32-character username is valid."""
+        username = "a" * 32
+        assert validate_username(username) == username
+
+    def test_too_long_username(self):
+        """33+ character username is invalid."""
+        username = "a" * 33
+        assert validate_username(username) is None
+
+    def test_starts_with_number_invalid(self):
+        """Username starting with number is invalid."""
+        assert validate_username("1user") is None
+
+    def test_starts_with_hyphen_invalid(self):
+        """Username starting with hyphen is invalid."""
+        assert validate_username("-user") is None
+
+    def test_newline_invalid(self):
+        """Username with newline is invalid (security issue)."""
+        assert validate_username("user\nroot") is None
+
+    def test_control_char_invalid(self):
+        """Username with control characters is invalid."""
+        assert validate_username("user\x00root") is None
+
+    def test_colon_invalid(self):
+        """Username with colon is invalid (would corrupt passwd)."""
+        assert validate_username("user:root") is None
+
+    def test_special_chars_invalid(self):
+        """Username with special characters is invalid."""
+        assert validate_username("user@host") is None
+        assert validate_username("user.name") is None
+        assert validate_username("user name") is None
+
+    def test_strips_whitespace(self):
+        """Whitespace is stripped."""
+        assert validate_username("  john  ") == "john"
