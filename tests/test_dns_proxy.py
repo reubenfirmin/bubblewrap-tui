@@ -262,11 +262,17 @@ def build_dns_query(hostname: str, qtype: int = 1) -> bytes:
     return txn_id + flags + counts + qname + qtype_qclass
 
 
-def parse_qname_impl(data: bytes, offset: int) -> tuple[str, int]:
+MAX_COMPRESSION_DEPTH = 10  # Must match dns_proxy_script.py
+
+
+def parse_qname_impl(data: bytes, offset: int, depth: int = 0) -> tuple[str, int]:
     """Reference implementation of parse_qname for testing.
 
     This mirrors the logic in the embedded proxy script.
     """
+    if depth > MAX_COMPRESSION_DEPTH:
+        return "", offset
+
     labels = []
     while True:
         if offset >= len(data):
@@ -276,8 +282,10 @@ def parse_qname_impl(data: bytes, offset: int) -> tuple[str, int]:
             offset += 1
             break
         if length & 0xC0 == 0xC0:
+            if offset + 2 > len(data):
+                break
             pointer = struct.unpack("!H", data[offset:offset + 2])[0] & 0x3FFF
-            label, _ = parse_qname_impl(data, pointer)
+            label, _ = parse_qname_impl(data, pointer, depth + 1)
             labels.append(label)
             offset += 2
             break
@@ -357,6 +365,53 @@ class TestParseQname:
         query = build_dns_query("localhost")
         qname, _ = parse_qname_impl(query, 12)
         assert qname == "localhost"
+
+    def test_compression_pointer_loop_does_not_crash(self):
+        """Circular compression pointers don't cause infinite recursion (CVE-like DoS)."""
+        # Build a malicious DNS packet with circular compression pointers
+        # Header: 12 bytes
+        txn_id = b"\x12\x34"
+        flags = b"\x01\x00"  # Standard query
+        counts = b"\x00\x01\x00\x00\x00\x00\x00\x00"  # 1 question
+
+        # Question at offset 12: compression pointer pointing to itself (offset 12)
+        # 0xC0 | 0x0C = 0xC00C -> pointer to offset 12
+        circular_pointer = b"\xc0\x0c"  # Points back to offset 12
+        qtype_qclass = b"\x00\x01\x00\x01"
+
+        malicious_packet = txn_id + flags + counts + circular_pointer + qtype_qclass
+
+        # This should NOT crash with RecursionError - should return gracefully
+        qname, _ = parse_qname_impl(malicious_packet, 12)
+        # Result should be empty or partial, but NOT crash
+        assert isinstance(qname, str)
+
+    def test_deep_compression_chain_limited(self):
+        """Deep compression pointer chains are limited to prevent stack overflow."""
+        # Create a packet with a chain of compression pointers
+        # Each pointer points to the next, creating MAX_COMPRESSION_DEPTH+ levels
+        txn_id = b"\x12\x34"
+        flags = b"\x01\x00"
+        counts = b"\x00\x01\x00\x00\x00\x00\x00\x00"
+        header = txn_id + flags + counts  # 12 bytes
+
+        # Create chain: offset 12 -> 14 -> 16 -> ... until we exceed depth limit
+        # Each compression pointer is 2 bytes: 0xC0 | (offset >> 8), offset & 0xFF
+        chain = b""
+        for i in range(MAX_COMPRESSION_DEPTH + 5):
+            next_offset = 12 + (i + 1) * 2
+            if next_offset > 0x3FFF:
+                break
+            chain += bytes([0xC0 | (next_offset >> 8), next_offset & 0xFF])
+        # End with actual label
+        chain += b"\x03foo\x00"
+        qtype_qclass = b"\x00\x01\x00\x01"
+
+        packet = header + chain + qtype_qclass
+
+        # Should not crash, depth limit should stop recursion
+        qname, _ = parse_qname_impl(packet, 12)
+        assert isinstance(qname, str)
 
 
 class TestMakeNxdomain:

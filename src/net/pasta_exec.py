@@ -279,12 +279,9 @@ def execute_with_audit(
 
     nf = config.network_filter
 
-    # Create temp directory for pcap file
+    # Create temp directory for pcap file (mkdtemp creates with 0o700)
     tmp_dir = tempfile.mkdtemp(prefix="bui-audit-")
     tmp_path = Path(tmp_dir)
-
-    # Make directory world-writable for pasta's dropped privileges
-    tmp_path.chmod(0o777)
 
     pcap_path = nf.audit.pcap_path or (tmp_path / "audit.pcap")
 
