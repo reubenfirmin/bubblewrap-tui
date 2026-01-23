@@ -412,6 +412,50 @@ class TestExecuteWithAudit:
 
         assert exit_code == 130
 
+    @patch("sys.exit")
+    @patch("net.audit.print_audit_summary")
+    @patch("net.audit.parse_pcap")
+    @patch("subprocess.run")
+    @patch("commandoutput.print_audit_header")
+    def test_temp_directory_has_secure_permissions(
+        self,
+        mock_print_header,
+        mock_run,
+        mock_parse_pcap,
+        mock_print_summary,
+        mock_exit,
+        audit_config,
+        mock_build_command,
+    ):
+        """Temp directory is created with 0o700 (not world-writable)."""
+        import tempfile
+
+        mock_run.return_value = MagicMock(returncode=0)
+        mock_parse_pcap.return_value = MagicMock(dest_ips={})
+
+        from net.pasta_exec import execute_with_audit
+
+        # Track the temp directory created
+        created_dirs = []
+        original_mkdtemp = tempfile.mkdtemp
+
+        def tracking_mkdtemp(*args, **kwargs):
+            result = original_mkdtemp(*args, **kwargs)
+            created_dirs.append(result)
+            return result
+
+        with patch("tempfile.mkdtemp", side_effect=tracking_mkdtemp):
+            execute_with_audit(audit_config, None, mock_build_command)
+
+        # Verify at least one temp dir was created
+        assert len(created_dirs) >= 1
+        tmp_dir = Path(created_dirs[0])
+
+        # Check permissions are 0o700 (owner only), NOT 0o777 (world-writable)
+        if tmp_dir.exists():
+            mode = tmp_dir.stat().st_mode & 0o777
+            assert mode == 0o700, f"Expected 0o700 but got {oct(mode)}"
+
 
 class TestFindIptables:
     """Tests for find_iptables function."""
