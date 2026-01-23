@@ -75,7 +75,7 @@ def load_profile(profile_name: str, command: list[str]) -> SandboxConfig:
         profile_name: Profile name (without .json) or full path
         command: Command to run in sandbox
     """
-    from profiles import ProfileValidationError
+    from profiles import ProfileError, ProfileValidationError
 
     # If it's a simple name (no path separators), look in the default profiles dir
     if "/" not in profile_name and "\\" not in profile_name:
@@ -100,6 +100,9 @@ def load_profile(profile_name: str, command: list[str]) -> SandboxConfig:
         return config
     except ProfileValidationError as e:
         print(f"Profile validation error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except ProfileError as e:
+        print(f"Profile error: {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"Error loading profile: {e}", file=sys.stderr)

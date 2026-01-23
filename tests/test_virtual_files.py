@@ -179,6 +179,34 @@ class TestCreateVirtualFiles:
         assert any("Synthetic user identity" in s for s in summary)
         assert any("Synthetic group" in s for s in summary)
 
+    def test_raises_error_when_uid_is_none(self):
+        """Raises error when synthetic_passwd enabled but uid is None."""
+        config = SandboxConfig(command=["bash"])
+        config.user.unshare_user = True
+        config.user.synthetic_passwd = True
+        config.user.username = "testuser"
+        config.user.uid = None  # Missing uid
+        config.user.gid = 1000
+
+        with pytest.raises(ValueError) as exc_info:
+            create_virtual_files(config)
+        assert "uid" in str(exc_info.value)
+        assert "testuser" in str(exc_info.value)
+
+    def test_raises_error_when_gid_is_none(self):
+        """Raises error when synthetic_passwd enabled but gid is None."""
+        config = SandboxConfig(command=["bash"])
+        config.user.unshare_user = True
+        config.user.synthetic_passwd = True
+        config.user.username = "testuser"
+        config.user.uid = 1000
+        config.user.gid = None  # Missing gid
+
+        with pytest.raises(ValueError) as exc_info:
+            create_virtual_files(config)
+        assert "gid" in str(exc_info.value)
+        assert "testuser" in str(exc_info.value)
+
 
 class TestVirtualFileManagerCleanup:
     """Tests for temp directory cleanup on failure."""

@@ -239,6 +239,36 @@ class TestDetectDbusSession:
         paths = detect_dbus_session()
         assert "/custom/socket" in paths
 
+    @patch("detection.get_runtime_dir")
+    @patch("detection.Path.exists")
+    @patch.dict(
+        "os.environ",
+        {"DBUS_SESSION_BUS_ADDRESS": "unix:path"},
+        clear=True,
+    )
+    def test_malformed_dbus_address_no_equals(self, mock_exists, mock_runtime_dir):
+        """Malformed DBUS_SESSION_BUS_ADDRESS without '=' doesn't crash."""
+        mock_runtime_dir.return_value = Path("/run/user/1000")
+        mock_exists.return_value = False
+        # Should not raise IndexError
+        paths = detect_dbus_session()
+        assert isinstance(paths, list)
+
+    @patch("detection.get_runtime_dir")
+    @patch("detection.Path.exists")
+    @patch.dict(
+        "os.environ",
+        {"DBUS_SESSION_BUS_ADDRESS": "unix:path="},
+        clear=True,
+    )
+    def test_malformed_dbus_address_empty_path(self, mock_exists, mock_runtime_dir):
+        """DBUS_SESSION_BUS_ADDRESS with empty path is handled gracefully."""
+        mock_runtime_dir.return_value = Path("/run/user/1000")
+        mock_exists.return_value = False
+        paths = detect_dbus_session()
+        # Empty path should not be added
+        assert "" not in paths
+
 
 class TestResolveCommandExecutable:
     """Test resolve_command_executable() function."""

@@ -201,9 +201,9 @@ def detect_dbus_session() -> list[str]:
 
     # Also check DBUS_SESSION_BUS_ADDRESS for non-standard setups
     dbus_addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
-    if dbus_addr.startswith("unix:path="):
-        socket_path = dbus_addr.split("=")[1].split(",")[0]
-        if Path(socket_path).exists() and socket_path not in paths:
+    if dbus_addr.startswith("unix:path=") and "=" in dbus_addr:
+        socket_path = dbus_addr.split("=", 1)[1].split(",")[0]
+        if socket_path and Path(socket_path).exists() and socket_path not in paths:
             paths.append(socket_path)
 
     return paths

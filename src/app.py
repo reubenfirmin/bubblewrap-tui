@@ -290,6 +290,43 @@ class BubblewrapTUI(
             )
         return warnings
 
+    def _validate_config_for_execute(self) -> str | None:
+        """Validate config before execute/save.
+
+        Returns error message if invalid, None if valid.
+        """
+        from detection import detect_dbus_session
+
+        # Check synthetic_passwd requirements
+        user = self.config._user_group
+        if user.get("synthetic_passwd") and user.get("username"):
+            if user.get("uid") is None:
+                return "Synthetic user enabled but UID not set. Configure UID in User Identity."
+            if user.get("gid") is None:
+                return "Synthetic user enabled but GID not set. Configure GID in User Identity."
+
+        # Check D-Bus requirements
+        if self.config._desktop_group.get("allow_dbus"):
+            dbus_paths = detect_dbus_session()
+            if not dbus_paths:
+                return "D-Bus access enabled but no D-Bus session socket found. Check $XDG_RUNTIME_DIR/bus or $DBUS_SESSION_BUS_ADDRESS."
+
+        return None
+
+    def action_execute(self) -> None:
+        """Execute the configured command (overrides mixin to add validation)."""
+        # Sync config from UI before validation
+        self._sync_config_from_ui()
+
+        # Validate configuration
+        error = self._validate_config_for_execute()
+        if error:
+            self._set_status(f"Error: {error}")
+            return
+
+        self._execute_command = True
+        self.exit()
+
     # =========================================================================
     # Config Sync (using ConfigSyncManager)
     # =========================================================================
@@ -751,9 +788,14 @@ class BubblewrapTUI(
     def _on_save_profile_result(self, name: str | None) -> None:
         """Handle result from save profile modal."""
         if name:
+            # Sync and validate before saving
+            self._sync_config_from_ui()
+            error = self._validate_config_for_execute()
+            if error:
+                self._set_status(f"Cannot save: {error}")
+                return
             pm = self._get_profile_manager()
-            pm.save_profile(name, self._sync_config_from_ui)
-            self._set_status(f"Saved profile: {name}")
+            pm.save_profile(name, lambda: None)  # Already synced above
 
     def _set_config(self, config: SandboxConfig) -> None:
         """Set a new config (called by ProfileManager)."""

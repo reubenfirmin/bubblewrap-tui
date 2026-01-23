@@ -133,7 +133,13 @@ def desktop_to_args(group: ConfigGroup) -> list[str]:
 
     args = []
     if group.get("allow_dbus"):
-        for dbus_path in detect_dbus_session():
+        dbus_paths = detect_dbus_session()
+        if not dbus_paths:
+            raise ValueError(
+                "D-Bus access enabled but no D-Bus session socket found. "
+                "Check that $XDG_RUNTIME_DIR/bus exists or $DBUS_SESSION_BUS_ADDRESS is valid."
+            )
+        for dbus_path in dbus_paths:
             args.extend(["--bind", dbus_path, dbus_path])
 
     if group.get("allow_display"):
