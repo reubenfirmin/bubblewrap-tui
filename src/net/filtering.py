@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from model.network_filter import NetworkFilter
 
+from fileutils import write_file_atomic
 from net.dns_proxy import generate_dns_proxy_script, get_dns_proxy_init_commands, needs_dns_proxy
 
 
@@ -106,14 +107,12 @@ def create_wrapper_script(
     if needs_dns_proxy(nf.hostname_filter):
         dns_proxy_script_path = tmp_path / "dns_proxy.py"
         dns_proxy_script = generate_dns_proxy_script(nf.hostname_filter)
-        dns_proxy_script_path.write_text(dns_proxy_script)
-        dns_proxy_script_path.chmod(0o755)
+        write_file_atomic(dns_proxy_script_path, dns_proxy_script, 0o755)
         dns_proxy_setup = get_dns_proxy_init_commands(str(dns_proxy_script_path))
 
         # Write resolv.conf to temp dir - will be ro-bind mounted by bwrap
         resolv_conf_path = tmp_path / "resolv.conf"
-        resolv_conf_path.write_text("# DNS handled by bubblewrap-tui DNS proxy\nnameserver 127.0.0.1\n")
-        resolv_conf_path.chmod(0o444)
+        write_file_atomic(resolv_conf_path, "# DNS handled by bubblewrap-tui DNS proxy\nnameserver 127.0.0.1\n", 0o444)
 
     # Build the bwrap command string
     bwrap_cmd_str = " ".join(shlex.quote(arg) for arg in bwrap_cmd)
@@ -130,8 +129,7 @@ set -e
 exec {bwrap_cmd_str}
 '''
 
-    wrapper_script_path.write_text(wrapper_script)
-    wrapper_script_path.chmod(0o755)
+    write_file_atomic(wrapper_script_path, wrapper_script, 0o755)
 
     return wrapper_script_path
 
