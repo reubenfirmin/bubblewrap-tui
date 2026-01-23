@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from fileutils import write_file_atomic
+
 if TYPE_CHECKING:
     from model.sandbox_config import SandboxConfig
 
@@ -52,8 +54,7 @@ class VirtualFileManager:
         # Create filename from dest_path (e.g., /etc/passwd -> passwd)
         filename = Path(dest_path).name
         file_path = Path(self.tmp_dir) / filename
-        file_path.write_text(content)
-        file_path.chmod(0o444)  # Read-only
+        write_file_atomic(file_path, content, 0o444)  # Read-only
 
         self.files.append(VirtualFile(
             source_path=str(file_path),

@@ -448,8 +448,9 @@ class TestInstallSandboxBinary:
         content = script_path.read_text()
         assert "--bind /usr/bin" in content
         assert "--bind /opt/tools" in content
-        assert "--bind-env 'FOO=bar'" in content
-        assert "--bind-env 'BAZ=qux'" in content
+        # shlex.quote() only quotes when needed - simple values are unquoted
+        assert "--bind-env FOO=bar" in content
+        assert "--bind-env BAZ=qux" in content
 
         # Verify metadata has binds
         import json
@@ -496,7 +497,8 @@ class TestInstallSandboxBinary:
         content = script_path.read_text()
         assert "--profile myprofile" in content
         assert "--bind /pre/bound" in content
-        assert "--bind-env 'CACHED=value'" in content
+        # shlex.quote() only quotes when needed - simple values are unquoted
+        assert "--bind-env CACHED=value" in content
 
     def test_invalid_selection_exits(self, tmp_path):
         """Exits with error on invalid selection."""

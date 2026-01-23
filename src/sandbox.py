@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import shutil
 import sys
 from pathlib import Path
@@ -260,16 +261,17 @@ def install_sandbox_binary(
     bin_dir.mkdir(parents=True, exist_ok=True)
 
     # Build extra flags for bind paths and env vars
+    # All values are shell-quoted to prevent command injection
     extra_flags = ""
     if bind_paths:
         for p in bind_paths:
-            extra_flags += f" --bind {p}"
+            extra_flags += f" --bind {shlex.quote(p)}"
     if bind_env:
         for env_spec in bind_env:
-            extra_flags += f" --bind-env '{env_spec}'"
+            extra_flags += f" --bind-env {shlex.quote(env_spec)}"
 
     script_content = f"""#!/bin/sh
-exec bui --profile {profile} --sandbox {sandbox_name} --bind-cwd{extra_flags} -- {home_path} "$@"
+exec bui --profile {shlex.quote(profile)} --sandbox {shlex.quote(sandbox_name)} --bind-cwd{extra_flags} -- {shlex.quote(home_path)} "$@"
 """
     script_path.write_text(script_content)
     script_path.chmod(0o755)
