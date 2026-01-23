@@ -6,6 +6,38 @@ from unittest.mock import patch
 import pytest
 
 
+class TestMetadataFilePermissions:
+    """Test that metadata files have restricted permissions."""
+
+    def test_installed_json_has_restricted_permissions(self, tmp_path):
+        """installed.json should be owner-readable only (0o600)."""
+        from sandbox import _save_installed, INSTALLED_SCRIPTS_FILE
+
+        # Mock the installed file path to use tmp_path
+        mock_file = tmp_path / "state" / "bui" / "installed.json"
+
+        with patch("sandbox.INSTALLED_SCRIPTS_FILE", mock_file):
+            _save_installed({"test-sandbox": {"scripts": [], "profile": "untrusted"}})
+
+        # Check file permissions (0o600 = owner read/write only)
+        assert mock_file.exists()
+        file_mode = mock_file.stat().st_mode & 0o777
+        assert file_mode == 0o600, f"Expected 0o600, got {oct(file_mode)}"
+
+    def test_installed_json_parent_dir_has_restricted_permissions(self, tmp_path):
+        """installed.json parent directory should be owner-only (0o700)."""
+        from sandbox import _save_installed
+
+        mock_file = tmp_path / "state" / "bui" / "installed.json"
+
+        with patch("sandbox.INSTALLED_SCRIPTS_FILE", mock_file):
+            _save_installed({})
+
+        # Check directory permissions (0o700 = owner only)
+        dir_mode = mock_file.parent.stat().st_mode & 0o777
+        assert dir_mode == 0o700, f"Expected 0o700, got {oct(dir_mode)}"
+
+
 class TestInstallSandboxBinary:
     """Test install_sandbox_binary function."""
 
