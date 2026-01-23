@@ -35,14 +35,16 @@ class EnvironmentEventsMixin:
 
         try:
             if not self.config.environment.clear_env:
-                # Clear environment
+                # Clear environment (preserve custom vars automatically)
                 self.config.environment.clear_env = True
-                self.config.environment.keep_env_vars = set(
-                    self.config.environment.custom_env_vars.keys()
-                )
+                custom_keys = set(self.config.environment.custom_env_vars.keys())
+                self.config.environment.keep_env_vars = custom_keys
                 self._sync_env_button_state()
                 self._update_preview()
-                self._set_status("Sandbox environment cleared")
+                if custom_keys:
+                    self._set_status(f"Environment cleared (keeping {len(custom_keys)} custom var(s))")
+                else:
+                    self._set_status("Sandbox environment cleared")
             else:
                 # Restore environment
                 self.config.environment.clear_env = False
