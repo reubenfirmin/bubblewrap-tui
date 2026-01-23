@@ -344,11 +344,12 @@ class BubblewrapSummarizer:
         return "\n".join(lines)
 
     def _get_process_summary(self) -> str | None:
-        """Get process summary (needs environment group)."""
+        """Get process summary (needs environment and isolation groups)."""
         from model.groups import _process_to_summary
         return _process_to_summary(
             self.config._process_group,
             self.config._environment_group,
+            self.config._isolation_group,
         )
 
     def _get_isolation_summary(self) -> str | None:
@@ -356,6 +357,14 @@ class BubblewrapSummarizer:
         from model.groups import _isolation_to_summary
         return _isolation_to_summary(
             self.config._isolation_group,
+            self.config.network_filter,
+        )
+
+    def _get_network_summary(self) -> str | None:
+        """Get network summary (needs network_filter context)."""
+        from model.groups import _network_to_summary
+        return _network_to_summary(
+            self.config._network_group,
             self.config.network_filter,
         )
 
@@ -380,6 +389,10 @@ class BubblewrapSummarizer:
             elif group.name == "isolation":
                 args = group.to_args()
                 summary = self._get_isolation_summary()
+            # Special handling for network group (needs network_filter context)
+            elif group.name == "network":
+                args = group.to_args()
+                summary = self._get_network_summary()
             else:
                 args = group.to_args()
                 summary = group.to_summary()

@@ -106,7 +106,7 @@ def network_to_args(group: ConfigGroup, network_filter: "NetworkFilter | None" =
     return args
 
 
-def network_to_summary(group: ConfigGroup) -> str | None:
+def network_to_summary(group: ConfigGroup, network_filter: "NetworkFilter | None" = None) -> str | None:
     """Custom summary for network."""
     if group.get("share_net"):
         extras = []
@@ -117,6 +117,9 @@ def network_to_summary(group: ConfigGroup) -> str | None:
         if extras:
             return f"Network: Full access — can reach internet and local services ({', '.join(extras)} bound)"
         return "Network: Full access — WARNING: missing DNS/SSL, connections may fail"
+    # Check if network filtering is active (provides filtered network access)
+    if network_filter and network_filter.requires_pasta():
+        return "Network: Filtered access via pasta — see filtering rules below"
     return "Network: Completely offline — no network access at all"
 
 
@@ -290,7 +293,7 @@ def process_to_args(group: ConfigGroup, isolation_group: ConfigGroup) -> list[st
     return args
 
 
-def process_to_summary(group: ConfigGroup, env_group: ConfigGroup) -> str | None:
+def process_to_summary(group: ConfigGroup, env_group: ConfigGroup, isolation_group: ConfigGroup | None = None) -> str | None:
     """Custom summary for process behavior."""
     lines = []
 
@@ -301,7 +304,12 @@ def process_to_summary(group: ConfigGroup, env_group: ConfigGroup) -> str | None
         lines.append("Session: New terminal session — prevents keystroke injection (CVE-2017-5226)")
 
     if group.get("as_pid_1"):
-        lines.append("PID 1: App handles zombie process cleanup itself (advanced)")
+        # Check if PID namespace was auto-enabled
+        pid_ns_auto = isolation_group and not isolation_group.get("unshare_pid")
+        if pid_ns_auto:
+            lines.append("PID 1: App handles zombie process cleanup (PID namespace auto-enabled)")
+        else:
+            lines.append("PID 1: App handles zombie process cleanup itself (advanced)")
 
     chdir_val = group.get("chdir")
     if chdir_val:

@@ -128,14 +128,14 @@ class NetworkFilter:
             if self.hostname_filter.hosts:
                 hosts = ", ".join(self.hostname_filter.hosts)
             else:
-                hosts = "(empty list - blocks all)" if mode == "allow" else "(empty list - no effect)"
+                hosts = "(empty list - blocks all)" if mode == "whitelist" else "(empty list - no effect)"
             lines.append(f"Hostname {mode} (via DNS proxy): {hosts}")
         if self.ip_filter.mode.value != "off":
             mode = self.ip_filter.mode.value
             if self.ip_filter.cidrs:
                 cidrs = ", ".join(self.ip_filter.cidrs)
             else:
-                cidrs = "(empty list - blocks all)" if mode == "allow" else "(empty list - no effect)"
+                cidrs = "(empty list - blocks all)" if mode == "whitelist" else "(empty list - no effect)"
             lines.append(f"IP/CIDR {mode}: {cidrs}")
         if self.port_forwarding.expose_ports:
             ports = ", ".join(str(p) for p in self.port_forwarding.expose_ports)
