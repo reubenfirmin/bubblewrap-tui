@@ -23,7 +23,10 @@ MODE = "{mode}"  # "whitelist" or "blacklist"
 HOSTS = {hosts}
 
 
-def parse_qname(data: bytes, offset: int) -> tuple[str, int]:
+MAX_COMPRESSION_DEPTH = 10  # Limit recursion to prevent DoS from pointer loops
+
+
+def parse_qname(data: bytes, offset: int, depth: int = 0) -> tuple[str, int]:
     """Extract hostname from DNS query packet.
 
     DNS names are encoded as length-prefixed labels:
@@ -32,10 +35,15 @@ def parse_qname(data: bytes, offset: int) -> tuple[str, int]:
     Args:
         data: Raw DNS packet bytes
         offset: Starting offset in packet (usually 12 for queries)
+        depth: Current recursion depth for compression pointer tracking
 
     Returns:
         Tuple of (hostname, new_offset)
     """
+    if depth > MAX_COMPRESSION_DEPTH:
+        # Reject packets with excessive compression pointer depth
+        return "", offset
+
     labels = []
     while True:
         if offset >= len(data):
@@ -47,8 +55,10 @@ def parse_qname(data: bytes, offset: int) -> tuple[str, int]:
         # Check for compression pointer (0xC0)
         if length & 0xC0 == 0xC0:
             # Compression not expected in queries, but handle gracefully
+            if offset + 2 > len(data):
+                break  # Malformed packet
             pointer = struct.unpack("!H", data[offset:offset+2])[0] & 0x3FFF
-            label, _ = parse_qname(data, pointer)
+            label, _ = parse_qname(data, pointer, depth + 1)
             labels.append(label)
             offset += 2
             break
