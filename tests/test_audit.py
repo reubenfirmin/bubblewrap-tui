@@ -155,6 +155,25 @@ class TestIsPrivateIP:
         assert _is_private_ip("140.82.121.3") is False  # github.com
         assert _is_private_ip("208.67.222.222") is False  # OpenDNS
 
+    def test_malformed_ip_non_numeric(self):
+        """Malformed IPs with non-numeric parts return False."""
+        assert _is_private_ip("abc.def.ghi.jkl") is False
+        assert _is_private_ip("10.0.0.x") is False
+        assert _is_private_ip("192.168.1.abc") is False
+
+    def test_malformed_ip_wrong_parts(self):
+        """Malformed IPs with wrong number of parts return False."""
+        assert _is_private_ip("10.0.0") is False
+        assert _is_private_ip("10.0.0.1.5") is False
+        assert _is_private_ip("10") is False
+        assert _is_private_ip("") is False
+
+    def test_malformed_ip_empty_parts(self):
+        """Malformed IPs with empty parts return False."""
+        assert _is_private_ip("10..0.1") is False
+        assert _is_private_ip(".10.0.0.1") is False
+        assert _is_private_ip("10.0.0.1.") is False
+
 
 class TestIsPrivateIPv6:
     """Tests for _is_private_ipv6 function."""

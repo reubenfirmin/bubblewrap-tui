@@ -215,7 +215,12 @@ def _parse_basic(pcap_path: Path) -> AuditResult:
 
 def _is_private_ip(ip: str) -> bool:
     """Check if an IPv4 address is private/local."""
-    parts = [int(p) for p in ip.split(".")]
+    try:
+        parts = [int(p) for p in ip.split(".")]
+        if len(parts) != 4:
+            return False  # Malformed IP
+    except ValueError:
+        return False  # Malformed IP (non-numeric parts)
     if parts[0] == 10:
         return True
     if parts[0] == 172 and 16 <= parts[1] <= 31:
