@@ -538,6 +538,20 @@ SaveProfileModal {
     padding: 0 1;
 }
 
+.security-warning {
+    color: $error;
+    background: $error 15%;
+    height: auto;
+    margin: 1 0;
+    padding: 1;
+    border: solid $error;
+    display: none;
+}
+
+.security-warning.-visible {
+    display: block;
+}
+
 .network-success {
     color: $success;
     height: auto;

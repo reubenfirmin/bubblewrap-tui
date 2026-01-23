@@ -20,6 +20,8 @@ def compose_summary_tab(version: str, command_preview: str, explanation: str) ->
     """
     with Vertical(id="summary-tab-content"):
         yield Static(f"Bubblewrap TUI\nVersion {version}", id="summary-header")
+        # Security warning banner - hidden by default, shown for dangerous configs
+        yield Static("", id="security-warning", classes="security-warning")
         yield Label("Command Preview", classes="section-label")
         yield Static(command_preview, id="command-preview", markup=True)
         yield Label("Summary", classes="section-label")

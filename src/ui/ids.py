@@ -68,6 +68,7 @@ OPT_OVERLAY_HOME = "opt-overlay-home"
 # Summary tab IDs
 SUMMARY_TAB_CONTENT = "summary-tab-content"
 SUMMARY_HEADER = "summary-header"
+SECURITY_WARNING = "security-warning"
 COMMAND_PREVIEW = "command-preview"
 EXPLANATION = "explanation"
 
