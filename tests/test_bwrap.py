@@ -562,8 +562,27 @@ class TestVirtualUser:
         assert group_path == "/etc/group"
         assert "testuser:x:1000" in group_content
 
-    def test_get_virtual_user_data_uid_zero(self):
-        """No virtual user data for uid 0 (root)."""
+    def test_get_virtual_user_data_uid_zero_with_username(self):
+        """Virtual user data is generated for uid 0 when username is set."""
+        config = make_config(
+            user={"unshare_user": True, "uid": 0, "gid": 0, "username": "root",
+                  "synthetic_passwd": True}
+        )
+        serializer = BubblewrapSerializer(config)
+        data = serializer.get_virtual_user_data()
+        assert len(data) == 2
+        # Check passwd content uses /root as home
+        passwd_content, passwd_path = data[0]
+        assert passwd_path == "/etc/passwd"
+        assert "root:x:0:0" in passwd_content
+        assert "/root" in passwd_content
+        # Check group content
+        group_content, group_path = data[1]
+        assert group_path == "/etc/group"
+        assert "root:x:0" in group_content
+
+    def test_get_virtual_user_data_uid_zero_no_username(self):
+        """No virtual user data for uid 0 without username."""
         config = make_config(
             user={"unshare_user": True, "uid": 0, "gid": 0, "username": ""}
         )
