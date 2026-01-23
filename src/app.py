@@ -254,14 +254,41 @@ class BubblewrapTUI(
         return BubblewrapSummarizer(self.config).summarize_colored()
 
     def _update_preview(self) -> None:
-        """Update the command preview."""
+        """Update the command preview and security warnings."""
         try:
             preview = self.query_one(css(ids.COMMAND_PREVIEW), Static)
             preview.update(self._format_command_colored())
             explanation = self.query_one(css(ids.EXPLANATION), Static)
             explanation.update(self._format_explanation_colored())
+            # Update security warning banner
+            self._update_security_warning()
         except NoMatches:
             log.debug("Preview widgets not found during update")
+
+    def _update_security_warning(self) -> None:
+        """Update the security warning banner based on current config."""
+        try:
+            warning_widget = self.query_one(css(ids.SECURITY_WARNING), Static)
+            warnings = self._get_security_warnings()
+            if warnings:
+                warning_widget.update("\n".join(warnings))
+                warning_widget.add_class("-visible")
+            else:
+                warning_widget.update("")
+                warning_widget.remove_class("-visible")
+        except NoMatches:
+            pass
+
+    def _get_security_warnings(self) -> list[str]:
+        """Get list of security warnings for current config."""
+        warnings = []
+        # Full /dev mode gives sandbox access to dangerous devices
+        if self.config.vfs.dev_mode == "full":
+            warnings.append(
+                "WARNING: Full /dev mode enabled. Sandbox has access to dangerous "
+                "devices like /dev/mem and /dev/sda which can enable sandbox escape."
+            )
+        return warnings
 
     # =========================================================================
     # Config Sync (using ConfigSyncManager)
