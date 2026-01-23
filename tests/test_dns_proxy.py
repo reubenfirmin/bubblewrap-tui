@@ -173,6 +173,31 @@ class TestGenerateDnsProxyScript:
             script = generate_dns_proxy_script(hf, upstream_dns="8.8.8.8")
             assert 'UPSTREAM_DNS = "8.8.8.8"' in script
 
+    def test_rejects_invalid_dns_address(self):
+        """Rejects invalid DNS addresses to prevent code injection."""
+        hf = HostnameFilter(mode=FilterMode.BLACKLIST, hosts=["test.com"])
+        # Attempt code injection via malicious DNS address
+        with pytest.raises(ValueError, match="Invalid DNS server address"):
+            generate_dns_proxy_script(hf, upstream_dns='"; import os; os.system("evil"); "')
+
+    def test_accepts_ipv4_address(self):
+        """Accepts valid IPv4 addresses."""
+        hf = HostnameFilter(mode=FilterMode.BLACKLIST, hosts=["test.com"])
+        script = generate_dns_proxy_script(hf, upstream_dns="192.168.1.1")
+        assert 'UPSTREAM_DNS = "192.168.1.1"' in script
+
+    def test_accepts_ipv6_address(self):
+        """Accepts valid IPv6 addresses."""
+        hf = HostnameFilter(mode=FilterMode.BLACKLIST, hosts=["test.com"])
+        script = generate_dns_proxy_script(hf, upstream_dns="2001:4860:4860::8888")
+        assert 'UPSTREAM_DNS = "2001:4860:4860::8888"' in script
+
+    def test_rejects_hostname_as_dns(self):
+        """Rejects hostnames (only IP addresses allowed)."""
+        hf = HostnameFilter(mode=FilterMode.BLACKLIST, hosts=["test.com"])
+        with pytest.raises(ValueError, match="Invalid DNS server address"):
+            generate_dns_proxy_script(hf, upstream_dns="dns.google.com")
+
 
 class TestGetDnsProxyInitCommands:
     """Test get_dns_proxy_init_commands function."""

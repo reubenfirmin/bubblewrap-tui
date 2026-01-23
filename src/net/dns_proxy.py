@@ -19,11 +19,34 @@ Architecture:
 
 from __future__ import annotations
 
+import ipaddress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from model.network_filter import HostnameFilter
+
+
+def _validate_dns_server(addr: str) -> str:
+    """Validate that addr is a valid IP address.
+
+    This prevents code injection via malicious /etc/resolv.conf entries
+    being interpolated into the generated DNS proxy script.
+
+    Args:
+        addr: String that should be an IP address
+
+    Returns:
+        The validated address string
+
+    Raises:
+        ValueError: If addr is not a valid IPv4 or IPv6 address
+    """
+    try:
+        ipaddress.ip_address(addr)
+        return addr
+    except ValueError:
+        raise ValueError(f"Invalid DNS server address: {addr!r}")
 
 
 def _load_dns_proxy_script() -> str:
@@ -96,7 +119,7 @@ def generate_dns_proxy_script(
         Complete Python script as a string, ready to be written to a file
 
     Raises:
-        ValueError: If no upstream DNS is available (none configured and none in resolv.conf)
+        ValueError: If no upstream DNS is available or if the DNS address is invalid
     """
     from model.network_filter import FilterMode
 
@@ -112,6 +135,9 @@ def generate_dns_proxy_script(
                 "Hostname filtering requires working DNS."
             )
         upstream_dns = nameservers[0]
+
+    # Validate DNS address to prevent code injection via malicious resolv.conf
+    upstream_dns = _validate_dns_server(upstream_dns)
 
     return DNS_PROXY_SCRIPT.format(
         upstream_dns=upstream_dns,
