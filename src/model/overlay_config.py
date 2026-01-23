@@ -18,9 +18,12 @@ class OverlayConfig:
     dest: str  # Mount point in sandbox
     mode: str = "tmpfs"  # "tmpfs", "overlay", or "persistent"
     write_dir: str = ""  # For persistent mode - where changes are stored
+    work_dir: str = ""  # Explicit work dir (overrides auto-generated)
 
     def get_work_dir(self) -> str:
-        """Auto-generate work dir from write dir."""
+        """Get work directory, using explicit value if set, otherwise auto-generate."""
+        if self.work_dir:
+            return self.work_dir
         if self.write_dir:
             return str(Path(self.write_dir).parent / ".overlay-work")
         return ""

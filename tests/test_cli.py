@@ -8,6 +8,7 @@ import pytest
 
 from cli import needs_shell_wrap, parse_args
 from sandbox import (
+    BUI_SANDBOXES_DIR,
     find_executables,
     install_sandbox_binary,
     list_overlays,
@@ -347,70 +348,79 @@ class TestInstallSandboxBinary:
 
     def test_sandbox_not_found_exits(self, tmp_path):
         """Exits with error if sandbox directory doesn't exist."""
-        with patch("sandbox.BUI_STATE_DIR", tmp_path / ".local" / "state" / "bui"):
-            with pytest.raises(SystemExit):
-                install_sandbox_binary("nonexistent")
+        state_dir = tmp_path / ".local" / "state" / "bui"
+        sandboxes_dir = state_dir / "sandboxes"
+        with patch("sandbox.BUI_STATE_DIR", state_dir):
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                with pytest.raises(SystemExit):
+                    install_sandbox_binary("nonexistent")
 
     def test_no_executables_exits(self, tmp_path):
         """Exits with error if no executables found."""
         state_dir = tmp_path / ".local" / "state" / "bui"
-        overlay_dir = state_dir / "overlays" / "test"
+        sandboxes_dir = state_dir / "sandboxes"
+        overlay_dir = sandboxes_dir / "test" / "overlays" / "home-sandbox"
         overlay_dir.mkdir(parents=True)
         # Create a non-executable file
         (overlay_dir / "readme.txt").write_text("readme")
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
-            with pytest.raises(SystemExit):
-                install_sandbox_binary("test")
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                with pytest.raises(SystemExit):
+                    install_sandbox_binary("test")
 
     def test_installs_script(self, tmp_path, capsys):
         """Installs script for selected executable."""
         state_dir = tmp_path / ".local" / "state" / "bui"
-        overlay_dir = state_dir / "overlays" / "deno"
+        sandboxes_dir = state_dir / "sandboxes"
+        overlay_dir = sandboxes_dir / "test-app" / "overlays" / "home-sandbox"
         overlay_dir.mkdir(parents=True)
         bin_dir = tmp_path / ".local" / "bin"
         installed_file = state_dir / "installed.json"
 
         # Create executable
-        exe = overlay_dir / ".deno" / "bin" / "deno"
+        exe = overlay_dir / ".test-app" / "bin" / "test-app"
         exe.parent.mkdir(parents=True)
         exe.write_text("#!/bin/bash")
         exe.chmod(0o755)
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
-            with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                with patch("sandbox.Path.home", return_value=tmp_path):
-                    with patch("builtins.input", return_value="1"):
-                        install_sandbox_binary("deno")
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    with patch("sandbox.Path.home", return_value=tmp_path):
+                        with patch("builtins.input", return_value="1"):
+                            install_sandbox_binary("test-app")
 
         captured = capsys.readouterr()
-        assert "Executables in sandbox 'deno':" in captured.out
-        assert ".deno/bin/deno" in captured.out
-        assert f"Installed: {bin_dir / 'deno'}" in captured.out
+        assert "Executables in sandbox 'test-app':" in captured.out
+        assert ".test-app/bin/test-app" in captured.out
+        assert f"Installed: {bin_dir / 'test-app'}" in captured.out
 
         # Verify script was created
-        script_path = bin_dir / "deno"
+        script_path = bin_dir / "test-app"
         assert script_path.exists()
         content = script_path.read_text()
         assert "#!/bin/sh" in content
-        assert "--sandbox deno" in content
+        assert "--sandbox test-app" in content
         assert "--bind-cwd" in content
         # Path should be sandbox home, not host home
-        assert "/home/sandbox/.deno/bin/deno" in content
-        assert "~/.deno/bin/deno" not in content
+        assert "/home/sandbox/.test-app/bin/test-app" in content
+        assert "~/.test-app/bin/test-app" not in content
         assert script_path.stat().st_mode & 0o755
 
         # Verify metadata was saved
         import json
         metadata = json.loads(installed_file.read_text())
-        assert "deno" in metadata
-        assert "deno" in metadata["deno"]["scripts"]
-        assert metadata["deno"]["profile"] == "untrusted"
+        assert "test-app" in metadata
+        assert "test-app" in metadata["test-app"]["scripts"]
+        assert metadata["test-app"]["profile"] == "untrusted"
 
     def test_installs_script_with_binds(self, tmp_path, capsys):
         """Installs script with --bind and --bind-env flags."""
         state_dir = tmp_path / ".local" / "state" / "bui"
-        overlay_dir = state_dir / "overlays" / "myapp"
+        sandboxes_dir = state_dir / "sandboxes"
+        sandbox_dir = sandboxes_dir / "myapp"
+        overlay_dir = sandbox_dir / "overlays" / "home-sandbox"
         overlay_dir.mkdir(parents=True)
         bin_dir = tmp_path / ".local" / "bin"
         installed_file = state_dir / "installed.json"
@@ -422,15 +432,16 @@ class TestInstallSandboxBinary:
         exe.chmod(0o755)
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
-            with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                with patch("sandbox.Path.home", return_value=tmp_path):
-                    with patch("builtins.input", return_value="1"):
-                        install_sandbox_binary(
-                            "myapp",
-                            profile="untrusted",
-                            bind_paths=["/usr/bin", "/opt/tools"],
-                            bind_env=["FOO=bar", "BAZ=qux"],
-                        )
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    with patch("sandbox.Path.home", return_value=tmp_path):
+                        with patch("builtins.input", return_value="1"):
+                            install_sandbox_binary(
+                                "myapp",
+                                profile="untrusted",
+                                bind_paths=["/usr/bin", "/opt/tools"],
+                                bind_env=["FOO=bar", "BAZ=qux"],
+                            )
 
         # Verify script has bind flags
         script_path = bin_dir / "myapp"
@@ -449,7 +460,8 @@ class TestInstallSandboxBinary:
     def test_reads_binds_from_metadata(self, tmp_path, capsys):
         """Reads bind paths and env from existing metadata if not provided."""
         state_dir = tmp_path / ".local" / "state" / "bui"
-        overlay_dir = state_dir / "overlays" / "cached"
+        sandboxes_dir = state_dir / "sandboxes"
+        overlay_dir = sandboxes_dir / "cached" / "overlays" / "home-sandbox"
         overlay_dir.mkdir(parents=True)
         bin_dir = tmp_path / ".local" / "bin"
         installed_file = state_dir / "installed.json"
@@ -472,11 +484,12 @@ class TestInstallSandboxBinary:
         exe.chmod(0o755)
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
-            with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                with patch("sandbox.Path.home", return_value=tmp_path):
-                    with patch("builtins.input", return_value="1"):
-                        # Don't pass bind_paths or bind_env - should read from metadata
-                        install_sandbox_binary("cached")
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    with patch("sandbox.Path.home", return_value=tmp_path):
+                        with patch("builtins.input", return_value="1"):
+                            # Don't pass bind_paths or bind_env - should read from metadata
+                            install_sandbox_binary("cached")
 
         # Verify script uses metadata values
         script_path = bin_dir / "app"
@@ -488,7 +501,8 @@ class TestInstallSandboxBinary:
     def test_invalid_selection_exits(self, tmp_path):
         """Exits with error on invalid selection."""
         state_dir = tmp_path / ".local" / "state" / "bui"
-        overlay_dir = state_dir / "overlays" / "test"
+        sandboxes_dir = state_dir / "sandboxes"
+        overlay_dir = sandboxes_dir / "test" / "overlays" / "home-sandbox"
         overlay_dir.mkdir(parents=True)
 
         exe = overlay_dir / "bin" / "app"
@@ -497,15 +511,17 @@ class TestInstallSandboxBinary:
         exe.chmod(0o755)
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
-            with patch("sandbox.Path.home", return_value=tmp_path):
-                with patch("builtins.input", return_value="invalid"):
-                    with pytest.raises(SystemExit):
-                        install_sandbox_binary("test")
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                with patch("sandbox.Path.home", return_value=tmp_path):
+                    with patch("builtins.input", return_value="invalid"):
+                        with pytest.raises(SystemExit):
+                            install_sandbox_binary("test")
 
     def test_out_of_range_selection_exits(self, tmp_path):
         """Exits with error on out of range selection."""
         state_dir = tmp_path / ".local" / "state" / "bui"
-        overlay_dir = state_dir / "overlays" / "test"
+        sandboxes_dir = state_dir / "sandboxes"
+        overlay_dir = sandboxes_dir / "test" / "overlays" / "home-sandbox"
         overlay_dir.mkdir(parents=True)
 
         exe = overlay_dir / "bin" / "app"
@@ -514,15 +530,17 @@ class TestInstallSandboxBinary:
         exe.chmod(0o755)
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
-            with patch("sandbox.Path.home", return_value=tmp_path):
-                with patch("builtins.input", return_value="99"):
-                    with pytest.raises(SystemExit):
-                        install_sandbox_binary("test")
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                with patch("sandbox.Path.home", return_value=tmp_path):
+                    with patch("builtins.input", return_value="99"):
+                        with pytest.raises(SystemExit):
+                            install_sandbox_binary("test")
 
     def test_eof_exits(self, tmp_path):
         """Exits with error on EOF (e.g., piped input)."""
         state_dir = tmp_path / ".local" / "state" / "bui"
-        overlay_dir = state_dir / "overlays" / "test"
+        sandboxes_dir = state_dir / "sandboxes"
+        overlay_dir = sandboxes_dir / "test" / "overlays" / "home-sandbox"
         overlay_dir.mkdir(parents=True)
 
         exe = overlay_dir / "bin" / "app"
@@ -531,15 +549,17 @@ class TestInstallSandboxBinary:
         exe.chmod(0o755)
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
-            with patch("sandbox.Path.home", return_value=tmp_path):
-                with patch("builtins.input", side_effect=EOFError):
-                    with pytest.raises(SystemExit):
-                        install_sandbox_binary("test")
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                with patch("sandbox.Path.home", return_value=tmp_path):
+                    with patch("builtins.input", side_effect=EOFError):
+                        with pytest.raises(SystemExit):
+                            install_sandbox_binary("test")
 
     def test_multiple_executables_select_second(self, tmp_path, capsys):
         """Can select from multiple executables."""
         state_dir = tmp_path / ".local" / "state" / "bui"
-        overlay_dir = state_dir / "overlays" / "multi"
+        sandboxes_dir = state_dir / "sandboxes"
+        overlay_dir = sandboxes_dir / "multi" / "overlays" / "home-sandbox"
         overlay_dir.mkdir(parents=True)
         bin_dir = tmp_path / ".local" / "bin"
         installed_file = state_dir / "installed.json"
@@ -552,14 +572,15 @@ class TestInstallSandboxBinary:
             exe.chmod(0o755)
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
-            with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                with patch("sandbox.Path.home", return_value=tmp_path):
-                    with patch("builtins.input", return_value="2"):
-                        install_sandbox_binary("multi")
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    with patch("sandbox.Path.home", return_value=tmp_path):
+                        with patch("builtins.input", return_value="2"):
+                            install_sandbox_binary("multi")
 
         captured = capsys.readouterr()
-        assert "1. bin/alpha" in captured.out
-        assert "2. bin/beta" in captured.out
+        assert "/home/sandbox/bin/alpha" in captured.out
+        assert "/home/sandbox/bin/beta" in captured.out
         assert f"Installed: {bin_dir / 'beta'}" in captured.out
 
         # Verify correct script was created
@@ -690,26 +711,29 @@ class TestUninstallSandbox:
     """Test uninstall_sandbox() function."""
 
     def test_sandbox_not_found_exits(self, tmp_path):
-        """Exits with error if neither overlay dir nor metadata exist."""
+        """Exits with error if neither sandbox dir nor metadata exist."""
         state_dir = tmp_path / ".local" / "state" / "bui"
+        sandboxes_dir = state_dir / "sandboxes"
         state_dir.mkdir(parents=True)
         installed_file = state_dir / "installed.json"
         installed_file.write_text("{}")
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
-            with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                with pytest.raises(SystemExit):
-                    uninstall_sandbox("nonexistent")
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    with pytest.raises(SystemExit):
+                        uninstall_sandbox("nonexistent")
 
     def test_metadata_only_cleans_up(self, tmp_path, capsys):
-        """Cleans up metadata even when overlay was already deleted."""
+        """Cleans up metadata even when sandbox was already deleted."""
         state_dir = tmp_path / ".local" / "state" / "bui"
+        sandboxes_dir = state_dir / "sandboxes"
         state_dir.mkdir(parents=True)
         bin_dir = tmp_path / ".local" / "bin"
         bin_dir.mkdir(parents=True)
         installed_file = state_dir / "installed.json"
 
-        # Metadata exists but overlay doesn't
+        # Metadata exists but sandbox doesn't
         installed_file.write_text('{"orphan": {"scripts": ["myapp"], "profile": "untrusted"}}')
 
         # Create the script that was installed
@@ -717,14 +741,15 @@ class TestUninstallSandbox:
         script.write_text("#!/bin/sh\nexec bui --sandbox orphan -- ~/bin/myapp\n")
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
-            with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                with patch("sandbox.Path.home", return_value=tmp_path):
-                    uninstall_sandbox("orphan")
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    with patch("sandbox.Path.home", return_value=tmp_path):
+                        uninstall_sandbox("orphan")
 
         captured = capsys.readouterr()
         assert f"Removed: {bin_dir / 'myapp'}" in captured.out
-        # Should NOT say "Removed: overlay_dir" since it didn't exist
-        assert "overlays/orphan" not in captured.out
+        # Should NOT say "Removed: sandbox_dir" since it didn't exist
+        assert "sandboxes/orphan" not in captured.out
 
         # Verify script was removed
         assert not script.exists()
@@ -733,10 +758,12 @@ class TestUninstallSandbox:
         metadata = json.loads(installed_file.read_text())
         assert "orphan" not in metadata
 
-    def test_removes_scripts_and_overlay(self, tmp_path, capsys):
-        """Removes installed scripts and overlay directory."""
+    def test_removes_scripts_and_sandbox(self, tmp_path, capsys):
+        """Removes installed scripts and sandbox directory."""
         state_dir = tmp_path / ".local" / "state" / "bui"
-        overlay_dir = state_dir / "overlays" / "test"
+        sandboxes_dir = state_dir / "sandboxes"
+        sandbox_dir = sandboxes_dir / "test"
+        overlay_dir = sandbox_dir / "overlays" / "home-sandbox"
         overlay_dir.mkdir(parents=True)
         bin_dir = tmp_path / ".local" / "bin"
         bin_dir.mkdir(parents=True)
@@ -757,25 +784,28 @@ class TestUninstallSandbox:
         other_script.write_text("#!/bin/sh\necho hello\n")
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
-            with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                with patch("sandbox.Path.home", return_value=tmp_path):
-                    uninstall_sandbox("test")
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    with patch("sandbox.Path.home", return_value=tmp_path):
+                        uninstall_sandbox("test")
 
         captured = capsys.readouterr()
         assert f"Removed: {bin_dir / 'myapp'}" in captured.out
-        assert f"Removed: {overlay_dir}/" in captured.out
+        assert f"Removed: {sandbox_dir}/" in captured.out
 
         # Verify script was removed
         assert not script.exists()
         # Verify unrelated script still exists
         assert other_script.exists()
-        # Verify overlay was removed
-        assert not overlay_dir.exists()
+        # Verify sandbox was removed
+        assert not sandbox_dir.exists()
 
-    def test_no_scripts_just_removes_overlay(self, tmp_path, capsys):
+    def test_no_scripts_just_removes_sandbox(self, tmp_path, capsys):
         """Works when no scripts are installed."""
         state_dir = tmp_path / ".local" / "state" / "bui"
-        overlay_dir = state_dir / "overlays" / "test"
+        sandboxes_dir = state_dir / "sandboxes"
+        sandbox_dir = sandboxes_dir / "test"
+        overlay_dir = sandbox_dir / "overlays" / "home-sandbox"
         overlay_dir.mkdir(parents=True)
         installed_file = state_dir / "installed.json"
         installed_file.write_text("{}")
@@ -783,13 +813,14 @@ class TestUninstallSandbox:
         (overlay_dir / "data").write_text("test")
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
-            with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                with patch("sandbox.Path.home", return_value=tmp_path):
-                    uninstall_sandbox("test")
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    with patch("sandbox.Path.home", return_value=tmp_path):
+                        uninstall_sandbox("test")
 
         captured = capsys.readouterr()
-        assert f"Removed: {overlay_dir}/" in captured.out
-        assert not overlay_dir.exists()
+        assert f"Removed: {sandbox_dir}/" in captured.out
+        assert not sandbox_dir.exists()
 
 
 class TestListSandboxes:
@@ -829,57 +860,60 @@ class TestListSandboxes:
         installed_file = state_dir / "installed.json"
 
         # Create metadata for installed scripts
-        installed_file.write_text('{"deno": {"scripts": ["deno"], "profile": "untrusted"}, "node": {"scripts": ["node", "npm"], "profile": "custom"}}')
+        installed_file.write_text('{"test-app": {"scripts": ["test-app"], "profile": "untrusted"}, "test-tool": {"scripts": ["test-tool", "test-pkg"], "profile": "custom"}}')
 
         with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
             list_sandboxes()
 
         captured = capsys.readouterr()
         assert "Sandboxes:" in captured.out
-        assert "deno" in captured.out
+        assert "test-app" in captured.out
         assert "profile: untrusted" in captured.out
-        assert "scripts: deno" in captured.out
-        assert "node" in captured.out
+        assert "scripts: test-app" in captured.out
+        assert "test-tool" in captured.out
         assert "profile: custom" in captured.out
-        assert "scripts: node, npm" in captured.out
+        assert "scripts: test-pkg, test-tool" in captured.out
 
 
 class TestListOverlays:
-    """Test list_overlays() function - lists overlay directories."""
+    """Test list_overlays() function - lists sandbox directories."""
 
-    def test_no_overlays_dir(self, tmp_path, capsys):
-        """Shows message when no overlays directory exists."""
+    def test_no_sandboxes_dir(self, tmp_path, capsys):
+        """Shows message when no sandboxes directory exists."""
         state_dir = tmp_path / ".local" / "state" / "bui"
-        # Don't create the directory
+        sandboxes_dir = state_dir / "sandboxes"
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
-            list_overlays()
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                list_overlays()
 
         captured = capsys.readouterr()
-        assert "No overlays found" in captured.out
+        assert "No sandboxes found" in captured.out
 
-    def test_empty_overlays_dir(self, tmp_path, capsys):
-        """Shows message when overlays directory is empty."""
+    def test_empty_sandboxes_dir(self, tmp_path, capsys):
+        """Shows message when sandboxes directory is empty."""
         state_dir = tmp_path / ".local" / "state" / "bui"
-        overlays_dir = state_dir / "overlays"
-        overlays_dir.mkdir(parents=True)
+        sandboxes_dir = state_dir / "sandboxes"
+        sandboxes_dir.mkdir(parents=True)
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
-            list_overlays()
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                list_overlays()
 
         captured = capsys.readouterr()
-        assert "No overlays found" in captured.out
+        assert "No sandboxes found" in captured.out
 
-    def test_lists_overlays_with_file_count(self, tmp_path, capsys):
-        """Lists overlays with file counts."""
+    def test_lists_sandboxes_with_file_count(self, tmp_path, capsys):
+        """Lists sandboxes with file counts."""
         state_dir = tmp_path / ".local" / "state" / "bui"
-        overlays_dir = state_dir / "overlays"
-        deno_dir = overlays_dir / "deno"
-        deno_dir.mkdir(parents=True)
+        sandboxes_dir = state_dir / "sandboxes"
+        sandbox_dir = sandboxes_dir / "test-app"
+        overlay_dir = sandbox_dir / "overlays" / "home-sandbox"
+        overlay_dir.mkdir(parents=True)
         # Create some files
-        (deno_dir / "file1.txt").write_text("test")
-        (deno_dir / "file2.txt").write_text("test")
-        subdir = deno_dir / "subdir"
+        (overlay_dir / "file1.txt").write_text("test")
+        (overlay_dir / "file2.txt").write_text("test")
+        subdir = overlay_dir / "subdir"
         subdir.mkdir()
         (subdir / "file3.txt").write_text("test")
 
@@ -887,50 +921,53 @@ class TestListOverlays:
         installed_file.write_text("{}")
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
-            with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                list_overlays()
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    list_overlays()
 
         captured = capsys.readouterr()
-        assert "Overlays:" in captured.out
-        assert "deno" in captured.out
+        assert "test-app" in captured.out
+        assert "overlays: home-sandbox" in captured.out
         assert "files: 3" in captured.out
         assert "safe to delete" in captured.out
 
     def test_shows_sandbox_status(self, tmp_path, capsys):
-        """Shows whether overlay has associated sandbox."""
+        """Shows whether sandbox has scripts installed."""
         state_dir = tmp_path / ".local" / "state" / "bui"
-        overlays_dir = state_dir / "overlays"
-        (overlays_dir / "deno").mkdir(parents=True)
-        (overlays_dir / "orphan").mkdir(parents=True)
+        sandboxes_dir = state_dir / "sandboxes"
+        (sandboxes_dir / "test-app" / "overlays" / "home-sandbox").mkdir(parents=True)
+        (sandboxes_dir / "orphan" / "overlays" / "home-sandbox").mkdir(parents=True)
 
         installed_file = state_dir / "installed.json"
-        installed_file.write_text('{"deno": {"scripts": ["deno"], "profile": "untrusted"}}')
+        installed_file.write_text('{"test-app": {"scripts": ["test-app"], "profile": "untrusted"}}')
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
-            with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                list_overlays()
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    list_overlays()
 
         captured = capsys.readouterr()
-        assert "deno" in captured.out
-        assert "bui --sandbox deno --uninstall" in captured.out
+        assert "test-app" in captured.out
+        assert "bui --sandbox test-app --uninstall" in captured.out
         assert "orphan" in captured.out
         assert "safe to delete" in captured.out
 
     def test_excludes_hidden_directories(self, tmp_path, capsys):
-        """Excludes hidden directories from overlay list."""
+        """Excludes hidden directories from sandbox list."""
         state_dir = tmp_path / ".local" / "state" / "bui"
-        overlays_dir = state_dir / "overlays"
-        (overlays_dir / "deno").mkdir(parents=True)
-        (overlays_dir / ".hidden").mkdir(parents=True)
+        sandboxes_dir = state_dir / "sandboxes"
+        (sandboxes_dir / "test-app" / "overlays" / "home-sandbox").mkdir(parents=True)
+        (sandboxes_dir / ".hidden" / "overlays" / "home-sandbox").mkdir(parents=True)
         installed_file = state_dir / "installed.json"
         installed_file.write_text("{}")
 
         with patch("sandbox.BUI_STATE_DIR", state_dir):
-            with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
-                list_overlays()
+            with patch("sandbox.BUI_SANDBOXES_DIR", sandboxes_dir):
+                with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                    list_overlays()
 
         captured = capsys.readouterr()
-        assert "deno" in captured.out
+        assert "test-app" in captured.out
         assert ".hidden" not in captured.out
 
 

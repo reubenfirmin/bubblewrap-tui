@@ -30,9 +30,8 @@ MODULE_ORDER = [
     "constants.py",                   # No dependencies - shared constants
     "detection.py",                   # No dependencies (system detection)
     "environment.py",                 # No dependencies (env var utilities)
-    "installer.py",                   # No dependencies (install/update)
+    "installer.py",                   # Profile installation
     "sandbox.py",                     # Sandbox lifecycle management
-    "seccomp.py",                     # No dependencies - seccomp filter generation
     "model/ui_field.py",              # No dependencies - UIField, Field, ConfigBase
     "model/bound_directory.py",       # No dependencies
     "model/overlay_config.py",        # No dependencies
@@ -67,8 +66,7 @@ MODULE_ORDER = [
     "profiles.py",                    # Depends on model (JSON serialization)
     "ui/ids.py",                      # No dependencies - widget ID constants (needed early for ids.X refs)
     "controller/validators.py",       # Validation functions for sync
-    "controller/field_mappings.py",   # Field mapping registry (depends on validators, ids)
-    "controller/sync.py",             # UI ↔ Config sync (depends on field_mappings)
+    "controller/sync.py",             # UI ↔ Config sync (depends on validators)
     "ui/widgets/directory.py",        # Directory widgets (FilteredDirectoryTree, BoundDirItem)
     "ui/widgets/overlay.py",          # Overlay widget (OverlayItem)
     "ui/widgets/environment.py",      # Environment widgets (EnvVarItem, EnvVarRow, AddEnvDialog)
@@ -92,13 +90,14 @@ MODULE_ORDER = [
     "controller/environment.py",      # Event handler - depends on ui
     "controller/network.py",          # Event handler - network filtering
     "app.py",                         # Depends on ui, model, profiles, controller, detection
-    "cli.py",                         # Depends on app, model, profiles, installer, net
+    "command_execution.py",           # Command execution dispatch and cleanup
+    "cli.py",                         # Depends on app, model, profiles, installer, net, command_execution
 ]
 
 # Local modules (imports to filter out)
 LOCAL_MODULES = {
-    "constants", "detection", "environment", "installer", "sandbox", "seccomp", "profiles", "app", "cli", "styles", "bwrap",
-    "commandoutput", "virtual_files",
+    "constants", "detection", "environment", "installer", "sandbox", "profiles", "app", "cli", "styles", "bwrap",
+    "commandoutput", "virtual_files", "command_execution",
     "net", "net.utils", "net.iptables", "net.dns_proxy", "net.pasta", "net.audit",
     "net.pasta_install", "net.pasta_args", "net.filtering", "net.pasta_exec",
     "model",
@@ -109,7 +108,7 @@ LOCAL_MODULES = {
     "model.fields.desktop", "model.fields.environment",
     "controller", "controller.sync", "controller.directories", "controller.overlays",
     "controller.environment", "controller.execute", "controller.network",
-    "controller.validators", "controller.field_mappings",
+    "controller.validators",
     "ui", "ui.ids", "ui.widgets", "ui.widgets.directory", "ui.widgets.overlay",
     "ui.widgets.environment", "ui.widgets.sandbox", "ui.widgets.profiles", "ui.widgets.network",
     "ui.helpers", "ui.modals",

@@ -112,17 +112,6 @@ def create_default_profiles() -> None:
     profiles_dir = get_profiles_dir()
     untrusted_profile = profiles_dir / "untrusted.json"
 
-    home = str(Path.home())
-    overlay_write_dir = Path.home() / ".local" / "state" / "bui" / "overlays"
-    overlay_work_dir = Path.home() / ".local" / "state" / "bui" / ".overlay-work"
-
-    # Always create overlay directories
-    overlay_write_dir.mkdir(parents=True, exist_ok=True)
-    overlay_work_dir.mkdir(parents=True, exist_ok=True)
-
-    # Always create/overwrite default profiles
-    # User customizations should be saved under different names
-
     # Build bound_dirs for system paths that exist
     # Note: /etc is NOT included - only specific files needed for networking/SSL
     # are bound via detection (resolv.conf, nsswitch.conf, SSL certs)
@@ -131,15 +120,15 @@ def create_default_profiles() -> None:
         if Path(path_str).exists():
             bound_dirs.append({"path": path_str, "readonly": True})
 
-    # Use a non-root virtual user so tools like npm install to home instead of system
+    # Persistent overlay for isolated home directory
+    # write_dir is computed at runtime from sandbox name and dest
     profile_data = {
         "bound_dirs": bound_dirs,
         "overlays": [
             {
                 "source": "",
-                "dest": "/home/sandbox",  # Home for virtual user
-                "mode": "persistent",  # Persist changes to overlay dir (customized per --sandbox)
-                "write_dir": str(overlay_write_dir),
+                "dest": "/home/sandbox",
+                "mode": "persistent",
             }
         ],
         "drop_caps": [],
@@ -168,10 +157,7 @@ def create_default_profiles() -> None:
                 "unshare_pid": True,
                 "unshare_ipc": True,
                 "unshare_cgroup": True,
-                "disable_userns": False,
-                # Use seccomp instead of bwrap's --disable-userns because network
-                # filtering requires CAP_NET_ADMIN which conflicts with --disable-userns
-                "seccomp_block_userns": True,
+                "disable_userns": True,  # Block nested namespace creation
             }
         },
         "_hostname_group": {

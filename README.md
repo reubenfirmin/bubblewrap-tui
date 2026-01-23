@@ -17,7 +17,7 @@ Instead of memorizing dozens of `bwrap` flags, visually configure your sandbox a
 - [Network Filtering](#network-filtering)
   - [Why pasta?](#why-pasta)
   - [How filtering works](#how-filtering-works)
-  - [Hostname resolution](#hostname-resolution)
+  - [Hostname filtering](#hostname-filtering)
   - [Audit mode](#audit-mode)
   - [Requirements](#requirements-1)
 - [Development](#development)
@@ -254,9 +254,9 @@ Creating a network namespace normally requires root privileges. Pasta provides u
 ### How filtering works
 
 1. Pasta creates an isolated user+network namespace
-2. An init script runs inside with `CAP_NET_ADMIN` to apply iptables rules
-3. The capability is dropped before your command executes
-4. Your command runs unprivileged and cannot modify the firewall rules
+2. A wrapper script applies iptables rules with `CAP_NET_ADMIN`
+3. The wrapper execs bwrap with `--unshare-user --disable-userns` for full namespace isolation
+4. Your command runs unprivileged and cannot modify the firewall rules or create nested sandboxes
 
 This ensures filtering decisions made at launch cannot be bypassed by the sandboxed application.
 

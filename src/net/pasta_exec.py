@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from model.network_filter import NetworkFilter
     from model.sandbox_config import SandboxConfig
 
-from net.filtering import validate_filtering_requirements, create_init_script
+from net.filtering import create_wrapper_script, validate_filtering_requirements
 from net.pasta_args import generate_pasta_args, prepare_bwrap_command
 from net.utils import HostnameResolutionError
 
@@ -23,16 +23,21 @@ def execute_with_pasta(
     build_command_fn: Callable[["SandboxConfig", dict[str, str] | None], list[str]],
     sandbox_name: str | None = None,
     overlay_dirs: list[str] | None = None,
-) -> None:
+) -> int:
     """Execute bwrap with network filtering via pasta spawn mode.
 
-    pasta creates a new user+network namespace and runs bwrap inside.
-    This is much simpler than the attach mode and requires no special privileges.
+    pasta creates a new user+network namespace and runs a wrapper script inside.
+    The wrapper applies iptables rules, starts DNS proxy if needed, then execs bwrap.
+
+    This architecture allows bwrap to use --unshare-user --disable-userns for full
+    namespace isolation, because iptables runs BEFORE bwrap (doesn't need CAP_NET_ADMIN
+    inside the sandbox).
 
     Architecture:
-        pasta --config-net -- bwrap [args] -- init_script
-
-    The init script applies iptables rules, drops CAP_NET_ADMIN, then runs the user command.
+        pasta --config-net -- wrapper.sh
+                                 |-> iptables rules
+                                 |-> start DNS proxy (if needed)
+                                 |-> exec bwrap --unshare-user --disable-userns ... -- user_cmd
 
     Args:
         config: SandboxConfig with network_filter enabled
@@ -40,29 +45,32 @@ def execute_with_pasta(
         build_command_fn: Function to build bwrap command from config
         sandbox_name: Optional sandbox name for overlay info
         overlay_dirs: Optional list of overlay directories
+
+    Returns:
+        Exit code from the sandboxed process
     """
-    import os
-    import signal
-    import subprocess
     import sys
 
     nf = config.network_filter
 
-    # Determine if we need to use seccomp for user namespace blocking
-    # Use seccomp if explicitly enabled OR if network filtering + bwrap's disable_userns
-    # (bwrap's --disable-userns prevents CAP_NET_ADMIN from working)
-    use_seccomp = config.namespace.seccomp_block_userns or (
-        nf.requires_pasta() and config.namespace.disable_userns
-    )
-
     # Validate all required tools are available
-    iptables_path, ip6tables_path, is_multicall, cap_drop_template = validate_filtering_requirements(nf)
+    iptables_path, ip6tables_path, is_multicall = validate_filtering_requirements(nf)
 
-    # Create init script (resolves hostnames to IPs)
+    # Build bwrap command (this is what wrapper.sh will exec)
+    bwrap_cmd = build_command_fn(config, file_map)
+
+    # Create wrapper script in temp directory
+    import tempfile
+    tmp_dir = tempfile.mkdtemp(prefix="bui-net-")
+    tmp_path = Path(tmp_dir)
+
+    # Prepare bwrap command (removes --unshare-net, adds bind mounts)
+    bwrap_cmd = prepare_bwrap_command(bwrap_cmd, tmp_dir)
+
+    # Create wrapper script that does iptables setup then execs bwrap
     try:
-        init_script_path = create_init_script(
-            nf, config.command, iptables_path, ip6tables_path, is_multicall, cap_drop_template,
-            use_seccomp=use_seccomp
+        wrapper_script_path = create_wrapper_script(
+            nf, bwrap_cmd, iptables_path, ip6tables_path, is_multicall, tmp_path
         )
     except HostnameResolutionError as e:
         print("=" * 60, file=sys.stderr)
@@ -75,74 +83,112 @@ def execute_with_pasta(
         print("=" * 60, file=sys.stderr)
         sys.exit(1)
 
-    tmp_dir = str(init_script_path.parent)
-
-    # Build bwrap command with init script as the command
-    original_command = config.command
-    config.command = [str(init_script_path)]
-    cmd = build_command_fn(config, file_map)
-    config.command = original_command
-
-    # Prepare command for pasta execution (removes --disable-userns if using seccomp)
-    cmd = prepare_bwrap_command(cmd, tmp_dir, use_seccomp=use_seccomp)
-
     # Print header
     from commandoutput import print_execution_header
     print_execution_header(
-        cmd,
+        bwrap_cmd,
         network_filter=nf,
         sandbox_name=sandbox_name,
         overlay_dirs=overlay_dirs,
     )
 
-    # Build pasta command: pasta [args] -- bwrap [args]
+    # Build pasta command: pasta [args] -- /bin/sh wrapper.sh
+    # We use /bin/sh to execute the script rather than directly because
+    # SELinux prevents pasta from executing scripts directly in some contexts
     pasta_args = generate_pasta_args(nf)
-    full_cmd = pasta_args + ["--"] + cmd
+    full_cmd = pasta_args + ["--", "/bin/sh", str(wrapper_script_path)]
 
-    # Execute with subprocess so we can handle signals properly
-    # bwrap's --new-session creates a new session/process group, so signals
-    # from the terminal don't reach the sandbox directly. We need to forward them.
-    #
-    # Process tree:
-    #   bui (this process)
-    #     └── pasta (subprocess)
-    #           └── bwrap (--new-session, --die-with-parent)
-    #                 └── init.sh → user command
-    #
-    # When we terminate pasta, bwrap's --die-with-parent will kill bwrap,
-    # and bwrap will kill its children.
-    proc = subprocess.Popen(full_cmd, start_new_session=False)
+    # Use pty to run pasta - this prevents terminal corruption when bwrap
+    # --new-session receives SIGINT (a known bwrap issue #369)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    return _run_with_pty(full_cmd)
 
-    def signal_handler(signum: int, frame: object) -> None:
-        """Forward signals to pasta, which will cascade to bwrap via --die-with-parent."""
-        if proc.poll() is None:  # Process still running
-            # Send SIGTERM to pasta to trigger clean shutdown
-            # bwrap's --die-with-parent will cause it to exit when pasta dies
-            try:
-                proc.terminate()  # SIGTERM
-            except ProcessLookupError:
-                pass
 
-    # Install signal handlers to forward SIGINT and SIGTERM
-    original_sigint = signal.signal(signal.SIGINT, signal_handler)
-    original_sigterm = signal.signal(signal.SIGTERM, signal_handler)
+def _run_with_pty(cmd: list[str]) -> int:
+    """Run command in a pty with proper cleanup of orphaned processes.
+
+    This handles the case where pasta exits but bwrap gets orphaned to init,
+    which would otherwise leave pty.spawn() hanging.
+    """
+    import io
+    import os
+    import pty
+    import select
+    import sys
+    import termios
+    import tty
+
+    pid, fd = pty.fork()
+
+    if pid == 0:
+        # Child - exec the command
+        os.execvp(cmd[0], cmd)
+        sys.exit(1)  # Never reached
+
+    # Parent - copy data between pty and stdin/stdout
+    old_settings = None
+    try:
+        stdin_fd = sys.stdin.fileno()
+        if os.isatty(stdin_fd):
+            old_settings = termios.tcgetattr(stdin_fd)
+            tty.setraw(stdin_fd)
+    except (io.UnsupportedOperation, OSError):
+        stdin_fd = None
 
     try:
-        exit_code = proc.wait()
-    except KeyboardInterrupt:
-        # Handle case where signal handler didn't catch it
-        proc.terminate()
-        try:
-            exit_code = proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            exit_code = proc.wait()
-    finally:
-        # Restore original signal handlers
-        signal.signal(signal.SIGINT, original_sigint)
-        signal.signal(signal.SIGTERM, original_sigterm)
+        while True:
+            # Check if child is still alive
+            result = os.waitpid(pid, os.WNOHANG)
+            if result[0] != 0:
+                # Child exited
+                status = result[1]
+                if os.WIFEXITED(status):
+                    return os.WEXITSTATUS(status)
+                return 1
 
-    sys.exit(exit_code)
+            # Wait for data on stdin or pty
+            try:
+                read_fds = [fd] if stdin_fd is None else [stdin_fd, fd]
+                r, _, _ = select.select(read_fds, [], [], 0.1)
+            except (select.error, ValueError):
+                break
+
+            if stdin_fd is not None and stdin_fd in r:
+                try:
+                    data = os.read(stdin_fd, 1024)
+                    if data:
+                        os.write(fd, data)
+                except OSError:
+                    break
+
+            if fd in r:
+                try:
+                    data = os.read(fd, 1024)
+                    if data:
+                        try:
+                            os.write(sys.stdout.fileno(), data)
+                        except (io.UnsupportedOperation, OSError):
+                            sys.stdout.buffer.write(data)
+                            sys.stdout.buffer.flush()
+                    else:
+                        # EOF on pty - child closed it
+                        break
+                except OSError:
+                    break
+    finally:
+        # Restore terminal settings
+        if old_settings is not None and stdin_fd is not None:
+            termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_settings)
+
+    # Reap child and get exit status
+    try:
+        _, status = os.waitpid(pid, 0)
+        if os.WIFEXITED(status):
+            return os.WEXITSTATUS(status)
+        return 1
+    except ChildProcessError:
+        return 0
 
 
 def execute_with_audit(
@@ -151,7 +197,7 @@ def execute_with_audit(
     build_command_fn: Callable[["SandboxConfig", dict[str, str] | None], list[str]],
     sandbox_name: str | None = None,
     overlay_dirs: list[str] | None = None,
-) -> None:
+) -> int:
     """Execute bwrap with network auditing via pasta.
 
     Similar to execute_with_pasta but captures traffic instead of filtering.
@@ -169,6 +215,9 @@ def execute_with_audit(
         build_command_fn: Function to build bwrap command from config
         sandbox_name: Optional sandbox name for overlay info
         overlay_dirs: Optional list of overlay directories
+
+    Returns:
+        Exit code from the sandboxed process
     """
     import shutil
     import subprocess
@@ -180,7 +229,6 @@ def execute_with_audit(
     nf = config.network_filter
 
     # Create temp directory for pcap file
-    # Use a directory that pasta can write to (it drops privileges)
     tmp_dir = tempfile.mkdtemp(prefix="bui-audit-")
     tmp_path = Path(tmp_dir)
 
@@ -230,4 +278,4 @@ def execute_with_audit(
         except Exception:
             pass
 
-    sys.exit(exit_code)
+    return exit_code

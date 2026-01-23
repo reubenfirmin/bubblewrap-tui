@@ -26,10 +26,9 @@ from net.pasta_args import (
     prepare_bwrap_command,
 )
 
-# Network filtering validation and script generation
+# Network filtering validation
 from net.filtering import (
     validate_filtering_requirements,
-    create_init_script,
 )
 
 # Execution functions
@@ -40,7 +39,6 @@ from net.pasta_exec import (
 
 # Legacy aliases with underscore prefix for backwards compatibility
 _validate_filtering_requirements = validate_filtering_requirements
-_create_init_script = create_init_script
 _prepare_bwrap_command = prepare_bwrap_command
 
 __all__ = [
@@ -53,12 +51,10 @@ __all__ = [
     "prepare_bwrap_command",
     # Filtering
     "validate_filtering_requirements",
-    "create_init_script",
     # Execution
     "execute_with_pasta",
     "execute_with_audit",
     # Legacy aliases
     "_validate_filtering_requirements",
-    "_create_init_script",
     "_prepare_bwrap_command",
 ]

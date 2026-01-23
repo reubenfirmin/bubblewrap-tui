@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import shutil
@@ -11,6 +12,51 @@ if TYPE_CHECKING:
     from model.network_filter import NetworkFilter
 
 logger = logging.getLogger(__name__)
+
+
+# Loopback networks for overlap detection
+IPV4_LOOPBACK = ipaddress.ip_network("127.0.0.0/8")
+IPV6_LOOPBACK = ipaddress.ip_network("::1/128")
+
+
+def _overlaps_loopback_v4(cidr: str) -> bool:
+    """Check if a CIDR overlaps with IPv4 loopback (127.0.0.0/8).
+
+    Args:
+        cidr: IP address or CIDR notation (e.g., "127.0.0.1", "127.0.0.0/24")
+
+    Returns:
+        True if the CIDR overlaps with loopback
+    """
+    try:
+        # Handle bare IP addresses by treating them as /32
+        if "/" not in cidr:
+            network = ipaddress.ip_network(f"{cidr}/32", strict=False)
+        else:
+            network = ipaddress.ip_network(cidr, strict=False)
+        return network.overlaps(IPV4_LOOPBACK)
+    except ValueError:
+        return False
+
+
+def _overlaps_loopback_v6(cidr: str) -> bool:
+    """Check if a CIDR overlaps with IPv6 loopback (::1/128).
+
+    Args:
+        cidr: IP address or CIDR notation (e.g., "::1", "::1/128")
+
+    Returns:
+        True if the CIDR overlaps with loopback
+    """
+    try:
+        # Handle bare IP addresses by treating them as /128
+        if "/" not in cidr:
+            network = ipaddress.ip_network(f"{cidr}/128", strict=False)
+        else:
+            network = ipaddress.ip_network(cidr, strict=False)
+        return network.overlaps(IPV6_LOOPBACK)
+    except ValueError:
+        return False
 
 
 def find_iptables() -> tuple[str | None, str | None, bool]:
@@ -113,11 +159,9 @@ def generate_iptables_rules(nf: NetworkFilter) -> tuple[list[str], list[str]]:
 
     # Check if loopback addresses are being blocked
     # We need to know this to structure rules correctly
-    blocks_loopback_v4 = any(
-        ip.startswith("127.") or ip == "127.0.0.0/8"
-        for ip in v4_block
-    )
-    blocks_loopback_v6 = "::1/128" in v6_block or "::1" in v6_block
+    # Use proper CIDR overlap detection to catch ranges like 127.0.0.0/24
+    blocks_loopback_v4 = any(_overlaps_loopback_v4(ip) for ip in v4_block)
+    blocks_loopback_v6 = any(_overlaps_loopback_v6(ip) for ip in v6_block)
 
     # Rule ordering is critical for correct behavior:
     # 1. Allow loopback INPUT (always needed for responses)
