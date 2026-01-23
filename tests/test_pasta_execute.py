@@ -456,6 +456,50 @@ class TestExecuteWithAudit:
             mode = tmp_dir.stat().st_mode & 0o777
             assert mode == 0o700, f"Expected 0o700 but got {oct(mode)}"
 
+    @patch("subprocess.run")
+    @patch("commandoutput.print_audit_header")
+    @patch("tempfile.mkdtemp")
+    def test_handles_file_not_found_error(
+        self,
+        mock_mkdtemp,
+        mock_print_header,
+        mock_run,
+        audit_config,
+        mock_build_command,
+        tmp_path,
+    ):
+        """Returns exit code 127 when command not found."""
+        mock_mkdtemp.return_value = str(tmp_path)
+        mock_run.side_effect = FileNotFoundError("pasta: command not found")
+
+        from net.pasta_exec import execute_with_audit
+
+        exit_code = execute_with_audit(audit_config, None, mock_build_command)
+
+        assert exit_code == 127
+
+    @patch("subprocess.run")
+    @patch("commandoutput.print_audit_header")
+    @patch("tempfile.mkdtemp")
+    def test_handles_os_error(
+        self,
+        mock_mkdtemp,
+        mock_print_header,
+        mock_run,
+        audit_config,
+        mock_build_command,
+        tmp_path,
+    ):
+        """Returns exit code 1 on OS error."""
+        mock_mkdtemp.return_value = str(tmp_path)
+        mock_run.side_effect = OSError("Resource temporarily unavailable")
+
+        from net.pasta_exec import execute_with_audit
+
+        exit_code = execute_with_audit(audit_config, None, mock_build_command)
+
+        assert exit_code == 1
+
 
 class TestFindIptables:
     """Tests for find_iptables function."""
