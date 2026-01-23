@@ -134,8 +134,9 @@ def cleanup_orphaned_sandboxes() -> None:
 
 def _save_installed(installed: dict[str, dict]) -> None:
     """Save installed scripts metadata."""
-    INSTALLED_SCRIPTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    INSTALLED_SCRIPTS_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     INSTALLED_SCRIPTS_FILE.write_text(json.dumps(installed, indent=2))
+    INSTALLED_SCRIPTS_FILE.chmod(0o600)
 
 
 def register_sandbox(
