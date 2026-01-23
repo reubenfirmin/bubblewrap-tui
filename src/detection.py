@@ -15,6 +15,56 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+class RuntimeDirError(Exception):
+    """Raised when XDG_RUNTIME_DIR is set but invalid."""
+
+
+def get_runtime_dir() -> Path:
+    """Get the validated XDG_RUNTIME_DIR or default.
+
+    Returns:
+        Path to runtime directory
+
+    Raises:
+        RuntimeDirError: If XDG_RUNTIME_DIR is set but doesn't exist,
+            isn't owned by current user, or has wrong permissions.
+    """
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    uid = os.getuid()
+
+    if runtime_dir:
+        path = Path(runtime_dir)
+        if not path.exists():
+            raise RuntimeDirError(
+                f"XDG_RUNTIME_DIR '{runtime_dir}' does not exist"
+            )
+        try:
+            stat_info = path.stat()
+        except OSError as e:
+            raise RuntimeDirError(
+                f"Cannot stat XDG_RUNTIME_DIR '{runtime_dir}': {e}"
+            )
+
+        if stat_info.st_uid != uid:
+            raise RuntimeDirError(
+                f"XDG_RUNTIME_DIR '{runtime_dir}' not owned by current user "
+                f"(owned by uid {stat_info.st_uid}, expected {uid})"
+            )
+
+        # Check mode is 0700 (user only, no group/other permissions)
+        mode = stat_info.st_mode & 0o777
+        if mode != 0o700:
+            raise RuntimeDirError(
+                f"XDG_RUNTIME_DIR '{runtime_dir}' has insecure permissions "
+                f"{oct(mode)} (expected 0o700)"
+            )
+
+        return path
+
+    # No XDG_RUNTIME_DIR set, use default
+    return Path(f"/run/user/{uid}")
+
+
 @dataclass
 class DisplayServerInfo:
     """Information about the detected display server.
@@ -67,8 +117,7 @@ def detect_display_server() -> DisplayServerInfo:
     avoiding false positives when env vars are set but display server isn't running.
     """
     result = DisplayServerInfo()
-    uid = os.getuid()
-    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{uid}")
+    runtime_dir = get_runtime_dir()
 
     wayland_detected = False
     x11_detected = False
@@ -143,10 +192,9 @@ def detect_display_server() -> DisplayServerInfo:
 def detect_dbus_session() -> list[str]:
     """Detect D-Bus session bus paths."""
     paths = []
-    uid = os.getuid()
 
     # Standard session bus socket location
-    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{uid}")
+    runtime_dir = get_runtime_dir()
     bus_path = Path(runtime_dir) / "bus"
     if bus_path.exists():
         paths.append(str(bus_path))
