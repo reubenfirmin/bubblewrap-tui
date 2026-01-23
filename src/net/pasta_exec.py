@@ -125,8 +125,12 @@ def _run_with_pty(cmd: list[str]) -> int:
 
     if pid == 0:
         # Child - exec the command
-        os.execvp(cmd[0], cmd)
-        sys.exit(1)  # Never reached
+        try:
+            os.execvp(cmd[0], cmd)
+        except OSError as e:
+            # Write to stderr (fd 2) directly since we're in raw mode
+            os.write(2, f"Error: Failed to execute {cmd[0]}: {e}\n".encode())
+            os._exit(127 if isinstance(e, FileNotFoundError) else 1)
 
     def cleanup_child() -> int:
         """Terminate and reap the child process, returning exit code."""

@@ -1023,3 +1023,87 @@ class TestListProfiles:
                 with pytest.raises(SystemExit):
                     parse_args()
                 mock_list.assert_called_once()
+
+
+class TestExecuteBwrapErrorHandling:
+    """Tests for execute_bwrap error handling."""
+
+    @patch("cli.setup_virtual_files")
+    @patch("os.execvp")
+    def test_handles_execvp_oserror(self, mock_execvp, mock_vfiles, capsys):
+        """Prints error and exits on OSError from execvp."""
+        from cli import execute_bwrap
+        from model import SandboxConfig
+
+        mock_vfiles.return_value.get_file_map.return_value = {}
+        mock_execvp.side_effect = OSError("No such file or directory")
+
+        config = SandboxConfig(command=["bash"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            execute_bwrap(config)
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "Error: Failed to execute bwrap" in captured.err
+
+    @patch("cli.setup_virtual_files")
+    @patch("os.execvp")
+    def test_handles_execvp_filenotfound(self, mock_execvp, mock_vfiles, capsys):
+        """Prints error and exits when bwrap not found."""
+        from cli import execute_bwrap
+        from model import SandboxConfig
+
+        mock_vfiles.return_value.get_file_map.return_value = {}
+        mock_execvp.side_effect = FileNotFoundError("bwrap not found")
+
+        config = SandboxConfig(command=["bash"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            execute_bwrap(config)
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "Error: Failed to execute bwrap" in captured.err
+
+
+class TestApplySandboxToOverlaysErrorHandling:
+    """Tests for apply_sandbox_to_overlays error handling."""
+
+    def test_handles_permission_error_on_write_dir(self, tmp_path, capsys):
+        """Prints error and exits on PermissionError creating write dir."""
+        from cli import apply_sandbox_to_overlays
+        from model import SandboxConfig, OverlayConfig
+
+        config = SandboxConfig(command=["bash"])
+        config.overlays = [OverlayConfig(source="/src", dest="/dest", mode="persistent")]
+
+        with patch("cli.get_overlay_write_dir") as mock_get_dir:
+            mock_dir = tmp_path / "overlay"
+            mock_get_dir.return_value = mock_dir
+            with patch.object(Path, "mkdir", side_effect=PermissionError("Permission denied")):
+                with pytest.raises(SystemExit) as exc_info:
+                    apply_sandbox_to_overlays(config, "test-sandbox")
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "Cannot create overlay directory" in captured.err
+
+    def test_handles_oserror_on_write_dir(self, tmp_path, capsys):
+        """Prints error and exits on OSError creating write dir."""
+        from cli import apply_sandbox_to_overlays
+        from model import SandboxConfig, OverlayConfig
+
+        config = SandboxConfig(command=["bash"])
+        config.overlays = [OverlayConfig(source="/src", dest="/dest", mode="persistent")]
+
+        with patch("cli.get_overlay_write_dir") as mock_get_dir:
+            mock_dir = tmp_path / "overlay"
+            mock_get_dir.return_value = mock_dir
+            with patch.object(Path, "mkdir", side_effect=OSError("Disk full")):
+                with pytest.raises(SystemExit) as exc_info:
+                    apply_sandbox_to_overlays(config, "test-sandbox")
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "Failed to create overlay directory" in captured.err

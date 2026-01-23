@@ -326,7 +326,11 @@ def execute_bwrap(config: SandboxConfig) -> None:
     vfiles = setup_virtual_files(config)
     file_map = vfiles.get_file_map()
     cmd = config.build_command(file_map if file_map else None)
-    os.execvp("bwrap", cmd)
+    try:
+        os.execvp("bwrap", cmd)
+    except OSError as e:
+        print(f"Error: Failed to execute bwrap: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def apply_sandbox_to_overlays(config: SandboxConfig, sandbox_name: str) -> list[Path]:
@@ -345,14 +349,30 @@ def apply_sandbox_to_overlays(config: SandboxConfig, sandbox_name: str) -> list[
         if overlay.mode == "persistent":
             # Compute overlay-specific write directory based on mount destination
             write_dir = get_overlay_write_dir(sandbox_name, overlay.dest)
-            write_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                write_dir.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                print(f"Error: Cannot create overlay directory: {write_dir}", file=sys.stderr)
+                print("Check permissions on ~/.local/state/bui/", file=sys.stderr)
+                sys.exit(1)
+            except OSError as e:
+                print(f"Error: Failed to create overlay directory: {e}", file=sys.stderr)
+                sys.exit(1)
             overlay.write_dir = str(write_dir)
             overlay.work_dir = str(shared_work_dir)
             overlay_dirs.append(write_dir)
 
     # Create shared work directory
     if overlay_dirs:
-        shared_work_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            shared_work_dir.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            print(f"Error: Cannot create work directory: {shared_work_dir}", file=sys.stderr)
+            print("Check permissions on ~/.local/state/bui/", file=sys.stderr)
+            sys.exit(1)
+        except OSError as e:
+            print(f"Error: Failed to create work directory: {e}", file=sys.stderr)
+            sys.exit(1)
 
     return overlay_dirs
 
