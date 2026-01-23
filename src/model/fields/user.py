@@ -15,6 +15,12 @@ def _validate_uid_gid(value: str) -> int | None:
     return validate_uid_gid(value)
 
 
+def _validate_username(value: str) -> str | None:
+    """Lazy import wrapper for validate_username to avoid circular imports."""
+    from controller.validators import validate_username
+    return validate_username(value)
+
+
 unshare_user = _named("unshare_user", UIField(
     bool, False, "opt-unshare-user",
     "Mask user identity", "Appear as different user inside sandbox",
@@ -54,5 +60,5 @@ gid_field = _named("gid", UIField(
 username_field = _named("username", UIField(
     str, "", "opt-username",
     "Username", "Username inside sandbox",
-    value_transform=lambda v: v.strip(),
+    value_transform=_validate_username,
 ))
