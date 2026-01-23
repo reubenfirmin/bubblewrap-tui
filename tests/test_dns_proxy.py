@@ -10,6 +10,7 @@ from net.dns_proxy import (
     generate_dns_proxy_script,
     get_dns_proxy_init_commands,
     get_host_nameservers,
+    has_host_dns,
     needs_dns_proxy,
 )
 
@@ -21,26 +22,26 @@ class TestGetHostNameservers:
         """Returns a list of nameservers."""
         result = get_host_nameservers()
         assert isinstance(result, list)
-        assert len(result) > 0
+        # May be empty if no DNS configured, but should be a list
 
-    def test_skips_localhost(self):
-        """Localhost entries are skipped (would cause loop)."""
-        from unittest.mock import patch, MagicMock
+    def test_includes_localhost(self):
+        """Localhost entries are included (no loop in sandboxed namespace)."""
+        from unittest.mock import patch
 
-        mock_content = "nameserver 127.0.0.1\nnameserver 8.8.8.8"
+        mock_content = "nameserver 127.0.0.53\nnameserver 8.8.8.8"
         with patch("pathlib.Path.exists", return_value=True):
             with patch("pathlib.Path.read_text", return_value=mock_content):
                 result = get_host_nameservers()
-                assert "127.0.0.1" not in result
+                assert "127.0.0.53" in result
                 assert "8.8.8.8" in result
 
-    def test_fallback_to_cloudflare(self):
-        """Falls back to Cloudflare if no nameservers found."""
+    def test_no_fallback(self):
+        """Returns empty list if no nameservers found (no fallback to external DNS)."""
         from unittest.mock import patch
 
         with patch("pathlib.Path.exists", return_value=False):
             result = get_host_nameservers()
-            assert result == ["1.1.1.1"]
+            assert result == []
 
     def test_parses_multiple_nameservers(self):
         """Parses multiple nameserver entries."""
@@ -53,6 +54,35 @@ class TestGetHostNameservers:
                 assert "8.8.8.8" in result
                 assert "8.8.4.4" in result
                 assert "1.1.1.1" in result
+
+
+class TestHasHostDns:
+    """Test has_host_dns function."""
+
+    def test_returns_true_when_nameservers_exist(self):
+        """Returns True when nameservers are configured."""
+        from unittest.mock import patch
+
+        mock_content = "nameserver 8.8.8.8"
+        with patch("pathlib.Path.exists", return_value=True):
+            with patch("pathlib.Path.read_text", return_value=mock_content):
+                assert has_host_dns() is True
+
+    def test_returns_false_when_no_nameservers(self):
+        """Returns False when no nameservers are configured."""
+        from unittest.mock import patch
+
+        with patch("pathlib.Path.exists", return_value=False):
+            assert has_host_dns() is False
+
+    def test_returns_false_for_empty_resolv_conf(self):
+        """Returns False when resolv.conf has no nameserver lines."""
+        from unittest.mock import patch
+
+        mock_content = "# This is a comment\nsearch example.com"
+        with patch("pathlib.Path.exists", return_value=True):
+            with patch("pathlib.Path.read_text", return_value=mock_content):
+                assert has_host_dns() is False
 
 
 class TestNeedsDnsProxy:
@@ -122,6 +152,26 @@ class TestGenerateDnsProxyScript:
         with patch("net.dns_proxy.get_host_nameservers", return_value=["9.9.9.9"]):
             script = generate_dns_proxy_script(hf)
             assert 'UPSTREAM_DNS = "9.9.9.9"' in script
+
+    def test_raises_when_no_dns_available(self):
+        """Raises ValueError when no upstream DNS is available."""
+        from unittest.mock import patch
+
+        hf = HostnameFilter(mode=FilterMode.BLACKLIST, hosts=["test.com"])
+        # Mock no nameservers available
+        with patch("net.dns_proxy.get_host_nameservers", return_value=[]):
+            with pytest.raises(ValueError, match="No DNS nameservers configured"):
+                generate_dns_proxy_script(hf)
+
+    def test_explicit_upstream_dns_bypasses_check(self):
+        """Explicit upstream_dns parameter bypasses host DNS check."""
+        from unittest.mock import patch
+
+        hf = HostnameFilter(mode=FilterMode.BLACKLIST, hosts=["test.com"])
+        # Even with no host nameservers, explicit upstream works
+        with patch("net.dns_proxy.get_host_nameservers", return_value=[]):
+            script = generate_dns_proxy_script(hf, upstream_dns="8.8.8.8")
+            assert 'UPSTREAM_DNS = "8.8.8.8"' in script
 
 
 class TestGetDnsProxyInitCommands:

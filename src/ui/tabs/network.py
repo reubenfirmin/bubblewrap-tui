@@ -23,6 +23,7 @@ def compose_network_tab(
     share_net: bool,
     bind_resolv_conf: bool,
     bind_ssl_certs: bool,
+    has_dns: bool,
     on_hostname_mode_change: Callable[[str], None],
     on_hostname_add: Callable[[str], None],
     on_hostname_remove: Callable[[str], None],
@@ -41,6 +42,7 @@ def compose_network_tab(
         share_net: Whether full network access is enabled
         bind_resolv_conf: Whether DNS config is bound
         bind_ssl_certs: Whether SSL certs are bound
+        has_dns: Whether the host has DNS configured (for hostname filtering)
         on_hostname_mode_change: Callback when hostname filter mode changes
         on_hostname_add: Callback when hostname is added
         on_hostname_remove: Callback when hostname is removed
@@ -104,29 +106,37 @@ def compose_network_tab(
                 with Container(id="filter-options", classes="" if network_filter.is_filter_mode() else "hidden"):
                     with Container(classes="options-section"):
                         yield Label("Hostname Filtering", classes="section-label")
-                        yield Static(
-                            "DNS proxy intercepts lookups at runtime",
-                            classes="network-hint",
-                        )
-                        yield Static(
-                            "example.com → matches example.com + subdomains\n"
-                            "*.example.com → matches subdomains only",
-                            classes="network-hint",
-                        )
-                        yield FilterModeRadio(
-                            mode=network_filter.hostname_filter.mode.value,
-                            on_change=on_hostname_mode_change,
-                            radio_id=ids.HOSTNAME_MODE_RADIO,
-                        )
-                        yield FilterList(
-                            items=network_filter.hostname_filter.hosts,
-                            on_add=on_hostname_add,
-                            on_remove=on_hostname_remove,
-                            placeholder="github.com",
-                            list_id=ids.HOSTNAME_LIST,
-                            input_id=ids.HOSTNAME_INPUT,
-                            add_btn_id=ids.ADD_HOSTNAME_BTN,
-                        )
+                        if has_dns:
+                            yield Static(
+                                "DNS proxy intercepts lookups at runtime",
+                                classes="network-hint",
+                            )
+                            yield Static(
+                                "example.com → matches example.com + subdomains\n"
+                                "*.example.com → matches subdomains only",
+                                classes="network-hint",
+                            )
+                            yield FilterModeRadio(
+                                mode=network_filter.hostname_filter.mode.value,
+                                on_change=on_hostname_mode_change,
+                                radio_id=ids.HOSTNAME_MODE_RADIO,
+                            )
+                            yield FilterList(
+                                items=network_filter.hostname_filter.hosts,
+                                on_add=on_hostname_add,
+                                on_remove=on_hostname_remove,
+                                placeholder="github.com",
+                                list_id=ids.HOSTNAME_LIST,
+                                input_id=ids.HOSTNAME_INPUT,
+                                add_btn_id=ids.ADD_HOSTNAME_BTN,
+                            )
+                        else:
+                            yield Static(
+                                "No DNS configured on host.\n"
+                                "Hostname filtering unavailable.",
+                                classes="network-hint warning",
+                                id="no-dns-warning",
+                            )
 
             # Right column: IP/CIDR filtering + Port forwarding (filter mode) or Audit info (audit mode)
             with Vertical(classes="options-column"):

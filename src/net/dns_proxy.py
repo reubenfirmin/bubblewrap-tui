@@ -45,7 +45,12 @@ def get_host_nameservers() -> list[str]:
     """Read nameservers from the host's /etc/resolv.conf.
 
     Returns:
-        List of nameserver IPs, or ["1.1.1.1"] as fallback if none found.
+        List of nameserver IPs. Empty list if none found (no fallback).
+
+    Note:
+        Localhost entries (e.g., 127.0.0.53 for systemd-resolved) are included.
+        The DNS proxy runs inside the sandbox's network namespace, so there's
+        no loop - the sandbox's 127.0.0.1:53 is separate from the host's resolver.
     """
     resolv_conf = Path("/etc/resolv.conf")
     nameservers = []
@@ -59,15 +64,20 @@ def get_host_nameservers() -> list[str]:
                 if line.startswith("nameserver"):
                     parts = line.split()
                     if len(parts) >= 2:
-                        ip = parts[1]
-                        # Skip localhost entries (would create a loop)
-                        if not ip.startswith("127."):
-                            nameservers.append(ip)
+                        nameservers.append(parts[1])
     except OSError:
         pass
 
-    # Fallback to Cloudflare if no nameservers found
-    return nameservers if nameservers else ["1.1.1.1"]
+    return nameservers
+
+
+def has_host_dns() -> bool:
+    """Check if the host has DNS configured.
+
+    Returns:
+        True if at least one nameserver is configured.
+    """
+    return len(get_host_nameservers()) > 0
 
 
 def generate_dns_proxy_script(
@@ -84,6 +94,9 @@ def generate_dns_proxy_script(
 
     Returns:
         Complete Python script as a string, ready to be written to a file
+
+    Raises:
+        ValueError: If no upstream DNS is available (none configured and none in resolv.conf)
     """
     from model.network_filter import FilterMode
 
@@ -92,7 +105,13 @@ def generate_dns_proxy_script(
 
     # Use host's DNS if not specified
     if upstream_dns is None:
-        upstream_dns = get_host_nameservers()[0]
+        nameservers = get_host_nameservers()
+        if not nameservers:
+            raise ValueError(
+                "No DNS nameservers configured on host. "
+                "Hostname filtering requires working DNS."
+            )
+        upstream_dns = nameservers[0]
 
     return DNS_PROXY_SCRIPT.format(
         upstream_dns=upstream_dns,

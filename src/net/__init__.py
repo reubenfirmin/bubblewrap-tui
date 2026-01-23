@@ -42,6 +42,7 @@ from net.dns_proxy import (
     generate_dns_proxy_script,
     get_dns_proxy_init_commands,
     get_host_nameservers,
+    has_host_dns,
     needs_dns_proxy,
 )
 
@@ -70,6 +71,7 @@ __all__ = [
     "generate_dns_proxy_script",
     "get_dns_proxy_init_commands",
     "get_host_nameservers",
+    "has_host_dns",
     "needs_dns_proxy",
     "uses_dns_proxy",
     # utils

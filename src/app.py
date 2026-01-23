@@ -39,6 +39,7 @@ from controller import (
     OverlayEventsMixin,
 )
 from detection import is_path_covered, resolve_command_executable
+from net import has_host_dns
 from ui import (
     BoundDirItem,
     DevModeCard,
@@ -195,6 +196,7 @@ class BubblewrapTUI(
                     self.config.network.share_net,
                     self.config.network.bind_resolv_conf,
                     self.config.network.bind_ssl_certs,
+                    has_host_dns(),
                     self._on_hostname_mode_change,
                     self._on_hostname_add,
                     self._on_hostname_remove,
