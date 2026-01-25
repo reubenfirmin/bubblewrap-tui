@@ -17,6 +17,39 @@ from net.utils import HostnameResolutionError
 logger = logging.getLogger(__name__)
 
 
+def _get_descendants(pid: int) -> list[int]:
+    """Get all descendant PIDs by traversing /proc.
+
+    Works across session boundaries (unlike process groups).
+    Returns children-first order for safe termination.
+    """
+    from pathlib import Path
+
+    descendants = []
+    to_visit = [pid]
+
+    while to_visit:
+        current = to_visit.pop(0)
+        try:
+            children_path = Path(f"/proc/{current}/task/{current}/children")
+            if children_path.exists():
+                children_text = children_path.read_text().strip()
+                if children_text:
+                    for child_str in children_text.split():
+                        try:
+                            child_pid = int(child_str)
+                            if child_pid not in descendants:
+                                descendants.append(child_pid)
+                                to_visit.append(child_pid)
+                        except ValueError:
+                            continue
+        except (OSError, PermissionError):
+            continue
+
+    descendants.reverse()  # Kill deepest first
+    return descendants
+
+
 def execute_with_pasta(
     config: "SandboxConfig",
     file_map: dict[str, str] | None,
@@ -133,7 +166,7 @@ def _run_with_pty(cmd: list[str]) -> int:
             os._exit(127 if isinstance(e, FileNotFoundError) else 1)
 
     def cleanup_child() -> int:
-        """Terminate and reap the child process, returning exit code."""
+        """Terminate and reap the child process and all descendants."""
         # Check if child already exited
         try:
             result = os.waitpid(pid, os.WNOHANG)
@@ -144,6 +177,16 @@ def _run_with_pty(cmd: list[str]) -> int:
                 return 1
         except ChildProcessError:
             return 0
+
+        # Find all descendants before signaling (works across session boundaries)
+        descendants = _get_descendants(pid)
+
+        # Send SIGTERM to descendants first (children before parents)
+        for desc_pid in descendants:
+            try:
+                os.kill(desc_pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
 
         # Send SIGTERM to the process group
         try:
@@ -165,7 +208,14 @@ def _run_with_pty(cmd: list[str]) -> int:
             except ChildProcessError:
                 return 0
 
-        # Still running - send SIGKILL
+        # Still running - SIGKILL descendants first
+        for desc_pid in descendants:
+            try:
+                os.kill(desc_pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+        # SIGKILL the process group
         try:
             os.killpg(pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
@@ -212,6 +262,10 @@ def _run_with_pty(cmd: list[str]) -> int:
                 try:
                     data = os.read(stdin_fd, 1024)
                     if data:
+                        # Intercept Ctrl+C (0x03) to handle cleanup ourselves
+                        # This prevents pasta from dying before we can find descendants
+                        if b'\x03' in data:
+                            return cleanup_child()
                         os.write(fd, data)
                 except OSError:
                     break

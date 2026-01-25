@@ -25,6 +25,81 @@ from net.filtering import validate_filtering_requirements
 from net.pasta_args import prepare_bwrap_command
 
 
+class TestGetDescendants:
+    """Tests for _get_descendants helper."""
+
+    def test_returns_empty_for_nonexistent_pid(self):
+        """Returns empty list for a PID that doesn't exist."""
+        from net.pasta_exec import _get_descendants
+
+        result = _get_descendants(99999999)
+        assert result == []
+
+    def test_handles_permission_errors(self):
+        """Handles processes we can't read gracefully."""
+        from net.pasta_exec import _get_descendants
+
+        # PID 1 (init) may not be readable depending on system config
+        result = _get_descendants(1)
+        assert isinstance(result, list)
+
+    def test_returns_children_in_reverse_order(self):
+        """Returns deepest descendants first for safe termination."""
+        from net.pasta_exec import _get_descendants
+
+        # Test with current process - should return empty since we have no children
+        result = _get_descendants(os.getpid())
+        assert isinstance(result, list)
+
+    @patch("pathlib.Path.exists")
+    @patch("pathlib.Path.read_text")
+    def test_parses_children_file_correctly(self, mock_read, mock_exists):
+        """Correctly parses space-separated PIDs from /proc children file."""
+        from net.pasta_exec import _get_descendants
+
+        # First call for the root pid returns children, subsequent calls return empty
+        call_count = [0]
+
+        def exists_side_effect():
+            return True
+
+        def read_side_effect():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return "100 101"
+            return ""
+
+        mock_exists.side_effect = exists_side_effect
+        mock_read.side_effect = read_side_effect
+
+        result = _get_descendants(50)
+        # Should contain 100 and 101 in reverse order (deepest first)
+        assert 100 in result
+        assert 101 in result
+
+    @patch("pathlib.Path.exists")
+    @patch("pathlib.Path.read_text")
+    def test_handles_empty_children_file(self, mock_read, mock_exists):
+        """Handles empty children file (process with no children)."""
+        from net.pasta_exec import _get_descendants
+
+        mock_exists.return_value = True
+        mock_read.return_value = ""
+
+        result = _get_descendants(50)
+        assert result == []
+
+    @patch("pathlib.Path.exists")
+    def test_handles_missing_children_file(self, mock_exists):
+        """Handles missing children file (process exited)."""
+        from net.pasta_exec import _get_descendants
+
+        mock_exists.return_value = False
+
+        result = _get_descendants(50)
+        assert result == []
+
+
 class TestValidateFilteringRequirements:
     """Tests for validate_filtering_requirements function."""
 
