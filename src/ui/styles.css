@@ -636,3 +636,8 @@ PortListItem {
     width: 5;
     min-width: 5;
 }
+
+/* Error state for input validation */
+Input.input-error {
+    border: solid $error;
+}
