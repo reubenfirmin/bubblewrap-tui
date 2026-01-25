@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from textual.containers import VerticalScroll
 from textual.css.query import NoMatches, WrongType
-from textual.widgets import Button, Checkbox, Input
+from textual.widgets import Button, Checkbox, Input, RadioSet
 
 from model import NetworkMode
 from ui.ids import css
@@ -89,7 +89,9 @@ class ConfigSyncManager:
                     if hasattr(field, 'value_transform') and field.value_transform:
                         transformed = field.value_transform(value)
                         if transformed is None:
+                            widget.add_class("input-error")
                             continue  # Skip invalid values
+                        widget.remove_class("input-error")
                         value = transformed
 
                     # Set value directly on group
@@ -274,8 +276,18 @@ class ConfigSyncManager:
                 # Show network options
                 full_net_opts.remove_class("hidden")
                 network_mode_section.remove_class("hidden")
-                # Show/hide filter/audit based on mode
+
+                # Sync RadioSet selection from config
                 mode = self.config.network_filter.mode
+                radio_set = self.app.query_one("#network-mode-radio", RadioSet)
+                if mode == NetworkMode.OFF:
+                    radio_set.index = 0
+                elif mode == NetworkMode.FILTER:
+                    radio_set.index = 1
+                elif mode == NetworkMode.AUDIT:
+                    radio_set.index = 2
+
+                # Show/hide filter/audit based on mode
                 if mode == NetworkMode.FILTER:
                     filter_opts.remove_class("hidden")
                     filter_opts_right.remove_class("hidden")

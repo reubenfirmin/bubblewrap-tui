@@ -125,6 +125,7 @@ class BubblewrapTUI(
             self.config.environment.keep_env_vars = set(os.environ.keys())
             self._loaded_from_profile = False
         self._execute_command = False
+        self._saved_hostname: str = ""  # For UTS namespace restore
 
     def _init_quick_shortcuts_bound_dirs(self) -> None:
         """Initialize bound_dirs with default-checked quick shortcuts."""
@@ -414,6 +415,7 @@ class BubblewrapTUI(
 
                     # Reset network mode to Direct/OFF
                     self.query_one("#network-mode-radio", RadioSet).index = 0
+                    self.config.network_filter.mode = NetworkMode.OFF
             except NoMatches:
                 log.debug("Network options containers not found")
         # Show/hide UID/GID options when user namespace is toggled
@@ -452,6 +454,7 @@ class BubblewrapTUI(
         # Handle home overlay - sync with overlays list (synthetic_passwd doesn't need overlay)
         if event.checkbox.id == ids.OPT_OVERLAY_HOME:
             self._handle_overlay_home_change(event.value)
+            self._update_home_overlay_label()
         # Bidirectional sync: Run as PID 1 requires PID namespace isolation
         if event.checkbox.id == ids.OPT_AS_PID_1 and event.value:
             try:
@@ -467,12 +470,19 @@ class BubblewrapTUI(
                     as_pid_1.value = False
             except NoMatches:
                 pass
-        # Disabling UTS namespace clears custom hostname (which requires it)
-        if event.checkbox.id == ids.OPT_UNSHARE_UTS and not event.value:
+        # Bidirectional sync: UTS namespace ↔ custom hostname
+        if event.checkbox.id == ids.OPT_UNSHARE_UTS:
             try:
                 hostname_input = self.query_one(css(ids.OPT_HOSTNAME), Input)
-                if hostname_input.value.strip():
-                    hostname_input.value = ""
+                if not event.value:
+                    # Save hostname before clearing
+                    if hostname_input.value.strip():
+                        self._saved_hostname = hostname_input.value
+                        hostname_input.value = ""
+                else:
+                    # Restore saved hostname when re-enabled
+                    if self._saved_hostname and not hostname_input.value.strip():
+                        hostname_input.value = self._saved_hostname
             except NoMatches:
                 pass
         self._sync_config_from_ui()
