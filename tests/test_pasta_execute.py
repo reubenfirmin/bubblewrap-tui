@@ -30,14 +30,14 @@ class TestGetDescendants:
 
     def test_returns_empty_for_nonexistent_pid(self):
         """Returns empty list for a PID that doesn't exist."""
-        from net.pasta_exec import _get_descendants
+        from command_execution import _get_descendants
 
         result = _get_descendants(99999999)
         assert result == []
 
     def test_handles_permission_errors(self):
         """Handles processes we can't read gracefully."""
-        from net.pasta_exec import _get_descendants
+        from command_execution import _get_descendants
 
         # PID 1 (init) may not be readable depending on system config
         result = _get_descendants(1)
@@ -45,7 +45,7 @@ class TestGetDescendants:
 
     def test_returns_children_in_reverse_order(self):
         """Returns deepest descendants first for safe termination."""
-        from net.pasta_exec import _get_descendants
+        from command_execution import _get_descendants
 
         # Test with current process - should return empty since we have no children
         result = _get_descendants(os.getpid())
@@ -55,7 +55,7 @@ class TestGetDescendants:
     @patch("pathlib.Path.read_text")
     def test_parses_children_file_correctly(self, mock_read, mock_exists):
         """Correctly parses space-separated PIDs from /proc children file."""
-        from net.pasta_exec import _get_descendants
+        from command_execution import _get_descendants
 
         # First call for the root pid returns children, subsequent calls return empty
         call_count = [0]
@@ -81,7 +81,7 @@ class TestGetDescendants:
     @patch("pathlib.Path.read_text")
     def test_handles_empty_children_file(self, mock_read, mock_exists):
         """Handles empty children file (process with no children)."""
-        from net.pasta_exec import _get_descendants
+        from command_execution import _get_descendants
 
         mock_exists.return_value = True
         mock_read.return_value = ""
@@ -92,7 +92,7 @@ class TestGetDescendants:
     @patch("pathlib.Path.exists")
     def test_handles_missing_children_file(self, mock_exists):
         """Handles missing children file (process exited)."""
-        from net.pasta_exec import _get_descendants
+        from command_execution import _get_descendants
 
         mock_exists.return_value = False
 
