@@ -35,7 +35,7 @@ from sandbox import (
     uninstall_sandbox,
 )
 
-BUI_VERSION = "0.6.0"
+BUI_VERSION = "0.6.1"
 
 # Global to store update message for display after TUI exits
 _update_available: str | None = None
@@ -141,7 +141,7 @@ class BuiHelpFormatter(argparse.RawDescriptionHelpFormatter):
             "Profile Options:",
             "  bui --profile <name> -- <command>     Load profile and run command",
             "  bui --sandbox <name>                  Name for overlay storage (use with --profile)",
-            "  bui --bind <path>                     Bind path read-only (repeatable)",
+            "  bui --bind[-dir] <path>               Bind path read-only (repeatable)",
             "  bui --bind-cwd                        Bind CWD read-write",
             "  bui --bind-env <VAR=VALUE>            Set env var in sandbox (repeatable)",
             "  bui --list-profiles                   List available profiles",
@@ -161,14 +161,15 @@ class BuiHelpFormatter(argparse.RawDescriptionHelpFormatter):
             "  bui -- /bin/bash",
             "  bui -- python script.py arg1 arg2",
             "",
-            "  # Install deno in an isolated sandbox (curl|bash pattern)",
-            "  bui --profile untrusted --sandbox deno -- 'curl -fsSL https://deno.land/install.sh | sh'",
-            "  bui --sandbox deno --install",
+            "  # Install Claude Code in a sandbox",
+            "  bui --profile untrusted --sandbox claude -- 'curl -fsSL https://claude.ai/install.sh | bash'",
+            "  bui --sandbox claude --install",
             "",
-            "  # Install claude-code",
-            "  bui --profile untrusted --sandbox claude --bind $(dirname $(which npm)) \\",
+            "  # Install Vercel CLI in a sandbox (npm pattern for nvm users)",
+            "  bui --profile untrusted --sandbox vercel --bind $(dirname $(which npm)) \\",
             "       --bind-env NPM_CONFIG_PREFIX=/home/sandbox/.npm-global \\",
-            "       -- npm install -g @anthropic-ai/claude-code",
+            "       -- npm install -g vercel",
+            "  bui --sandbox vercel --install",
             "",
             "Built-in Profiles:",
             "  untrusted             Safe sandbox blocking localhost/private networks",
@@ -193,7 +194,7 @@ def create_parser() -> argparse.ArgumentParser:
     # Profile options
     parser.add_argument("--profile", metavar="NAME", help=argparse.SUPPRESS)
     parser.add_argument("--sandbox", metavar="NAME", help=argparse.SUPPRESS)
-    parser.add_argument("--bind", metavar="PATH", action="append", default=[], help=argparse.SUPPRESS)
+    parser.add_argument("--bind", "--bind-dir", metavar="PATH", action="append", default=[], help=argparse.SUPPRESS)
     parser.add_argument("--bind-cwd", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bind-env", metavar="VAR=VALUE", action="append", default=[], help=argparse.SUPPRESS)
 

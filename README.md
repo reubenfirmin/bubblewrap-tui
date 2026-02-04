@@ -1,8 +1,8 @@
 # bui - Bubblewrap TUI
 
-A terminal user interface for configuring and launching [bubblewrap](https://github.com/containers/bubblewrap) sandboxes.
+A terminal user interface for configuring and launching [bubblewrap](https://github.com/containers/bubblewrap) sandboxes, with optional network filtering via [pasta](https://passt.top/) and a lightweight DNS proxy.
 
-Instead of memorizing dozens of `bwrap` flags, visually configure your sandbox and see the generated command before execution.
+Instead of memorizing dozens of `bwrap` flags, visually configure your sandbox and see the generated command before execution. For untrusted code, add network controls: whitelist specific IPs or hostnames, block access to localhost and private networks, or audit all network traffic.
 
 ## Contents
 
@@ -149,22 +149,15 @@ AI coding assistants like Claude Code can execute arbitrary shell commands and m
 - Claude cannot read `~/.ssh`, `~/.aws`, `~/.gnupg`, browser data, or other sensitive dotfiles
 - Claude cannot modify system files or install packages globally on your system
 - Each project directory is explicitly granted access via `--bind-cwd`
-- All of Claude's installed files (npm packages, config) live in an isolated overlay
-
-**Why the complex command?** We could create a custom profile in the TUI and use `--profile my-claude-profile`, but here we're reusing the generic `untrusted` profile and layering on a few flags. This is one-time setup - once we run `--install`, we get a permanent wrapper script that handles all of this.
+- All of Claude's installed files and config live in an isolated overlay
 
 #### Installation
 
-The `untrusted` profile only exposes system paths (`/usr`, `/bin`, `/lib`). If npm/node are installed in your home directory (e.g., via nvm), bind them explicitly:
+Claude Code now uses a native installer (no npm required). Install it in a sandbox with:
 
 ```bash
 # Install Claude Code in a sandbox
-# --bind: expose the directory containing npm (needed for installation)
-# --bind-env: set NPM_CONFIG_PREFIX so npm installs to the sandbox home, not /usr
-bui --profile untrusted --sandbox claude \
-    --bind $(dirname $(which npm)) \
-    --bind-env 'NPM_CONFIG_PREFIX=/home/sandbox/.npm-global' \
-    -- npm install -g @anthropic-ai/claude-code
+bui --profile untrusted --sandbox claude -- 'curl -fsSL https://claude.ai/install.sh | bash'
 ```
 
 Create a wrapper script so you can run `claude` from anywhere:
@@ -204,8 +197,6 @@ Sandboxes:
   claude
     profile: untrusted
     scripts: claude
-    bind: /home/user/.nvm/versions/node/v20.0.0/bin
-    bind-env: NPM_CONFIG_PREFIX=/home/sandbox/.npm-global
 ```
 
 List overlay directories (including orphaned ones):

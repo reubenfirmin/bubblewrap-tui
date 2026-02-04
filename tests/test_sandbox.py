@@ -41,6 +41,15 @@ class TestMetadataFilePermissions:
 class TestInstallSandboxBinary:
     """Test install_sandbox_binary function."""
 
+    @pytest.fixture(autouse=True)
+    def isolate_sandbox_paths(self, tmp_path):
+        """Ensure tests don't write to real sandbox manifest."""
+        installed_file = tmp_path / "state" / "bui" / "installed.json"
+        with patch("sandbox.BUI_SANDBOXES_DIR", tmp_path / "sandboxes"):
+            with patch("sandbox.INSTALLED_SCRIPTS_FILE", installed_file):
+                with patch("sandbox.Path.home", return_value=tmp_path):
+                    yield
+
     def test_script_quotes_profile_with_spaces(self, tmp_path):
         """Profile names with spaces are properly quoted."""
         from sandbox import install_sandbox_binary
@@ -56,13 +65,11 @@ class TestInstallSandboxBinary:
         # Script goes to ~/.local/bin, so with mocked home it's tmp_path/.local/bin
         bin_dir = tmp_path / ".local" / "bin"
 
-        with patch("sandbox.BUI_SANDBOXES_DIR", tmp_path / "sandboxes"):
-            with patch("sandbox.Path.home", return_value=tmp_path):
-                with patch("builtins.input", return_value="1"):
-                    install_sandbox_binary(
-                        "test",
-                        profile="profile with spaces",
-                    )
+        with patch("builtins.input", return_value="1"):
+            install_sandbox_binary(
+                "test",
+                profile="profile with spaces",
+            )
 
         script = (bin_dir / "myapp").read_text()
         assert "'profile with spaces'" in script
@@ -81,10 +88,8 @@ class TestInstallSandboxBinary:
 
         bin_dir = tmp_path / ".local" / "bin"
 
-        with patch("sandbox.BUI_SANDBOXES_DIR", tmp_path / "sandboxes"):
-            with patch("sandbox.Path.home", return_value=tmp_path):
-                with patch("builtins.input", return_value="1"):
-                    install_sandbox_binary(sandbox_name, profile="untrusted")
+        with patch("builtins.input", return_value="1"):
+            install_sandbox_binary(sandbox_name, profile="untrusted")
 
         script = (bin_dir / "myapp").read_text()
         # Should be quoted to prevent command injection
@@ -105,14 +110,12 @@ class TestInstallSandboxBinary:
 
         bin_dir = tmp_path / ".local" / "bin"
 
-        with patch("sandbox.BUI_SANDBOXES_DIR", tmp_path / "sandboxes"):
-            with patch("sandbox.Path.home", return_value=tmp_path):
-                with patch("builtins.input", return_value="1"):
-                    install_sandbox_binary(
-                        "test",
-                        profile="untrusted",
-                        bind_paths=["/path/with spaces", "/path/with$dollar"],
-                    )
+        with patch("builtins.input", return_value="1"):
+            install_sandbox_binary(
+                "test",
+                profile="untrusted",
+                bind_paths=["/path/with spaces", "/path/with$dollar"],
+            )
 
         script = (bin_dir / "myapp").read_text()
         assert "'/path/with spaces'" in script
@@ -131,14 +134,12 @@ class TestInstallSandboxBinary:
 
         bin_dir = tmp_path / ".local" / "bin"
 
-        with patch("sandbox.BUI_SANDBOXES_DIR", tmp_path / "sandboxes"):
-            with patch("sandbox.Path.home", return_value=tmp_path):
-                with patch("builtins.input", return_value="1"):
-                    install_sandbox_binary(
-                        "test",
-                        profile="untrusted",
-                        bind_env=["VAR=value'with'quotes"],
-                    )
+        with patch("builtins.input", return_value="1"):
+            install_sandbox_binary(
+                "test",
+                profile="untrusted",
+                bind_env=["VAR=value'with'quotes"],
+            )
 
         script = (bin_dir / "myapp").read_text()
         # shlex.quote handles embedded quotes
@@ -161,10 +162,8 @@ class TestInstallSandboxBinary:
 
         bin_dir = tmp_path / ".local" / "bin"
 
-        with patch("sandbox.BUI_SANDBOXES_DIR", tmp_path / "sandboxes"):
-            with patch("sandbox.Path.home", return_value=tmp_path):
-                with patch("builtins.input", return_value="1"):
-                    install_sandbox_binary(malicious_name, profile="untrusted")
+        with patch("builtins.input", return_value="1"):
+            install_sandbox_binary(malicious_name, profile="untrusted")
 
         script = (bin_dir / "myapp").read_text()
         # The $() should be quoted so it doesn't execute
