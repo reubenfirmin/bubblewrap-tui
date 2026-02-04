@@ -218,6 +218,23 @@ def user_to_summary(group: ConfigGroup) -> str | None:
 # Isolation Serializers
 # =============================================================================
 
+def isolation_to_args(group: ConfigGroup) -> list[str]:
+    """Custom to_args for isolation (handles seccomp)."""
+    args = []
+
+    # Standard bwrap flags from items
+    for item in group.items:
+        if hasattr(item, 'bwrap_flag') and item.bwrap_flag and group.get(item.name):
+            args.append(item.bwrap_flag)
+
+    # Seccomp is handled specially - the actual FD is added at execution time
+    # but we show a placeholder in preview
+    if group.get("enable_seccomp"):
+        args.extend(["--seccomp", "<fd>"])
+
+    return args
+
+
 def isolation_to_summary(group: ConfigGroup, network_filter: "NetworkFilter | None" = None) -> str | None:
     """Custom summary for isolation namespaces.
 
@@ -225,7 +242,7 @@ def isolation_to_summary(group: ConfigGroup, network_filter: "NetworkFilter | No
         group: The isolation ConfigGroup
         network_filter: Optional NetworkFilter (unused, kept for API compatibility)
     """
-    from model.fields.isolation import unshare_pid, unshare_ipc, unshare_cgroup, disable_userns
+    from model.fields.isolation import unshare_pid, unshare_ipc, unshare_cgroup, disable_userns, enable_seccomp
 
     items = []
     # Note: unshare_user is now in user_group, not here
@@ -248,6 +265,10 @@ def isolation_to_summary(group: ConfigGroup, network_filter: "NetworkFilter | No
     # Handle nested sandboxing blocking
     if group.get("disable_userns"):
         lines.append(f"Nested sandboxing: DISABLED — {disable_userns.summary}")
+
+    # Handle seccomp filtering
+    if group.get("enable_seccomp"):
+        lines.append(f"Syscall filtering: {enable_seccomp.summary}")
 
     return "\n".join(lines) if lines else None
 

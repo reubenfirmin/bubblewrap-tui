@@ -66,6 +66,7 @@ def create_wrapper_script(
     ip6tables_path: str | None,
     is_multicall: bool,
     tmp_path: Path | None = None,
+    seccomp_filter_path: str | None = None,
 ) -> Path:
     """Create the wrapper script that runs iptables/DNS setup then execs bwrap.
 
@@ -85,6 +86,7 @@ def create_wrapper_script(
         ip6tables_path: Path to ip6tables binary (or None)
         is_multicall: Whether iptables is a multicall binary
         tmp_path: Optional temp directory to use. If None, creates a new one.
+        seccomp_filter_path: Optional path to seccomp BPF filter file
 
     Returns:
         Path to the created wrapper script
@@ -114,6 +116,14 @@ def create_wrapper_script(
         resolv_conf_path = tmp_path / "resolv.conf"
         write_file_atomic(resolv_conf_path, "# DNS handled by bubblewrap-tui DNS proxy\nnameserver 127.0.0.1\n", 0o444)
 
+    # Handle seccomp filter - open FD in shell before exec
+    seccomp_setup = ""
+    if seccomp_filter_path:
+        # Use FD 10 for seccomp filter, insert --seccomp 10 after bwrap
+        seccomp_setup = f"exec 10<{shlex.quote(seccomp_filter_path)}"
+        # Insert --seccomp 10 after 'bwrap' in the command
+        bwrap_cmd = [bwrap_cmd[0], "--seccomp", "10"] + bwrap_cmd[1:]
+
     # Build the bwrap command string
     bwrap_cmd_str = " ".join(shlex.quote(arg) for arg in bwrap_cmd)
 
@@ -123,6 +133,7 @@ set -e
 # Set up iptables rules (requires CAP_NET_ADMIN from pasta)
 {iptables_script}
 {dns_proxy_setup}
+{seccomp_setup}
 # Execute bwrap with full namespace isolation
 # --unshare-user creates nested user namespace
 # --disable-userns blocks further namespace creation (prevents escapes)

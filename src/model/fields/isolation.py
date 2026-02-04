@@ -48,3 +48,10 @@ disable_userns = _named("disable_userns", UIField(
     bwrap_flag="--disable-userns",
     summary="Cannot create nested containers — prevents namespace escape attacks",
 ))
+
+enable_seccomp = _named("enable_seccomp", UIField(
+    bool, False, "opt-enable-seccomp",
+    "Block dangerous syscalls",
+    "Block kexec, reboot, io_uring, userfaultfd, perf_event_open, etc.",
+    summary="Dangerous syscalls blocked (seccomp)",
+))

@@ -20,6 +20,33 @@ if TYPE_CHECKING:
     from model.sandbox_config import SandboxConfig
 
 
+def prepare_seccomp_fd(cmd: list[str], file_map: dict[str, str] | None) -> tuple[list[str], int | None]:
+    """Open seccomp file and add --seccomp FD to bwrap command.
+
+    Args:
+        cmd: The bwrap command list
+        file_map: Mapping of dest_path -> source_path for virtual files
+
+    Returns:
+        Tuple of (modified_command, fd_to_close_after_exec)
+        The fd should be closed after fork in the parent, but inherited by child.
+    """
+    if not file_map or "/seccomp.bpf" not in file_map:
+        return cmd, None
+
+    # Open the seccomp BPF file - this FD will be inherited by the child
+    fd = os.open(file_map["/seccomp.bpf"], os.O_RDONLY)
+
+    # Python 3 defaults to O_CLOEXEC, but we need the FD to survive exec
+    os.set_inheritable(fd, True)
+
+    # Insert --seccomp FD right after 'bwrap'
+    # bwrap expects: bwrap --seccomp FD [other args] -- command
+    new_cmd = [cmd[0], "--seccomp", str(fd)] + cmd[1:]
+
+    return new_cmd, fd
+
+
 def _get_descendants(pid: int) -> list[int]:
     """Get all descendant PIDs by traversing /proc.
 
@@ -51,12 +78,16 @@ def _get_descendants(pid: int) -> list[int]:
     return descendants
 
 
-def _run_with_pty(cmd: list[str]) -> int:
+def _run_with_pty(cmd: list[str], seccomp_fd: int | None = None) -> int:
     """Run command in a pty with proper cleanup of orphaned processes.
 
     This handles the case where pasta exits but bwrap gets orphaned to init,
     which would otherwise leave pty.spawn() hanging. Also handles --new-session
     terminal issues (bwrap issue #369).
+
+    Args:
+        cmd: Command to execute
+        seccomp_fd: Optional FD for seccomp filter (closed in parent after fork)
     """
     pid, fd = pty.fork()
 
@@ -133,6 +164,13 @@ def _run_with_pty(cmd: list[str]) -> int:
             return 1
         except ChildProcessError:
             return 0
+
+    # Parent - close seccomp FD (child inherited it)
+    if seccomp_fd is not None:
+        try:
+            os.close(seccomp_fd)
+        except OSError:
+            pass
 
     # Parent - copy data between pty and stdin/stdout
     old_settings = None
@@ -290,6 +328,10 @@ def _execute_direct(
     from commandoutput import print_execution_header
 
     cmd = build_command_fn(config, file_map)
+
+    # Prepare seccomp FD if seccomp filter is present
+    cmd, seccomp_fd = prepare_seccomp_fd(cmd, file_map)
+
     print_execution_header(
         cmd,
         sandbox_name=sandbox_name if overlay_dirs else None,
@@ -300,4 +342,4 @@ def _execute_direct(
     # This prevents interactive CLI tools from freezing
     sys.stdout.flush()
     sys.stderr.flush()
-    return _run_with_pty(cmd)
+    return _run_with_pty(cmd, seccomp_fd)

@@ -16,7 +16,7 @@ from pathlib import Path
 HEADER = '''#!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["textual>=0.89.0", "dpkt>=1.9.8"]
+# dependencies = ["textual>=0.89.0", "dpkt>=1.9.8", "pyseccomp>=0.1.0"]
 # ///
 """
 Bubblewrap TUI - A visual interface for configuring bubblewrap sandboxes.
@@ -62,8 +62,9 @@ MODULE_ORDER = [
     "net/pasta.py",                   # pasta re-exports for compatibility
     "net/audit.py",                   # Network audit/pcap analysis
     "net/__init__.py",                # Network module exports
+    "seccomp_filter.py",              # Optional seccomp support (no deps)
     "bwrap.py",                       # Depends on detection, model (serialization/summary)
-    "virtual_files.py",               # Virtual file management (depends on bwrap for user data)
+    "virtual_files.py",               # Virtual file management (depends on bwrap for user data, seccomp)
     "profiles.py",                    # Depends on model (JSON serialization)
     "ui/ids.py",                      # No dependencies - widget ID constants (needed early for ids.X refs)
     "controller/validators.py",       # Validation functions for sync
@@ -98,7 +99,7 @@ MODULE_ORDER = [
 # Local modules (imports to filter out)
 LOCAL_MODULES = {
     "constants", "fileutils", "detection", "environment", "installer", "sandbox", "profiles", "app", "cli", "styles", "bwrap",
-    "commandoutput", "virtual_files", "command_execution",
+    "commandoutput", "virtual_files", "command_execution", "seccomp_filter",
     "net", "net.utils", "net.iptables", "net.dns_proxy", "net.pasta", "net.audit",
     "net.pasta_install", "net.pasta_args", "net.filtering", "net.pasta_exec",
     "model",
