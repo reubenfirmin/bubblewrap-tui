@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from seccomp_filter import (
     BLOCKED_SYSCALLS,
+    BLOCKED_SYSCALLS_BASE,
+    BLOCKED_SYSCALLS_STRICT,
     check_seccomp,
     get_seccomp_status,
     generate_seccomp_filter,
@@ -84,6 +86,22 @@ class TestGenerateSeccompFilter:
         result = generate_seccomp_filter()
         assert result is None or isinstance(result, bytes)
 
+    def test_base_only_filter(self):
+        """Should generate filter with only base syscalls."""
+        result = generate_seccomp_filter(blocked=BLOCKED_SYSCALLS_BASE)
+        assert result is None or isinstance(result, bytes)
+
+    def test_strict_only_filter(self):
+        """Should generate filter with only strict syscalls."""
+        result = generate_seccomp_filter(blocked=BLOCKED_SYSCALLS_STRICT)
+        assert result is None or isinstance(result, bytes)
+
+    def test_combined_filter(self):
+        """Should generate filter with both base and strict syscalls."""
+        combined = BLOCKED_SYSCALLS_BASE + BLOCKED_SYSCALLS_STRICT
+        result = generate_seccomp_filter(blocked=combined)
+        assert result is None or isinstance(result, bytes)
+
 
 class TestCreateSeccompFilterFile:
     """Tests for create_seccomp_filter_file function."""
@@ -119,17 +137,40 @@ class TestCreateSeccompFilterFile:
 
 
 class TestBlockedSyscalls:
-    """Tests for BLOCKED_SYSCALLS constant."""
+    """Tests for BLOCKED_SYSCALLS constants."""
 
     def test_blocked_syscalls_not_empty(self):
         """BLOCKED_SYSCALLS should contain syscalls to block."""
         assert len(BLOCKED_SYSCALLS) > 0
 
-    def test_contains_dangerous_syscalls(self):
-        """Should include known dangerous syscalls."""
-        dangerous = ["kexec_load", "reboot", "io_uring_setup"]
-        for syscall in dangerous:
-            assert syscall in BLOCKED_SYSCALLS, f"{syscall} should be blocked"
+    def test_base_not_empty(self):
+        """BLOCKED_SYSCALLS_BASE should contain safe-to-block syscalls."""
+        assert len(BLOCKED_SYSCALLS_BASE) > 0
+
+    def test_strict_not_empty(self):
+        """BLOCKED_SYSCALLS_STRICT should contain exploit primitive syscalls."""
+        assert len(BLOCKED_SYSCALLS_STRICT) > 0
+
+    def test_combined_equals_base_plus_strict(self):
+        """BLOCKED_SYSCALLS should be the union of BASE and STRICT."""
+        assert BLOCKED_SYSCALLS == BLOCKED_SYSCALLS_BASE + BLOCKED_SYSCALLS_STRICT
+
+    def test_no_overlap(self):
+        """BASE and STRICT should not share any syscalls."""
+        overlap = set(BLOCKED_SYSCALLS_BASE) & set(BLOCKED_SYSCALLS_STRICT)
+        assert len(overlap) == 0, f"Overlap between BASE and STRICT: {overlap}"
+
+    def test_base_contains_safe_syscalls(self):
+        """BASE should include syscalls safe to block for all software."""
+        safe = ["kexec_load", "reboot", "init_module"]
+        for syscall in safe:
+            assert syscall in BLOCKED_SYSCALLS_BASE, f"{syscall} should be in BASE"
+
+    def test_strict_contains_exploit_primitives(self):
+        """STRICT should include exploit primitives that may break software."""
+        exploits = ["io_uring_setup", "userfaultfd", "perf_event_open"]
+        for syscall in exploits:
+            assert syscall in BLOCKED_SYSCALLS_STRICT, f"{syscall} should be in STRICT"
 
     def test_all_strings(self):
         """All entries should be strings."""

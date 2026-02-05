@@ -87,6 +87,8 @@ def compose_sandbox_tab(on_dev_mode_change: Callable[[str], None]) -> ComposeRes
                     available, hint = get_seccomp_status()
                     seccomp_desc = groups.enable_seccomp.explanation if available else f"Not available. {hint}"
                     yield OptionCard(groups.enable_seccomp, explanation=seccomp_desc, disabled=not available)
+                    strict_desc = groups.seccomp_strict.explanation if available else f"Not available. {hint}"
+                    yield OptionCard(groups.seccomp_strict, explanation=strict_desc, disabled=not available)
                 with Container(classes="options-section"):
                     yield Label(groups.process_group.title, classes="section-label")
                     yield OptionCard(groups.die_with_parent)

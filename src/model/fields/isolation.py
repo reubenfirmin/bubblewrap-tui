@@ -50,8 +50,15 @@ disable_userns = _named("disable_userns", UIField(
 ))
 
 enable_seccomp = _named("enable_seccomp", UIField(
-    bool, False, "opt-enable-seccomp",
+    bool, True, "opt-enable-seccomp",
     "Block dangerous syscalls",
-    "Block kexec, reboot, io_uring, userfaultfd, perf_event_open, etc.",
+    "Block kexec, reboot, module loading, swap. Safe for all software.",
     summary="Dangerous syscalls blocked (seccomp)",
+))
+
+seccomp_strict = _named("seccomp_strict", UIField(
+    bool, False, "opt-seccomp-strict",
+    "Block exploit primitives",
+    "Block io_uring, userfaultfd, perf_event_open. May break databases, profilers, and high-performance servers.",
+    summary="Exploit primitives blocked — io_uring, userfaultfd, perf_event_open",
 ))

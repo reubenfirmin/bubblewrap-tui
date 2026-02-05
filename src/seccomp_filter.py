@@ -10,8 +10,8 @@ reducing kernel attack surface by blocking dangerous syscalls like:
 
 from __future__ import annotations
 
-# Syscalls to block - these provide minimal legitimate use but significant attack surface
-BLOCKED_SYSCALLS = [
+# Safe to block - no legitimate use inside a sandbox
+BLOCKED_SYSCALLS_BASE = [
     # Kernel/system modification
     "kexec_load",
     "kexec_file_load",
@@ -23,16 +23,27 @@ BLOCKED_SYSCALLS = [
     "init_module",
     "finit_module",
     "delete_module",
+]
+
+# May break software - exploit primitives that have legitimate uses
+BLOCKED_SYSCALLS_STRICT = [
     # Kernel profiling/monitoring (exploit primitives)
+    # Breaks: profilers, some JIT compilers
     "perf_event_open",
+    # Breaks: file monitoring tools, antivirus
     "fanotify_init",
+    # Breaks: NFS servers, some backup tools
     "open_by_handle_at",
-    # Known CVE magnets
+    # Breaks: QEMU, some garbage collectors
     "userfaultfd",
+    # Breaks: PostgreSQL, Redis, nginx, Node.js, Rust tokio
     "io_uring_setup",
     "io_uring_enter",
     "io_uring_register",
 ]
+
+# Combined list for backward compatibility
+BLOCKED_SYSCALLS = BLOCKED_SYSCALLS_BASE + BLOCKED_SYSCALLS_STRICT
 
 
 def _get_seccomp_module():

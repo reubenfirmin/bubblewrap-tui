@@ -158,6 +158,7 @@ def create_default_profiles() -> None:
                 "unshare_ipc": True,
                 "unshare_cgroup": True,
                 "disable_userns": True,  # Block nested namespace creation
+                "seccomp_strict": True,  # Block exploit primitives (io_uring, userfaultfd, etc.)
             }
         },
         "_hostname_group": {

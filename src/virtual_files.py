@@ -162,14 +162,23 @@ def _add_user_files(manager: VirtualFileManager, config: "SandboxConfig") -> Non
 
 def _add_seccomp_filter(manager: VirtualFileManager, config: "SandboxConfig") -> None:
     """Add seccomp BPF filter if enabled and available."""
-    if not config._isolation_group.get("enable_seccomp"):
+    base_enabled = config._isolation_group.get("enable_seccomp")
+    strict_enabled = config._isolation_group.get("seccomp_strict")
+
+    if not base_enabled and not strict_enabled:
         return
 
-    from seccomp_filter import check_seccomp, generate_seccomp_filter
+    from seccomp_filter import BLOCKED_SYSCALLS_BASE, BLOCKED_SYSCALLS_STRICT, check_seccomp, generate_seccomp_filter
 
     if not check_seccomp():
         return
 
-    bpf_data = generate_seccomp_filter()
+    blocked: list[str] = []
+    if base_enabled:
+        blocked.extend(BLOCKED_SYSCALLS_BASE)
+    if strict_enabled:
+        blocked.extend(BLOCKED_SYSCALLS_STRICT)
+
+    bpf_data = generate_seccomp_filter(blocked=blocked)
     if bpf_data:
         manager.add_binary_file(bpf_data, "/seccomp.bpf", "Seccomp syscall filter")

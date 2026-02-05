@@ -39,6 +39,7 @@ from model.fields.isolation import (
     unshare_cgroup,
     disable_userns,
     enable_seccomp,
+    seccomp_strict,
 )
 
 # Process
