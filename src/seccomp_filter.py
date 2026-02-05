@@ -71,7 +71,37 @@ def get_seccomp_status() -> tuple[bool, str]:
 
 
 def _get_install_hint() -> str:
-    """Get install command for seccomp Python bindings."""
+    """Get distro-specific install command for seccomp Python bindings."""
+    import shutil
+
+    from net.utils import detect_distro
+
+    distro = detect_distro()
+
+    instructions = {
+        "fedora": "sudo dnf install python3-libseccomp",
+        "rhel": "sudo dnf install python3-libseccomp",
+        "centos": "sudo dnf install python3-libseccomp",
+        "debian": "sudo apt install python3-libseccomp",
+        "ubuntu": "sudo apt install python3-libseccomp",
+        "arch": "sudo pacman -S python-seccomp",
+        "manjaro": "sudo pacman -S python-seccomp",
+        "opensuse": "sudo zypper install python3-seccomp",
+        "opensuse-leap": "sudo zypper install python3-seccomp",
+        "opensuse-tumbleweed": "sudo zypper install python3-seccomp",
+        "alpine": "sudo apk add py3-libseccomp",
+    }
+
+    if distro in instructions:
+        return instructions[distro]
+
+    if shutil.which("apt"):
+        return "sudo apt install python3-libseccomp"
+    elif shutil.which("dnf"):
+        return "sudo dnf install python3-libseccomp"
+    elif shutil.which("pacman"):
+        return "sudo pacman -S python-seccomp"
+
     return "pip install pyseccomp"
 
 
@@ -103,21 +133,27 @@ def generate_seccomp_filter(blocked: list[str] | None = None) -> bytes | None:
     for syscall_name in blocked:
         try:
             f.add_rule(seccomp.ERRNO(1), syscall_name)  # EPERM = 1
-        except Exception:
-            # Syscall might not exist on this architecture, skip it
-            pass
+        except (OSError, ValueError):
+            # OSError: syscall not found on this architecture
+            # ValueError: invalid syscall name
+            continue
 
     # Export as BPF program
     # pyseccomp requires a real file, not BytesIO
-    with tempfile.NamedTemporaryFile(delete=False) as tmp:
-        f.export_bpf(tmp)
-        tmp_path = tmp.name
-
+    tmp_path = None
     try:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            f.export_bpf(tmp)
+
         with open(tmp_path, "rb") as fp:
             return fp.read()
     finally:
-        os.unlink(tmp_path)
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 def create_seccomp_filter_file(tmp_dir: str) -> str | None:
