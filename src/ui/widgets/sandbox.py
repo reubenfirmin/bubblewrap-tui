@@ -52,21 +52,34 @@ class DevModeCard(Container):
 class OptionCard(Container):
     """A checkbox with label on row 1, explanation on row 2."""
 
-    def __init__(self, field: UIField, default: bool | None = None, explanation: str | None = None) -> None:
+    def __init__(
+        self,
+        field: UIField,
+        default: bool | None = None,
+        explanation: str | None = None,
+        disabled: bool = False,
+    ) -> None:
         """Create an OptionCard from a UIField.
 
         Args:
             field: The UIField descriptor containing metadata
             default: Override the field's default (e.g., for /lib64 existence check)
             explanation: Override the field's explanation (e.g., for display detection)
+            disabled: If True, the checkbox is disabled and cannot be changed
         """
         super().__init__()
         self.field = field
         self._default = default if default is not None else field.default
         self._explanation = explanation or field.explanation
+        self._disabled = disabled
 
     def compose(self) -> ComposeResult:
-        yield Checkbox(self.field.label, value=self._default, id=self.field.checkbox_id)
+        yield Checkbox(
+            self.field.label,
+            value=self._default if not self._disabled else False,
+            id=self.field.checkbox_id,
+            disabled=self._disabled,
+        )
         # Give explanation an ID derived from checkbox ID for dynamic updates
         explanation_id = f"{self.field.checkbox_id}-explanation"
         yield Static(self._explanation, classes="option-explanation", id=explanation_id)

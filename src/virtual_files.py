@@ -73,6 +73,37 @@ class VirtualFileManager:
 
         return str(file_path)
 
+    def add_binary_file(self, content: bytes, dest_path: str, description: str) -> str:
+        """Add a binary file (like BPF filter) to be injected.
+
+        Args:
+            content: Binary file content
+            dest_path: Destination path in sandbox (e.g., /seccomp.bpf)
+            description: Human-readable description
+
+        Returns:
+            Path to the created temp file
+
+        Raises:
+            OSError: If file creation fails (temp dir is cleaned up)
+        """
+        filename = Path(dest_path).name
+        file_path = Path(self.tmp_dir) / filename
+        try:
+            file_path.write_bytes(content)
+            file_path.chmod(0o444)  # Read-only
+        except OSError:
+            shutil.rmtree(self.tmp_dir, ignore_errors=True)
+            raise
+
+        self.files.append(VirtualFile(
+            source_path=str(file_path),
+            dest_path=dest_path,
+            description=description,
+        ))
+
+        return str(file_path)
+
     def get_file_map(self) -> dict[str, str]:
         """Get mapping of dest_path -> source_path for bwrap args."""
         return {vf.dest_path: vf.source_path for vf in self.files}
@@ -106,6 +137,9 @@ def create_virtual_files(config: "SandboxConfig") -> VirtualFileManager:
     # Add synthetic passwd/group if enabled
     _add_user_files(manager, config)
 
+    # Add seccomp filter if enabled
+    _add_seccomp_filter(manager, config)
+
     return manager
 
 
@@ -124,3 +158,27 @@ def _add_user_files(manager: VirtualFileManager, config: "SandboxConfig") -> Non
             desc = "Virtual file"
 
         manager.add_file(content, dest_path, desc)
+
+
+def _add_seccomp_filter(manager: VirtualFileManager, config: "SandboxConfig") -> None:
+    """Add seccomp BPF filter if enabled and available."""
+    base_enabled = config._isolation_group.get("enable_seccomp")
+    strict_enabled = config._isolation_group.get("seccomp_strict")
+
+    if not base_enabled and not strict_enabled:
+        return
+
+    from seccomp_filter import BLOCKED_SYSCALLS_BASE, BLOCKED_SYSCALLS_STRICT, check_seccomp, generate_seccomp_filter
+
+    if not check_seccomp():
+        return
+
+    blocked: list[str] = []
+    if base_enabled:
+        blocked.extend(BLOCKED_SYSCALLS_BASE)
+    if strict_enabled:
+        blocked.extend(BLOCKED_SYSCALLS_STRICT)
+
+    bpf_data = generate_seccomp_filter(blocked=blocked)
+    if bpf_data:
+        manager.add_binary_file(bpf_data, "/seccomp.bpf", "Seccomp syscall filter")

@@ -22,7 +22,7 @@ from model.fields import (
     unshare_user, synthetic_passwd, overlay_home,
     uid_field, gid_field, username_field,
     # Isolation fields
-    unshare_pid, unshare_ipc, unshare_uts, unshare_cgroup, disable_userns,
+    unshare_pid, unshare_ipc, unshare_uts, unshare_cgroup, disable_userns, enable_seccomp, seccomp_strict,
     # Process fields
     die_with_parent, new_session, as_pid_1, chdir,
     # Network fields
@@ -39,7 +39,7 @@ from model.serializers import (
     network_to_args, network_to_summary,
     desktop_to_args, desktop_to_summary,
     user_to_args, user_to_summary,
-    isolation_to_summary,
+    isolation_to_args, isolation_to_summary,
     hostname_to_summary,
     process_to_args, process_to_summary,
     environment_to_args, environment_to_summary,
@@ -77,6 +77,7 @@ _desktop_to_args = desktop_to_args
 _desktop_to_summary = desktop_to_summary
 _user_to_args = user_to_args
 _user_to_summary = user_to_summary
+_isolation_to_args = isolation_to_args
 _isolation_to_summary = isolation_to_summary
 _hostname_to_summary = hostname_to_summary
 _process_to_args = process_to_args
@@ -120,7 +121,8 @@ user_group = ConfigGroup(
 isolation_group = ConfigGroup(
     name="isolation",
     title="Isolate",
-    items=[unshare_pid, unshare_ipc, unshare_cgroup, disable_userns],
+    items=[unshare_pid, unshare_ipc, unshare_cgroup, disable_userns, enable_seccomp, seccomp_strict],
+    _to_args_fn=_isolation_to_args,
     _to_summary_fn=_isolation_to_summary,
 )
 

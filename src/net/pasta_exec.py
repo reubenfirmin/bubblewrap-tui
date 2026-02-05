@@ -68,10 +68,14 @@ def execute_with_pasta(
     # Prepare bwrap command (removes --unshare-net, adds bind mounts)
     bwrap_cmd = prepare_bwrap_command(bwrap_cmd, tmp_dir)
 
+    # Get seccomp filter path if present in file_map
+    seccomp_filter_path = file_map.get("/seccomp.bpf") if file_map else None
+
     # Create wrapper script that does iptables setup then execs bwrap
     try:
         wrapper_script_path = create_wrapper_script(
-            nf, bwrap_cmd, iptables_path, ip6tables_path, is_multicall, tmp_path
+            nf, bwrap_cmd, iptables_path, ip6tables_path, is_multicall, tmp_path,
+            seccomp_filter_path=seccomp_filter_path,
         )
     except HostnameResolutionError as e:
         print("=" * 60, file=sys.stderr)
@@ -155,6 +159,10 @@ def execute_with_audit(
     # Remove --unshare-net since pasta provides the network namespace
     cmd = [arg for arg in cmd if arg != "--unshare-net"]
 
+    # Handle seccomp filter - need to open FD before subprocess.run
+    from command_execution import prepare_seccomp_fd
+    cmd, seccomp_fd = prepare_seccomp_fd(cmd, file_map)
+
     # Print header
     from commandoutput import print_audit_header
     print_audit_header(
@@ -169,8 +177,10 @@ def execute_with_audit(
     full_cmd = pasta_args + ["--"] + cmd
 
     # Execute with subprocess so we can post-process
+    # pass_fds ensures seccomp FD is inherited by subprocess
     try:
-        result = subprocess.run(full_cmd)
+        pass_fds = (seccomp_fd,) if seccomp_fd is not None else ()
+        result = subprocess.run(full_cmd, pass_fds=pass_fds)
         exit_code = result.returncode
     except KeyboardInterrupt:
         print("\nInterrupted by user")
@@ -181,6 +191,14 @@ def execute_with_audit(
     except OSError as e:
         print(f"Error: Failed to run command: {e}", file=sys.stderr)
         exit_code = 1
+    finally:
+        # Close seccomp FD in parent
+        if seccomp_fd is not None:
+            try:
+                import os
+                os.close(seccomp_fd)
+            except OSError:
+                pass
 
     # Parse and display audit results
     if pcap_path.exists():
