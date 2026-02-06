@@ -22,8 +22,13 @@ jobs:
       - name: Build bui
         run: python build.py --bundle
 
+      - name: Generate checksum
+        run: sha256sum bui > bui.sha256
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: bui
+          files: |
+            bui
+            bui.sha256
           generate_release_notes: true
