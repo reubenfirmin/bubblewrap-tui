@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -12,6 +13,7 @@ import urllib.request
 from pathlib import Path
 
 BUI_RELEASE_URL = "https://github.com/reubenfirmin/bubblewrap-tui/releases/latest/download/bui"
+BUI_CHECKSUM_URL = "https://github.com/reubenfirmin/bubblewrap-tui/releases/latest/download/bui.sha256"
 BUI_API_URL = "https://api.github.com/repos/reubenfirmin/bubblewrap-tui/releases/latest"
 UPDATE_CHECK_INTERVAL = 86400  # 1 day in seconds
 
@@ -289,6 +291,35 @@ def get_latest_version() -> str | None:
         return None
 
 
+def verify_checksum(content: bytes) -> None:
+    """Verify SHA256 checksum of downloaded binary against the release checksum file.
+
+    Args:
+        content: Downloaded binary content
+
+    Raises:
+        SystemExit: If checksum verification fails or checksum can't be fetched
+    """
+    try:
+        with urllib.request.urlopen(BUI_CHECKSUM_URL, timeout=10) as response:
+            checksum_line = response.read().decode().strip()
+    except Exception as e:
+        print(f"Error downloading checksum file: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # sha256sum format: "<hash>  <filename>" or "<hash> <filename>"
+    expected_hash = checksum_line.split()[0]
+    actual_hash = hashlib.sha256(content).hexdigest()
+
+    if actual_hash != expected_hash:
+        print("Checksum verification failed!", file=sys.stderr)
+        print(f"  Expected: {expected_hash}", file=sys.stderr)
+        print(f"  Got:      {actual_hash}", file=sys.stderr)
+        sys.exit(1)
+
+    print("Checksum verified.")
+
+
 def do_update(current_version: str) -> None:
     """Download latest bui from GitHub and install.
 
@@ -308,6 +339,8 @@ def do_update(current_version: str) -> None:
     except Exception as e:
         print(f"Error downloading: {e}", file=sys.stderr)
         sys.exit(1)
+
+    verify_checksum(content)
 
     with tempfile.NamedTemporaryFile(mode="wb", suffix=".py", delete=False) as f:
         f.write(content)
