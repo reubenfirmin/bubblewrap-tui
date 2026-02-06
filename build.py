@@ -16,7 +16,7 @@ from pathlib import Path
 HEADER = '''#!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["textual>=0.89.0", "dpkt>=1.9.8", "pyseccomp>=0.1.0"]
+# dependencies = ["textual==7.3.0", "dpkt==1.9.8", "pyseccomp==0.1.2"]
 # ///
 """
 Bubblewrap TUI - A visual interface for configuring bubblewrap sandboxes.
