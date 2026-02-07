@@ -227,11 +227,6 @@ def isolation_to_args(group: ConfigGroup) -> list[str]:
         if hasattr(item, 'bwrap_flag') and item.bwrap_flag and group.get(item.name):
             args.append(item.bwrap_flag)
 
-    # Seccomp is handled specially - the actual FD is added at execution time
-    # but we show a placeholder in preview
-    if group.get("enable_seccomp") or group.get("seccomp_strict"):
-        args.extend(["--seccomp", "<fd>"])
-
     return args
 
 

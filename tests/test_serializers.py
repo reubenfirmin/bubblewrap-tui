@@ -2,7 +2,7 @@
 
 import pytest
 
-from model.serializers import network_to_summary, process_to_summary
+from model.serializers import isolation_to_args, isolation_to_summary, network_to_summary, process_to_summary
 from model.config_group import ConfigGroup
 from model.network_filter import NetworkFilter, NetworkMode, FilterMode
 
@@ -235,3 +235,148 @@ class TestNetworkFilterSummary:
         assert "example.com" in summary[0]
         assert "test.org" in summary[0]
         assert "blocks all" not in summary[0]
+
+
+class TestIsolationToArgs:
+    """Tests for isolation_to_args — ensures seccomp flags are NOT emitted as placeholders."""
+
+    def _make_isolation_group(self, **kwargs) -> ConfigGroup:
+        """Create an isolation group with real field items."""
+        from model.fields.isolation import (
+            unshare_pid, unshare_ipc, unshare_cgroup,
+            disable_userns, enable_seccomp, seccomp_strict,
+        )
+        group = ConfigGroup(
+            name="isolation",
+            title="Isolation",
+            items=[unshare_pid, unshare_ipc, unshare_cgroup,
+                   disable_userns, enable_seccomp, seccomp_strict],
+        )
+        for key, value in kwargs.items():
+            group.set(key, value)
+        return group
+
+    def test_seccomp_enabled_does_not_emit_seccomp_flag(self):
+        """enable_seccomp should NOT produce --seccomp in serialized args (handled at exec time)."""
+        group = self._make_isolation_group(enable_seccomp=True)
+
+        args = isolation_to_args(group)
+
+        assert "--seccomp" not in args
+
+    def test_seccomp_strict_does_not_emit_seccomp_flag(self):
+        """seccomp_strict should NOT produce --seccomp in serialized args."""
+        group = self._make_isolation_group(seccomp_strict=True)
+
+        args = isolation_to_args(group)
+
+        assert "--seccomp" not in args
+
+    def test_both_seccomp_options_do_not_emit_seccomp_flag(self):
+        """Both seccomp options enabled should NOT produce --seccomp."""
+        group = self._make_isolation_group(enable_seccomp=True, seccomp_strict=True)
+
+        args = isolation_to_args(group)
+
+        assert "--seccomp" not in args
+
+    def test_no_fd_placeholder_in_args(self):
+        """Seccomp args should never contain the '<fd>' placeholder string."""
+        group = self._make_isolation_group(enable_seccomp=True, seccomp_strict=True)
+
+        args = isolation_to_args(group)
+
+        assert "<fd>" not in args
+
+    def test_namespace_flags_still_emitted(self):
+        """Non-seccomp bwrap_flag items should still be serialized."""
+        group = self._make_isolation_group(
+            unshare_pid=True, unshare_ipc=True, unshare_cgroup=True,
+        )
+
+        args = isolation_to_args(group)
+
+        assert "--unshare-pid" in args
+        assert "--unshare-ipc" in args
+        assert "--unshare-cgroup" in args
+
+    def test_disable_userns_emitted(self):
+        """disable_userns has a bwrap_flag and should be serialized."""
+        group = self._make_isolation_group(disable_userns=True)
+
+        args = isolation_to_args(group)
+
+        assert "--disable-userns" in args
+
+    def test_namespace_flags_with_seccomp_no_seccomp_flag(self):
+        """Namespace flags emitted alongside seccomp, but no --seccomp flag."""
+        group = self._make_isolation_group(
+            unshare_pid=True, enable_seccomp=True, seccomp_strict=True,
+        )
+
+        args = isolation_to_args(group)
+
+        assert "--unshare-pid" in args
+        assert "--seccomp" not in args
+        assert "<fd>" not in args
+
+    def test_empty_group_returns_empty_args(self):
+        """No options enabled should produce empty args."""
+        group = self._make_isolation_group(
+            unshare_pid=False, unshare_ipc=False, unshare_cgroup=False,
+            disable_userns=False, enable_seccomp=False, seccomp_strict=False,
+        )
+
+        args = isolation_to_args(group)
+
+        assert args == []
+
+
+class TestIsolationToSummary:
+    """Tests for isolation_to_summary — seccomp shows in summary text."""
+
+    def _make_isolation_group(self, **kwargs) -> ConfigGroup:
+        """Create an isolation group with real field items."""
+        from model.fields.isolation import (
+            unshare_pid, unshare_ipc, unshare_cgroup,
+            disable_userns, enable_seccomp, seccomp_strict,
+        )
+        group = ConfigGroup(
+            name="isolation",
+            title="Isolation",
+            items=[unshare_pid, unshare_ipc, unshare_cgroup,
+                   disable_userns, enable_seccomp, seccomp_strict],
+        )
+        for key, value in kwargs.items():
+            group.set(key, value)
+        return group
+
+    def test_seccomp_enabled_shows_in_summary(self):
+        """enable_seccomp should appear in the summary text."""
+        group = self._make_isolation_group(enable_seccomp=True)
+
+        summary = isolation_to_summary(group)
+
+        assert summary is not None
+        assert "seccomp" in summary.lower()
+
+    def test_seccomp_strict_shows_in_summary(self):
+        """seccomp_strict should appear in the summary text."""
+        group = self._make_isolation_group(seccomp_strict=True)
+
+        summary = isolation_to_summary(group)
+
+        assert summary is not None
+        assert "io_uring" in summary.lower() or "exploit" in summary.lower()
+
+    def test_no_seccomp_no_summary_mention(self):
+        """Without seccomp, summary should not mention seccomp."""
+        group = self._make_isolation_group(
+            enable_seccomp=False, seccomp_strict=False,
+            unshare_pid=False, unshare_ipc=False,
+            unshare_cgroup=False, disable_userns=False,
+        )
+
+        summary = isolation_to_summary(group)
+
+        assert summary is None
