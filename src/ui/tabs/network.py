@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable, TYPE_CHECKING
+from typing import Callable
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
@@ -14,15 +14,16 @@ from net import validate_cidr
 from ui.widgets import FilterList, FilterModeRadio, OptionCard, PastaStatus, PortList
 import ui.ids as ids
 
-if TYPE_CHECKING:
-    from model.network_filter import NetworkFilter
-
 
 def compose_network_tab(
-    network_filter: "NetworkFilter",
+    network_mode: str,
+    hostname_mode: str,
+    hostname_hosts: list[str],
+    ip_mode: str,
+    ip_cidrs: list[str],
+    expose_ports: list[int],
+    host_ports: list[int],
     share_net: bool,
-    bind_resolv_conf: bool,
-    bind_ssl_certs: bool,
     has_dns: bool,
     on_hostname_mode_change: Callable[[str], None],
     on_hostname_add: Callable[[str], None],
@@ -35,28 +36,10 @@ def compose_network_tab(
     on_host_port_add: Callable[[int], None],
     on_host_port_remove: Callable[[int], None],
 ) -> ComposeResult:
-    """Compose the network filtering tab content.
+    """Compose the network filtering tab content."""
+    is_filter = network_mode == NetworkMode.FILTER.value
+    is_audit = network_mode == NetworkMode.AUDIT.value
 
-    Args:
-        network_filter: NetworkFilter configuration object
-        share_net: Whether full network access is enabled
-        bind_resolv_conf: Whether DNS config is bound
-        bind_ssl_certs: Whether SSL certs are bound
-        has_dns: Whether the host has DNS configured (for hostname filtering)
-        on_hostname_mode_change: Callback when hostname filter mode changes
-        on_hostname_add: Callback when hostname is added
-        on_hostname_remove: Callback when hostname is removed
-        on_ip_mode_change: Callback when IP filter mode changes
-        on_cidr_add: Callback when CIDR is added
-        on_cidr_remove: Callback when CIDR is removed
-        on_expose_port_add: Callback when expose port is added
-        on_expose_port_remove: Callback when expose port is removed
-        on_host_port_add: Callback when host port is added
-        on_host_port_remove: Callback when host port is removed
-
-    Yields:
-        Textual widgets for the network filtering tab
-    """
     with VerticalScroll(id=ids.NETWORK_TAB_CONTENT):
         with Horizontal(id="options-grid"):
             # Left column: Network access + Full access options
@@ -77,17 +60,17 @@ def compose_network_tab(
                         with RadioSet(id=ids.NETWORK_MODE_RADIO):
                             yield RadioButton(
                                 "Direct",
-                                value=network_filter.mode == NetworkMode.OFF,
+                                value=(not is_filter and not is_audit),
                                 id="network-mode-off",
                             )
                             yield RadioButton(
                                 "Filter",
-                                value=network_filter.mode == NetworkMode.FILTER,
+                                value=is_filter,
                                 id="network-mode-filter",
                             )
                             yield RadioButton(
                                 "Audit",
-                                value=network_filter.mode == NetworkMode.AUDIT,
+                                value=is_audit,
                                 id="network-mode-audit",
                             )
                         yield PastaStatus()
@@ -103,7 +86,7 @@ def compose_network_tab(
                         )
 
                 # Hostname filtering section (only for filter mode)
-                with Container(id="filter-options", classes="" if network_filter.is_filter_mode() else "hidden"):
+                with Container(id="filter-options", classes="" if is_filter else "hidden"):
                     with Container(classes="options-section"):
                         yield Label("Hostname Filtering", classes="section-label")
                         if has_dns:
@@ -117,12 +100,12 @@ def compose_network_tab(
                                 classes="network-hint",
                             )
                             yield FilterModeRadio(
-                                mode=network_filter.hostname_filter.mode.value,
+                                mode=hostname_mode,
                                 on_change=on_hostname_mode_change,
                                 radio_id=ids.HOSTNAME_MODE_RADIO,
                             )
                             yield FilterList(
-                                items=network_filter.hostname_filter.hosts,
+                                items=hostname_hosts,
                                 on_add=on_hostname_add,
                                 on_remove=on_hostname_remove,
                                 placeholder="github.com",
@@ -141,7 +124,7 @@ def compose_network_tab(
             # Right column: IP/CIDR filtering + Port forwarding (filter mode) or Audit info (audit mode)
             with Vertical(classes="options-column"):
                 # Audit mode info card
-                with Container(id="audit-options-right", classes="" if network_filter.is_audit_mode() else "hidden"):
+                with Container(id="audit-options-right", classes="" if is_audit else "hidden"):
                     with Container(classes="options-section"):
                         yield Label("Audit Mode", classes="section-label")
                         yield Static(
@@ -155,7 +138,7 @@ def compose_network_tab(
                         )
 
                 # Filter mode options
-                with Container(id="filter-options-right", classes="" if network_filter.is_filter_mode() else "hidden"):
+                with Container(id="filter-options-right", classes="" if is_filter else "hidden"):
                     # IP/CIDR filtering section
                     with Container(classes="options-section"):
                         yield Label("IP / CIDR Filtering", classes="section-label")
@@ -164,12 +147,12 @@ def compose_network_tab(
                             classes="network-hint",
                         )
                         yield FilterModeRadio(
-                            mode=network_filter.ip_filter.mode.value,
+                            mode=ip_mode,
                             on_change=on_ip_mode_change,
                             radio_id=ids.IP_MODE_RADIO,
                         )
                         yield FilterList(
-                            items=network_filter.ip_filter.cidrs,
+                            items=ip_cidrs,
                             on_add=on_cidr_add,
                             on_remove=on_cidr_remove,
                             placeholder="10.0.0.0/8",
@@ -187,7 +170,7 @@ def compose_network_tab(
                             classes="network-hint",
                         )
                         yield PortList(
-                            ports=network_filter.port_forwarding.expose_ports,
+                            ports=expose_ports,
                             on_add=on_expose_port_add,
                             on_remove=on_expose_port_remove,
                             list_id=ids.EXPOSE_PORT_LIST,
@@ -203,7 +186,7 @@ def compose_network_tab(
                             classes="network-hint",
                         )
                         yield PortList(
-                            ports=network_filter.port_forwarding.host_ports,
+                            ports=host_ports,
                             on_add=on_host_port_add,
                             on_remove=on_host_port_remove,
                             list_id=ids.HOST_PORT_LIST,

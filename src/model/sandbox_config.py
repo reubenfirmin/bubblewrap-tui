@@ -12,7 +12,12 @@ from typing import Any
 
 from model.bound_directory import BoundDirectory
 from model.config_group import ConfigGroup
-from model.network_filter import NetworkFilter
+from model.network_filter import (
+    HostnameFilter,
+    IPFilter,
+    NetworkFilter,
+    PortForwarding,
+)
 from model.overlay_config import OverlayConfig
 
 
@@ -120,7 +125,6 @@ class SandboxConfig:
     command: list[str] = field(default_factory=list)
     bound_dirs: list[BoundDirectory] = field(default_factory=list)
     overlays: list[OverlayConfig] = field(default_factory=list)
-    network_filter: NetworkFilter = field(default_factory=NetworkFilter)
     drop_caps: set[str] = field(default_factory=set)
 
     # Internal group storage
@@ -203,6 +207,32 @@ class SandboxConfig:
     def network(self) -> GroupProxy:
         """Access network settings."""
         return GroupProxy(self._network_group)
+
+    @property
+    def network_filter(self) -> NetworkFilter:
+        """Reconstruct NetworkFilter from group values for command building.
+
+        Lists are passed by reference — the returned NetworkFilter shares the
+        same list objects as _network_group._values.
+        """
+        from model.network_filter import FilterMode, NetworkMode
+
+        nv = self._network_group._values
+        return NetworkFilter(
+            mode=NetworkMode(nv.get("network_mode", "off")),
+            hostname_filter=HostnameFilter(
+                mode=FilterMode(nv.get("hostname_mode", "off")),
+                hosts=nv.get("hostname_hosts", []),
+            ),
+            ip_filter=IPFilter(
+                mode=FilterMode(nv.get("ip_mode", "off")),
+                cidrs=nv.get("ip_cidrs", []),
+            ),
+            port_forwarding=PortForwarding(
+                expose_ports=nv.get("expose_ports", []),
+                host_ports=nv.get("host_ports", []),
+            ),
+        )
 
     @property
     def desktop(self) -> GroupProxy:

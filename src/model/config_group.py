@@ -44,7 +44,10 @@ class ConfigGroup:
         """Initialize default values from items."""
         for item in self.items:
             if item.name not in self._values:
-                self._values[item.name] = item.default
+                if hasattr(item, 'default_factory') and item.default_factory:
+                    self._values[item.name] = item.default_factory()
+                else:
+                    self._values[item.name] = item.default
 
     def get(self, name: str) -> Any:
         """Get a field value by name."""
@@ -113,6 +116,17 @@ class ConfigGroup:
         return None
 
     def reset_to_defaults(self) -> None:
-        """Reset all values to their defaults."""
+        """Reset all values to their defaults.
+
+        For list values, clears in-place to preserve shared references
+        (UI widgets may hold the same list object).
+        """
         for item in self.items:
-            self._values[item.name] = item.default
+            if hasattr(item, 'default_factory') and item.default_factory:
+                existing = self._values.get(item.name)
+                if isinstance(existing, list):
+                    existing.clear()
+                else:
+                    self._values[item.name] = item.default_factory()
+            else:
+                self._values[item.name] = item.default

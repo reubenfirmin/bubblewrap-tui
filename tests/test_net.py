@@ -335,6 +335,20 @@ class TestGeneratePastaArgs:
         assert "5432" in args
         assert "6379" in args
 
+    def test_port_forwarding_includes_loopback_flag(self):
+        """--host-lo-to-ns-lo is added when port forwards are configured."""
+        nf = NetworkFilter(
+            port_forwarding=PortForwarding(expose_ports=[8080]),
+        )
+        args = generate_pasta_args(nf)
+        assert "--host-lo-to-ns-lo" in args
+
+    def test_no_loopback_flag_without_ports(self):
+        """--host-lo-to-ns-lo is not added when no port forwards."""
+        nf = NetworkFilter()
+        args = generate_pasta_args(nf)
+        assert "--host-lo-to-ns-lo" not in args
+
     def test_no_ports_no_T_flag(self):
         """No -T flag when no ports configured."""
         nf = NetworkFilter()

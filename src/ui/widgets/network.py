@@ -42,15 +42,16 @@ class FilterModeRadio(Container):
         on_change: Callable | None = None,
         radio_id: str = "",
     ) -> None:
-        super().__init__()
+        super().__init__(id=radio_id)
         self._mode = mode
         self._on_change = on_change
         self._radio_id = radio_id
+        self._radioset_id = f"{radio_id}-set" if radio_id else ""
 
     def compose(self) -> ComposeResult:
         from textual.widgets import RadioButton, RadioSet
 
-        with RadioSet(id=self._radio_id):
+        with RadioSet(id=self._radioset_id):
             yield RadioButton("Off", value=(self._mode == "off"))
             yield RadioButton("Whitelist", value=(self._mode == "whitelist"))
             yield RadioButton("Blacklist", value=(self._mode == "blacklist"))
@@ -80,6 +81,10 @@ class FilterModeRadio(Container):
                 radio_set.pressed_index = idx
             except Exception:
                 pass
+
+    def set_value(self, value: str) -> None:
+        """Common interface for config sync."""
+        self.set_mode(value)
 
 
 class FilterListItem(Container):
@@ -114,18 +119,19 @@ class FilterList(Container):
         add_btn_id: str = "",
         validate_fn: Callable[[str], bool] | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(id=list_id)
         self._items = items
         self._on_add = on_add
         self._on_remove = on_remove
         self._placeholder = placeholder
         self._list_id = list_id
+        self._scroll_id = f"{list_id}-scroll" if list_id else ""
         self._input_id = input_id
         self._add_btn_id = add_btn_id
         self._validate_fn = validate_fn
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(id=self._list_id, classes="filter-list-scroll"):
+        with VerticalScroll(id=self._scroll_id, classes="filter-list-scroll"):
             for item in self._items:
                 yield FilterListItem(item, self._handle_remove)
         with Horizontal(classes="filter-add-row"):
@@ -172,7 +178,7 @@ class FilterList(Container):
             input_widget.value = ""
 
             # Mount new item
-            list_scroll = self.query_one(f"#{self._list_id}", VerticalScroll)
+            list_scroll = self.query_one(f"#{self._scroll_id}", VerticalScroll)
             list_scroll.mount(FilterListItem(value, self._handle_remove))
 
             self._on_add(value)
@@ -183,7 +189,7 @@ class FilterList(Container):
         """Refresh the list with new items."""
         self._items = items
         try:
-            list_scroll = self.query_one(f"#{self._list_id}", VerticalScroll)
+            list_scroll = self.query_one(f"#{self._scroll_id}", VerticalScroll)
             # Remove existing items
             for item in list(list_scroll.query(FilterListItem)):
                 item.remove()
@@ -192,6 +198,10 @@ class FilterList(Container):
                 list_scroll.mount(FilterListItem(value, self._handle_remove))
         except Exception:
             pass
+
+    def set_value(self, value: list[str]) -> None:
+        """Common interface for config sync."""
+        self.refresh_items(value)
 
 
 class PortListItem(Container):
@@ -224,16 +234,17 @@ class PortList(Container):
         input_id: str = "",
         add_btn_id: str = "",
     ) -> None:
-        super().__init__()
+        super().__init__(id=list_id)
         self._ports = ports
         self._on_add = on_add
         self._on_remove = on_remove
         self._list_id = list_id
+        self._scroll_id = f"{list_id}-scroll" if list_id else ""
         self._input_id = input_id
         self._add_btn_id = add_btn_id
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(id=self._list_id, classes="filter-list-scroll"):
+        with VerticalScroll(id=self._scroll_id, classes="filter-list-scroll"):
             for port in self._ports:
                 yield PortListItem(port, self._handle_remove)
         with Horizontal(classes="filter-add-row"):
@@ -284,7 +295,7 @@ class PortList(Container):
             input_widget.value = ""
 
             # Mount new item
-            list_scroll = self.query_one(f"#{self._list_id}", VerticalScroll)
+            list_scroll = self.query_one(f"#{self._scroll_id}", VerticalScroll)
             list_scroll.mount(PortListItem(port, self._handle_remove))
 
             self._on_add(port)
@@ -295,7 +306,7 @@ class PortList(Container):
         """Refresh the list with new ports."""
         self._ports = ports
         try:
-            list_scroll = self.query_one(f"#{self._list_id}", VerticalScroll)
+            list_scroll = self.query_one(f"#{self._scroll_id}", VerticalScroll)
             # Remove existing items
             for item in list(list_scroll.query(PortListItem)):
                 item.remove()
@@ -304,3 +315,7 @@ class PortList(Container):
                 list_scroll.mount(PortListItem(port, self._handle_remove))
         except Exception:
             pass
+
+    def set_value(self, value: list[int]) -> None:
+        """Common interface for config sync."""
+        self.refresh_ports(value)

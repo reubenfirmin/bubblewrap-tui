@@ -382,7 +382,14 @@ def _restore_group_values(config: SandboxConfig, data: dict) -> None:
                     # Handle sets (serialized as lists)
                     if isinstance(value, list) and key in ("keep_env_vars", "unset_env_vars"):
                         value = set(value)
-                    group.set(key, value)
+                    # For lists, mutate in-place to preserve shared references
+                    # (UI widgets may hold the same list object)
+                    existing = group._values.get(key)
+                    if isinstance(existing, list) and isinstance(value, list):
+                        existing.clear()
+                        existing.extend(value)
+                    else:
+                        group.set(key, value)
 
 
 class ProfileManager:

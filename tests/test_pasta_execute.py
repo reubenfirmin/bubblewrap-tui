@@ -100,6 +100,71 @@ class TestGetDescendants:
         assert result == []
 
 
+class TestCheckPortAvailability:
+    """Tests for _check_port_availability pre-flight check."""
+
+    def test_passes_when_ports_are_free(self):
+        """Does not exit when ports are available."""
+        from net.pasta_exec import _check_port_availability
+
+        nf = NetworkFilter(
+            mode=NetworkMode.FILTER,
+            port_forwarding=PortForwarding(expose_ports=[19876], host_ports=[19877]),
+        )
+        # Should not raise
+        _check_port_availability(nf)
+
+    def test_exits_when_expose_port_in_use(self):
+        """Exits with error when an expose port is already bound."""
+        import socket
+
+        from net.pasta_exec import _check_port_availability
+
+        # Bind a port to simulate conflict
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        blocker.bind(("", 19878))
+        blocker.listen(1)
+        try:
+            nf = NetworkFilter(
+                mode=NetworkMode.FILTER,
+                port_forwarding=PortForwarding(expose_ports=[19878]),
+            )
+            with pytest.raises(SystemExit) as exc_info:
+                _check_port_availability(nf)
+            assert exc_info.value.code == 1
+        finally:
+            blocker.close()
+
+    def test_ignores_host_ports(self):
+        """host_ports (-T) are NOT checked — they forward existing host services."""
+        import socket
+
+        from net.pasta_exec import _check_port_availability
+
+        # Bind a port to simulate an existing host service
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        blocker.bind(("", 19879))
+        blocker.listen(1)
+        try:
+            nf = NetworkFilter(
+                mode=NetworkMode.FILTER,
+                port_forwarding=PortForwarding(host_ports=[19879]),
+            )
+            # Should NOT exit — host_ports are expected to be in use
+            _check_port_availability(nf)
+        finally:
+            blocker.close()
+
+    def test_no_check_when_no_ports(self):
+        """No error when no port forwarding is configured."""
+        from net.pasta_exec import _check_port_availability
+
+        nf = NetworkFilter(mode=NetworkMode.FILTER)
+        _check_port_availability(nf)
+
+
 class TestValidateFilteringRequirements:
     """Tests for validate_filtering_requirements function."""
 
@@ -223,10 +288,9 @@ class TestExecuteWithPasta:
     def minimal_config(self):
         """Create minimal SandboxConfig for testing."""
         config = SandboxConfig(command=["echo", "test"])
-        config.network_filter = NetworkFilter(
-            mode=NetworkMode.FILTER,
-            ip_filter=IPFilter(mode=FilterMode.WHITELIST, cidrs=["8.8.8.8"]),
-        )
+        config._network_group.set("network_mode", "filter")
+        config._network_group.set("ip_mode", "whitelist")
+        config._network_group.set("ip_cidrs", ["8.8.8.8"])
         return config
 
     @pytest.fixture
@@ -325,7 +389,7 @@ class TestExecuteWithAudit:
     def audit_config(self):
         """Create SandboxConfig with audit mode."""
         config = SandboxConfig(command=["curl", "example.com"])
-        config.network_filter = NetworkFilter(mode=NetworkMode.AUDIT)
+        config._network_group.set("network_mode", "audit")
         return config
 
     @pytest.fixture

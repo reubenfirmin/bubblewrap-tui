@@ -18,6 +18,35 @@ from net.utils import HostnameResolutionError
 logger = logging.getLogger(__name__)
 
 
+def _check_port_availability(nf: "NetworkFilter") -> None:
+    """Check that forwarded ports are available on the host.
+
+    pasta with --quiet silently fails to set up port forwarding when a port
+    is already in use. This pre-flight check gives a clear error instead.
+    """
+    import errno
+    import socket
+    import sys
+
+    # Only check expose_ports (-t): pasta needs to bind a new listener on the host.
+    # host_ports (-T) forward existing host services into the sandbox,
+    # so those ports SHOULD already be in use.
+    for port in nf.port_forwarding.expose_ports:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind(("", port))
+        except OSError as e:
+            if e.errno == errno.EADDRINUSE:
+                print(f"Error: Port {port} is already in use", file=sys.stderr)
+                print("", file=sys.stderr)
+                print(f"Another process is listening on port {port}.", file=sys.stderr)
+                print("pasta cannot forward this port while it is in use.", file=sys.stderr)
+                print("Stop the other process or choose a different port.", file=sys.stderr)
+                sys.exit(1)
+        finally:
+            sock.close()
+
+
 def execute_with_pasta(
     config: "SandboxConfig",
     file_map: dict[str, str] | None,
@@ -87,6 +116,10 @@ def execute_with_pasta(
         print("Check your spelling and network connectivity.", file=sys.stderr)
         print("=" * 60, file=sys.stderr)
         sys.exit(1)
+
+    # Pre-flight: check that forwarded ports are available on the host
+    # pasta with --quiet silently fails if a port is already in use
+    _check_port_availability(nf)
 
     # Print header
     from commandoutput import print_execution_header

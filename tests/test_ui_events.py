@@ -451,3 +451,53 @@ class TestMixinEventInheritance:
 
         assert hasattr(app, 'on_execute_pressed'), "ExecuteEventsMixin.on_execute_pressed not inherited"
         assert hasattr(app, 'on_cancel_pressed'), "ExecuteEventsMixin.on_cancel_pressed not inherited"
+
+
+class TestNetworkFilterSync:
+    """Test that network filter data syncs to UI on profile load."""
+
+    @pytest.mark.asyncio
+    async def test_network_filter_lists_sync_on_profile_load(self):
+        """Loading a config with network filter data should display it in widgets."""
+        from ui.widgets.network import FilterList, PortList, FilterModeRadio
+
+        # Create config with network filter values
+        config = SandboxConfig(command=["bash"])
+        config.network.share_net = True
+        config._network_group.set("network_mode", "filter")
+        config._network_group.set("hostname_mode", "whitelist")
+        config._network_group.set("hostname_hosts", ["github.com", "npmjs.org"])
+        config._network_group.set("ip_mode", "blacklist")
+        config._network_group.set("ip_cidrs", ["10.0.0.0/8"])
+        config._network_group.set("expose_ports", [8080])
+        config._network_group.set("host_ports", [5432, 6379])
+
+        app = BubblewrapTUI(command=["bash"], config=config)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Simulate profile load
+            app._set_config(config)
+            app._on_profile_loaded()
+            await pilot.pause()
+
+            # Verify FilterList widgets show loaded data
+            hostname_list = app.query_one(css(ids.HOSTNAME_LIST), FilterList)
+            assert hostname_list._items == ["github.com", "npmjs.org"]
+
+            cidr_list = app.query_one(css(ids.CIDR_LIST), FilterList)
+            assert cidr_list._items == ["10.0.0.0/8"]
+
+            # Verify PortList widgets show loaded data
+            expose_ports = app.query_one(css(ids.EXPOSE_PORT_LIST), PortList)
+            assert expose_ports._ports == [8080]
+
+            host_ports = app.query_one(css(ids.HOST_PORT_LIST), PortList)
+            assert host_ports._ports == [5432, 6379]
+
+            # Verify FilterModeRadio widgets show correct modes
+            hostname_radio = app.query_one(css(ids.HOSTNAME_MODE_RADIO), FilterModeRadio)
+            assert hostname_radio.mode == "whitelist"
+
+            ip_radio = app.query_one(css(ids.IP_MODE_RADIO), FilterModeRadio)
+            assert ip_radio.mode == "blacklist"

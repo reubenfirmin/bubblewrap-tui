@@ -77,9 +77,9 @@ class OptionCard(Container):
         yield Checkbox(
             self.field.label,
             value=self._default if not self._disabled else False,
-            id=self.field.checkbox_id,
+            id=self.field.widget_id,
             disabled=self._disabled,
         )
         # Give explanation an ID derived from checkbox ID for dynamic updates
-        explanation_id = f"{self.field.checkbox_id}-explanation"
+        explanation_id = f"{self.field.widget_id}-explanation"
         yield Static(self._explanation, classes="option-explanation", id=explanation_id)
