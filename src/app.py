@@ -192,11 +192,16 @@ class BubblewrapTUI(
                 yield from compose_sandbox_tab(self._on_dev_mode_change)
 
             with TabPane("Network", id="network-tab"):
+                nv = self.config._network_group._values
                 yield from compose_network_tab(
-                    self.config.network_filter,
+                    nv.get("network_mode", "off"),
+                    nv.get("hostname_mode", "off"),
+                    nv.get("hostname_hosts", []),
+                    nv.get("ip_mode", "off"),
+                    nv.get("ip_cidrs", []),
+                    nv.get("expose_ports", []),
+                    nv.get("host_ports", []),
                     self.config.network.share_net,
-                    self.config.network.bind_resolv_conf,
-                    self.config.network.bind_ssl_certs,
                     has_host_dns(),
                     self._on_hostname_mode_change,
                     self._on_hostname_add,
@@ -388,7 +393,7 @@ class BubblewrapTUI(
                     filter_opts = self.query_one("#filter-options", Container)
                     filter_opts_right = self.query_one("#filter-options-right", Container)
                     audit_opts_right = self.query_one("#audit-options-right", Container)
-                    mode = self.config.network_filter.mode
+                    mode = NetworkMode(self.config._network_group._values.get("network_mode", "off"))
                     if mode == NetworkMode.FILTER:
                         filter_opts.remove_class("hidden")
                         filter_opts_right.remove_class("hidden")
@@ -415,7 +420,7 @@ class BubblewrapTUI(
 
                     # Reset network mode to Direct/OFF
                     self.query_one("#network-mode-radio", RadioSet).index = 0
-                    self.config.network_filter.mode = NetworkMode.OFF
+                    self.config._network_group.set("network_mode", NetworkMode.OFF.value)
             except NoMatches:
                 log.debug("Network options containers not found")
         # Show/hide UID/GID options when user namespace is toggled
@@ -547,7 +552,7 @@ class BubblewrapTUI(
 
     def _on_network_mode_change(self, mode: NetworkMode) -> None:
         """Handle network mode change (off/filter/audit)."""
-        self.config.network_filter.mode = mode
+        self.config._network_group.set("network_mode", mode.value)
         # Toggle visibility of filter/audit options based on mode
         try:
             filter_opts = self.query_one("#filter-options", Container)

@@ -55,6 +55,13 @@ from model.fields.network import (
     share_net,
     bind_resolv_conf,
     bind_ssl_certs,
+    network_mode,
+    hostname_mode,
+    hostname_hosts,
+    ip_mode,
+    ip_cidrs,
+    expose_ports,
+    host_ports,
 )
 
 # Desktop Integration

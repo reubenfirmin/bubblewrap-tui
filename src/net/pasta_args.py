@@ -40,6 +40,11 @@ def generate_pasta_args(nf: "NetworkFilter", pcap_path: Path | None = None) -> l
 
     # Expose sandbox ports to host (for servers running in sandbox)
     # -t makes sandbox port accessible on host (host:8080 → sandbox:8080)
+    # --host-lo-to-ns-lo ensures forwarded connections reach services bound to
+    # loopback (127.0.0.1/::1) — without this, pasta routes via the TAP interface
+    # and services on localhost are unreachable
+    if nf.has_port_forwards():
+        args.append("--host-lo-to-ns-lo")
     for port in nf.port_forwarding.expose_ports:
         args.extend(["-t", str(port)])
 

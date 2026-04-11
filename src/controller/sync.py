@@ -71,14 +71,19 @@ class ConfigSyncManager:
             return None
 
     def sync_config_from_ui(self) -> None:
-        """Read all UI widgets and update config."""
+        """Read all UI widgets and update config.
+
+        Note: Network filter fields (FilterList, PortList, FilterModeRadio) are
+        skipped here because their UI-to-config sync uses shared mutable references
+        and explicit callbacks rather than the sync loop.
+        """
         for group in self.config.all_field_groups():
             for field in group.items:
                 # Skip fields without UI widgets
-                if not hasattr(field, 'checkbox_id') or not field.checkbox_id:
+                if not hasattr(field, 'widget_id') or not field.widget_id:
                     continue
 
-                widget = self.get_widget(field.checkbox_id, field.widget_type)
+                widget = self.get_widget(field.widget_id, field.widget_type)
                 if widget is None:
                     continue
 
@@ -97,7 +102,7 @@ class ConfigSyncManager:
                     # Set value directly on group
                     group.set(field.name, value)
                 except (ValueError, AttributeError) as e:
-                    log.debug(f"Error syncing {field.checkbox_id}: {e}")
+                    log.debug(f"Error syncing {field.widget_id}: {e}")
 
     def sync_shortcuts_from_bound_dirs(self) -> None:
         """Derive shortcut checkbox states from existing bound_dirs.
@@ -130,28 +135,35 @@ class ConfigSyncManager:
         for group in self.config.all_field_groups():
             for field in group.items:
                 # Skip fields without UI widgets
-                if not hasattr(field, 'checkbox_id') or not field.checkbox_id:
-                    continue
-
-                widget = self.get_widget(field.checkbox_id, field.widget_type)
-                if widget is None:
+                if not hasattr(field, 'widget_id') or not field.widget_id:
                     continue
 
                 try:
-                    # Get value from group (with fallback to field default)
-                    value = group._values.get(field.name, field.default)
+                    # Get value from group
+                    value = group._values.get(field.name)
+                    if value is None:
+                        if hasattr(field, 'default_factory') and field.default_factory:
+                            value = field.default_factory()
+                        else:
+                            value = field.default
 
-                    # Apply inverse transform if present
-                    if hasattr(field, 'inverse_transform') and field.inverse_transform:
-                        value = field.inverse_transform(value)
+                    # Try typed lookup (Checkbox/Input)
+                    widget = self.get_widget(field.widget_id, field.widget_type)
+                    if widget is not None:
+                        if hasattr(field, 'inverse_transform') and field.inverse_transform:
+                            value = field.inverse_transform(value)
+                        if isinstance(widget, Checkbox):
+                            widget.value = bool(value)
+                        else:
+                            widget.value = str(value) if value is not None else ""
+                        continue
 
-                    # Set widget value
-                    if field.widget_type == Checkbox:
-                        widget.value = bool(value)
-                    else:  # Input
-                        widget.value = str(value) if value is not None else ""
-                except (ValueError, AttributeError) as e:
-                    log.debug(f"Error syncing UI {field.checkbox_id}: {e}")
+                    # Generic lookup for custom widgets (FilterList, PortList, etc.)
+                    widget = self.app.query_one(f"#{field.widget_id}")
+                    if hasattr(widget, 'set_value'):
+                        widget.set_value(value)
+                except (NoMatches, ValueError, AttributeError) as e:
+                    log.debug(f"Error syncing UI {field.widget_id}: {e}")
 
     def clear_cache(self) -> None:
         """Clear the widget cache (call when widgets are remounted)."""
@@ -278,7 +290,7 @@ class ConfigSyncManager:
                 network_mode_section.remove_class("hidden")
 
                 # Sync RadioSet selection from config
-                mode = self.config.network_filter.mode
+                mode = NetworkMode(self.config._network_group._values.get("network_mode", "off"))
                 radio_set = self.app.query_one("#network-mode-radio", RadioSet)
                 if mode == NetworkMode.OFF:
                     radio_set.index = 0

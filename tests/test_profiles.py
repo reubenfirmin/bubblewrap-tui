@@ -291,6 +291,18 @@ class TestRoundTrip:
         # Compare drop_caps
         assert restored.drop_caps == full_config.drop_caps
 
+        # Compare network filter (now in group values)
+        assert restored._network_group._values.get("hostname_mode") == "whitelist"
+        assert restored._network_group._values.get("hostname_hosts") == ["github.com", "registry.npmjs.org"]
+        assert restored._network_group._values.get("expose_ports") == [8080]
+        assert restored._network_group._values.get("host_ports") == [5432, 6379]
+
+        # Verify computed network_filter property works
+        nf = restored.network_filter
+        assert nf.hostname_filter.hosts == ["github.com", "registry.npmjs.org"]
+        assert nf.port_forwarding.expose_ports == [8080]
+        assert nf.port_forwarding.host_ports == [5432, 6379]
+
 
 class TestValidateConfig:
     """Test validate_config() function."""

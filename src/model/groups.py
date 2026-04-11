@@ -27,6 +27,7 @@ from model.fields import (
     die_with_parent, new_session, as_pid_1, chdir,
     # Network fields
     share_net, bind_resolv_conf, bind_ssl_certs,
+    network_mode, hostname_mode, hostname_hosts, ip_mode, ip_cidrs, expose_ports, host_ports,
     # Desktop fields
     allow_dbus, allow_display, bind_user_config,
     # Environment fields
@@ -142,7 +143,9 @@ process_group = ConfigGroup(
 network_group = ConfigGroup(
     name="network",
     title="Network",
-    items=[share_net, bind_resolv_conf, bind_ssl_certs],
+    items=[share_net, bind_resolv_conf, bind_ssl_certs,
+           network_mode, hostname_mode, hostname_hosts, ip_mode, ip_cidrs,
+           expose_ports, host_ports],
     _to_args_fn=_network_to_args,
     _to_summary_fn=_network_to_summary,
 )
@@ -267,7 +270,7 @@ QUICK_SHORTCUTS = [
     bind_user_config,
 ]
 
-# Build checkbox_id -> UIField mapping for quick shortcuts
+# Build widget_id -> UIField mapping for quick shortcuts
 QUICK_SHORTCUT_BY_CHECKBOX_ID = {
-    field.checkbox_id: field for field in QUICK_SHORTCUTS
+    field.widget_id: field for field in QUICK_SHORTCUTS
 }

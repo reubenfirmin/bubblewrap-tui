@@ -11,6 +11,7 @@ from model import (
     HostnameFilter,
     IPFilter,
     NetworkFilter,
+    NetworkMode,
     OverlayConfig,
     PortForwarding,
     SandboxConfig,
@@ -76,6 +77,12 @@ def full_config():
     config.network.share_net = True
     config.network.bind_resolv_conf = True
     config.network.bind_ssl_certs = True
+
+    # Configure network filtering (mode=off so it doesn't change bwrap output)
+    config._network_group.set("hostname_mode", "whitelist")
+    config._network_group.set("hostname_hosts", ["github.com", "registry.npmjs.org"])
+    config._network_group.set("expose_ports", [8080])
+    config._network_group.set("host_ports", [5432, 6379])
 
     # Configure desktop
     config.desktop.allow_dbus = False
@@ -147,7 +154,7 @@ def overlay_persistent():
 def network_filter_whitelist():
     """A NetworkFilter with whitelist mode."""
     return NetworkFilter(
-        enabled=True,
+        mode=NetworkMode.FILTER,
         hostname_filter=HostnameFilter(
             mode=FilterMode.WHITELIST,
             hosts=["github.com", "registry.npmjs.org"],
@@ -164,7 +171,7 @@ def network_filter_whitelist():
 def network_filter_blacklist():
     """A NetworkFilter with blacklist mode."""
     return NetworkFilter(
-        enabled=True,
+        mode=NetworkMode.FILTER,
         hostname_filter=HostnameFilter(
             mode=FilterMode.OFF,
             hosts=[],

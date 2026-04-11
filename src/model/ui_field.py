@@ -39,8 +39,8 @@ Architecture Overview
 
 UIField vs Field
 ----------------
-- UIField: For config options that have a corresponding UI widget (checkbox/input)
-  Contains: type, default, checkbox_id, label, explanation, bwrap_flag/bwrap_args
+- UIField: For config options that have a corresponding UI widget
+  Contains: type, default, widget_id, label, explanation, bwrap_flag/bwrap_args
 
 - Field: For data-only fields (no UI representation but still serialized)
   Contains: type, default/default_factory, bwrap_args
@@ -53,7 +53,7 @@ Defining a config class with UIField:
         unshare_user = UIField(
             type_=bool,
             default=True,
-            checkbox_id="opt-unshare-user",
+            widget_id="opt-unshare-user",
             label="User namespace",
             explanation="Isolate user/group IDs",
             bwrap_flag="--unshare-user",
@@ -67,7 +67,7 @@ Using the config:
 
     # Access metadata (via class, not instance)
     field = NamespaceConfig.unshare_user
-    print(field.checkbox_id)          # "opt-unshare-user"
+    print(field.widget_id)          # "opt-unshare-user"
     print(field.explanation)          # "Isolate user/group IDs"
 
     # Generate bwrap args
@@ -78,7 +78,7 @@ Complex bwrap args with a callable:
     chdir = UIField(
         type_=str,
         default="",
-        checkbox_id="opt-chdir",
+        widget_id="opt-chdir",
         label="Working directory",
         explanation="Set working directory inside sandbox",
         bwrap_args=lambda v: ["--chdir", v] if v else [],
@@ -94,7 +94,7 @@ Using Field for data-only (mutable default with factory):
 
 Integration Points
 ------------------
-1. ConfigSyncManager (controller/sync.py): Uses checkbox_id to find widgets,
+1. ConfigSyncManager (controller/sync.py): Uses widget_id to find widgets,
    syncs values bidirectionally between UI and config.
 
 2. Profile serialization (profiles.py): Iterates _ui_fields and _data_fields
@@ -122,10 +122,11 @@ class UIField:
         self,
         type_: type,
         default: Any,
-        checkbox_id: str,
+        widget_id: str,
         label: str,
         explanation: str,
         *,
+        default_factory: Callable[[], Any] | None = None,
         bwrap_flag: str | None = None,
         bwrap_args: Callable[[Any], list[str]] | None = None,
         summary: str | None = None,
@@ -135,11 +136,12 @@ class UIField:
         """Create a UIField descriptor.
 
         Args:
-            type_: The Python type of this field (bool, str, int, etc.)
-            default: Default value for the field
-            checkbox_id: The Textual widget ID for this field's checkbox
-            label: Short label for UI checkbox
-            explanation: Explanation text shown below checkbox
+            type_: The Python type of this field (bool, str, int, list, etc.)
+            default: Default value for the field (use None with default_factory for mutable defaults)
+            widget_id: The Textual widget ID for this field's widget
+            label: Short label for UI widget
+            explanation: Explanation text shown below widget
+            default_factory: Factory function for mutable defaults (list, set, dict)
             bwrap_flag: Simple bwrap flag (e.g., "--unshare-user") - used when value is truthy
             bwrap_args: Callable that takes value and returns bwrap args list (for complex cases)
             summary: Text for summary view (defaults to explanation)
@@ -148,7 +150,8 @@ class UIField:
         """
         self.type_ = type_
         self.default = default
-        self.checkbox_id = checkbox_id
+        self.default_factory = default_factory
+        self.widget_id = widget_id
         self.label = label
         self.explanation = explanation
         self.bwrap_flag = bwrap_flag
@@ -174,7 +177,12 @@ class UIField:
         """
         if obj is None:
             return self
-        return obj.__dict__.get(self.name, self.default)
+        if self.name not in obj.__dict__:
+            if self.default_factory:
+                obj.__dict__[self.name] = self.default_factory()
+                return obj.__dict__[self.name]
+            return self.default
+        return obj.__dict__[self.name]
 
     def __set__(self, obj: Any, value: Any) -> None:
         """Set the field value on an instance."""
