@@ -35,7 +35,7 @@ from sandbox import (
     uninstall_sandbox,
 )
 
-BUI_VERSION = "0.6.3"
+BUI_VERSION = "0.6.4"
 
 # Global to store update message for display after TUI exits
 _update_available: str | None = None
