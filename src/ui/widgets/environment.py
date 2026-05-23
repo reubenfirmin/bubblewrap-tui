@@ -26,14 +26,18 @@ import ui.ids as ids
 class EnvVarItem(Container):
     """A card for an environment variable."""
 
-    def __init__(self, name: str, value: str, on_toggle: Callable) -> None:
+    def __init__(self, name: str, value: str, on_toggle: Callable, keep: bool = True) -> None:
         super().__init__()
         self.var_name = name
         self.var_value = value
         self._on_toggle = on_toggle
+        self._keep = keep
 
     def compose(self) -> ComposeResult:
-        yield Checkbox(self.var_name, value=True, classes="env-keep-toggle")
+        # Set the checked state at compose time. Setting it after mount() is
+        # unreliable because mount() is async - the child Checkbox isn't
+        # composed yet, so a post-mount query_one would miss it (#95).
+        yield Checkbox(self.var_name, value=self._keep, classes="env-keep-toggle")
         display_val = self.var_value[:30] + "..." if len(self.var_value) > 30 else self.var_value
         yield Static(display_val, classes="env-value")
 
@@ -167,12 +171,16 @@ class AddEnvDialog(ModalScreen[list[tuple[str, str]]]):
 
     def _get_env_pairs(self) -> list[tuple[str, str]]:
         """Get all non-empty name/value pairs from the rows."""
+        from controller.validators import sanitize_input
+
         pairs = []
         for row in self.query(EnvVarRow):
             name_input = row.query_one(".env-name-input", Input)
             value_input = row.query_one(".env-value-input", Input)
-            name = name_input.value.strip()
-            value = value_input.value.strip()
+            # Strip newlines/control chars in case a value was set programmatically
+            # (e.g. .env import) rather than typed/pasted into the single-line input.
+            name = sanitize_input(name_input.value).strip()
+            value = sanitize_input(value_input.value).strip()
             # Only add if name is non-empty
             if name:
                 pairs.append((name, value))

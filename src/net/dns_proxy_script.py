@@ -26,7 +26,7 @@ HOSTS = {hosts}
 MAX_COMPRESSION_DEPTH = 10  # Limit recursion to prevent DoS from pointer loops
 
 
-def parse_qname(data: bytes, offset: int, depth: int = 0) -> tuple[str, int]:
+def parse_qname(data: bytes, offset: int, depth: int = 0, visited: set | None = None) -> tuple[str, int]:
     """Extract hostname from DNS query packet.
 
     DNS names are encoded as length-prefixed labels:
@@ -36,13 +36,24 @@ def parse_qname(data: bytes, offset: int, depth: int = 0) -> tuple[str, int]:
         data: Raw DNS packet bytes
         offset: Starting offset in packet (usually 12 for queries)
         depth: Current recursion depth for compression pointer tracking
+        visited: Offsets already followed, used to detect compression cycles
 
     Returns:
         Tuple of (hostname, new_offset)
     """
+    if visited is None:
+        visited = set()
+
     if depth > MAX_COMPRESSION_DEPTH:
         # Reject packets with excessive compression pointer depth
         return "", offset
+
+    # Cycle detection: a pointer that loops back to an offset we already
+    # followed (e.g. A -> B -> A) would otherwise be re-followed until the
+    # depth limit. Stop as soon as we revisit an offset.
+    if offset in visited:
+        return "", offset
+    visited.add(offset)
 
     labels = []
     while True:
@@ -58,7 +69,7 @@ def parse_qname(data: bytes, offset: int, depth: int = 0) -> tuple[str, int]:
             if offset + 2 > len(data):
                 break  # Malformed packet
             pointer = struct.unpack("!H", data[offset:offset+2])[0] & 0x3FFF
-            label, _ = parse_qname(data, pointer, depth + 1)
+            label, _ = parse_qname(data, pointer, depth + 1, visited)
             labels.append(label)
             offset += 2
             break

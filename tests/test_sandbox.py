@@ -168,3 +168,13 @@ class TestInstallSandboxBinary:
         script = (bin_dir / "myapp").read_text()
         # The $() should be quoted so it doesn't execute
         assert "'test$(id>/tmp/pwned)'" in script or '"test$(id>/tmp/pwned)"' in script
+
+
+class TestFixOverlayWorkdirPermissions:
+    """Cleanup must survive os.walk errors so uninstall's rmtree still runs (#92)."""
+
+    def test_does_not_raise_when_walk_errors(self):
+        from sandbox import _fix_overlay_workdir_permissions
+
+        with patch("sandbox.os.walk", side_effect=OSError("simulated walk failure")):
+            _fix_overlay_workdir_permissions(Path("/nonexistent"))

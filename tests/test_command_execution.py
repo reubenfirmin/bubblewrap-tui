@@ -233,3 +233,82 @@ class TestGetDescendantsIntegration:
         # Current test process shouldn't have children at this point
         result = _get_descendants(os.getpid())
         assert isinstance(result, list)
+
+
+class TestFixOverlayWorkdirPermissions:
+    """Tests for _fix_overlay_workdir_permissions cleanup robustness (#92)."""
+
+    def test_does_not_raise_when_walk_errors(self):
+        """If os.walk itself raises OSError, cleanup must not crash (#92).
+
+        os.walk can raise on symlink loops, mid-traversal deletions, or fs
+        errors. This runs inside a `finally`, so a crash here would skip the
+        rmtree and leave the sandbox half-cleaned.
+        """
+        from command_execution import _fix_overlay_workdir_permissions
+
+        with patch(
+            "command_execution.os.walk",
+            side_effect=OSError("Too many levels of symbolic links"),
+        ):
+            # Must return normally, not propagate the OSError.
+            _fix_overlay_workdir_permissions(Path("/nonexistent"))
+
+    def test_chmods_directories_missing_owner_perms(self, tmp_path):
+        """Directories lacking owner rwx get chmod'd so they can be deleted (#92)."""
+        from command_execution import _fix_overlay_workdir_permissions
+
+        work = tmp_path / "work"
+        (work / "nested").mkdir(parents=True)
+        work.chmod(0o000)
+        try:
+            _fix_overlay_workdir_permissions(tmp_path)
+            assert work.stat().st_mode & 0o700 == 0o700
+        finally:
+            work.chmod(0o755)
+
+
+class TestCopyWinsize:
+    """PTY window-size propagation - the fix for 0x0 sandbox terminals that
+    collapse size-sensitive TUIs (opencode/pi)."""
+
+    def test_copies_rows_and_cols_to_pty(self):
+        import fcntl
+        import pty
+        import struct
+        import termios
+
+        from command_execution import _copy_winsize
+
+        src_master, src_slave = pty.openpty()
+        dst_master, dst_slave = pty.openpty()
+        try:
+            # Give the source terminal a known, non-zero size.
+            fcntl.ioctl(src_slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 100, 0, 0))
+            # Destination starts at 0x0 (default for a fresh pty).
+            rows0, cols0, _, _ = struct.unpack(
+                "HHHH", fcntl.ioctl(dst_slave, termios.TIOCGWINSZ, b"\x00" * 8)
+            )
+            assert (rows0, cols0) == (0, 0)
+
+            _copy_winsize(src_slave, dst_master)
+
+            rows, cols, _, _ = struct.unpack(
+                "HHHH", fcntl.ioctl(dst_slave, termios.TIOCGWINSZ, b"\x00" * 8)
+            )
+            assert (rows, cols) == (40, 100)
+        finally:
+            for f in (src_master, src_slave, dst_master, dst_slave):
+                os.close(f)
+
+    def test_noop_when_source_is_not_a_tty(self, tmp_path):
+        """A non-tty source (or any ioctl failure) must be swallowed, not raised."""
+        from command_execution import _copy_winsize
+
+        p = tmp_path / "regular_file"
+        p.write_text("x")
+        fd = os.open(str(p), os.O_RDONLY)
+        try:
+            _copy_winsize(fd, fd)  # ioctl fails on a regular file -> no raise
+        finally:
+            os.close(fd)

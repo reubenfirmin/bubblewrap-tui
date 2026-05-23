@@ -5,6 +5,25 @@ import re
 from constants import MAX_UID_GID
 
 
+def sanitize_input(value: str) -> str:
+    """Remove newlines and other control characters from free-form input.
+
+    Single-line Textual Inputs already strip newlines on paste (only the first
+    line is kept) and can't have newlines typed into them, so this mainly guards
+    against values arriving programmatically (e.g. from a hand-edited profile or
+    .env import). Use it for free-form string fields that have no stricter
+    format validation. Newlines and carriage returns are removed; tabs become
+    spaces.
+
+    Args:
+        value: Raw string value
+
+    Returns:
+        Sanitized string with control characters removed
+    """
+    return value.replace("\n", "").replace("\r", "").replace("\t", " ")
+
+
 def validate_uid_gid(value: str) -> int | None:
     """Validate UID/GID is numeric and in valid range (0-65535).
 
@@ -94,7 +113,7 @@ def validate_chdir(value: str) -> str:
     Returns:
         Stripped path string
     """
-    return value.strip()
+    return sanitize_input(value).strip()
 
 
 def validate_username(value: str) -> str | None:
