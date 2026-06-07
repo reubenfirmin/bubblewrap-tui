@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from typing import TYPE_CHECKING, Callable
-
-from textual.css.query import NoMatches
-from textual.widgets import Checkbox
 
 if TYPE_CHECKING:
     from typing import Any
 
     from textual.app import App
-
-log = logging.getLogger(__name__)
 
 
 def reflow_env_columns(
@@ -57,11 +51,7 @@ def reflow_env_columns(
         if col_idx < len(col_items):
             for name, value in col_items[col_idx]:
                 is_kept = name in env_config.keep_env_vars
-                item = env_var_item_class(name, value, on_toggle)
-                col.mount(item)
-                # Set checkbox state after mount
-                try:
-                    checkbox = item.query_one(".env-keep-toggle", Checkbox)
-                    checkbox.value = is_kept
-                except NoMatches:
-                    log.debug("Checkbox not found in env var item")
+                # Pass keep state to the constructor so the checkbox is correct
+                # at compose time. Setting it after mount() is unreliable because
+                # mount() is async and the child Checkbox isn't composed yet (#95).
+                col.mount(env_var_item_class(name, value, on_toggle, is_kept))

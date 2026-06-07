@@ -126,6 +126,11 @@ class BubblewrapTUI(
             self._loaded_from_profile = False
         self._execute_command = False
         self._saved_hostname: str = ""  # For UTS namespace restore
+        # Monotonic sequence guard for status updates: ensures a stale (out-of-
+        # order) update can never overwrite a newer one. _status_seq is the last
+        # issued sequence; _status_seq_applied is the last one actually shown.
+        self._status_seq = 0
+        self._status_seq_applied = 0
 
     def _init_quick_shortcuts_bound_dirs(self) -> None:
         """Initialize bound_dirs with default-checked quick shortcuts."""
@@ -237,7 +242,21 @@ class BubblewrapTUI(
     # =========================================================================
 
     def _set_status(self, message: str) -> None:
-        """Set status bar message."""
+        """Set status bar message.
+
+        Each call is stamped with the next sequence number and applied through
+        _apply_status, which drops stale updates. Callers that defer a status
+        update (e.g. from a worker) should capture the sequence and pass it to
+        _apply_status so a slow update can't clobber a newer message.
+        """
+        self._status_seq += 1
+        self._apply_status(message, self._status_seq)
+
+    def _apply_status(self, message: str, seq: int) -> None:
+        """Apply a status message if it is not older than the last one shown."""
+        if seq < self._status_seq_applied:
+            return  # Stale, out-of-order update - a newer message already shown.
+        self._status_seq_applied = seq
         try:
             status = self.query_one(css(ids.STATUS_BAR), Static)
             status.update(message)
@@ -545,6 +564,9 @@ class BubblewrapTUI(
     def _on_dev_mode_change(self, mode: str) -> None:
         """Handle /dev mode change."""
         self.config.vfs.dev_mode = mode
+        # Refresh command preview + security warning so the banner reflects the
+        # new mode immediately (e.g. shows/clears the full-/dev warning).
+        self._update_preview()
 
     # =========================================================================
     # Network Filtering Callbacks

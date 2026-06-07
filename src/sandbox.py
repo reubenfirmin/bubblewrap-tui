@@ -285,17 +285,24 @@ def _fix_overlay_workdir_permissions(path: Path) -> None:
 
     Overlayfs sets workdir permissions to 000 to prevent direct access.
     Since the user owns the directory, we can chmod it to allow deletion.
+
+    Must not raise: os.walk itself can fail on symlink loops, mid-traversal
+    deletions, or filesystem errors, and the caller's rmtree still needs to run.
     """
-    for root, dirs, files in os.walk(path, topdown=True):
-        for d in dirs:
-            dir_path = Path(root) / d
-            try:
-                # Ensure we can read/write/execute the directory
-                current_mode = dir_path.stat().st_mode
-                if current_mode & 0o700 != 0o700:
-                    os.chmod(dir_path, current_mode | 0o700)
-            except OSError:
-                pass
+    try:
+        for root, dirs, files in os.walk(path, topdown=True, onerror=lambda e: None):
+            for d in dirs:
+                dir_path = Path(root) / d
+                try:
+                    # Ensure we can read/write/execute the directory
+                    current_mode = dir_path.stat().st_mode
+                    if current_mode & 0o700 != 0o700:
+                        os.chmod(dir_path, current_mode | 0o700)
+                except OSError:
+                    pass
+    except OSError:
+        # If walk itself fails, cleanup may be incomplete but don't crash.
+        pass
 
 
 def uninstall_sandbox(sandbox_name: str) -> None:

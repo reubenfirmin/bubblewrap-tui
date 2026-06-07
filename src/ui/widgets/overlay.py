@@ -86,23 +86,30 @@ class OverlayItem(Container):
 
     @on(Input.Changed, ".overlay-src-input")
     def on_src_changed(self, event: Input.Changed) -> None:
+        from controller.validators import sanitize_input
+
+        value = sanitize_input(event.value)
         old_source = self.overlay.source
-        self.overlay.source = event.value
+        self.overlay.source = value
         # Auto-sync dest if it matches source (user hasn't customized it)
         dest_input = self.query_one(".overlay-dest-input", Input)
         if not dest_input.value or dest_input.value == old_source:
-            dest_input.value = event.value
-            self.overlay.dest = event.value
+            dest_input.value = value
+            self.overlay.dest = value
         self._on_update()
 
     @on(Input.Changed, ".overlay-dest-input")
     def on_dest_changed(self, event: Input.Changed) -> None:
-        self.overlay.dest = event.value
+        from controller.validators import sanitize_input
+
+        self.overlay.dest = sanitize_input(event.value)
         self._on_update()
 
     @on(Input.Changed, ".overlay-write-input")
     def on_write_changed(self, event: Input.Changed) -> None:
-        self.overlay.write_dir = event.value
+        from controller.validators import sanitize_input
+
+        self.overlay.write_dir = sanitize_input(event.value)
         self._on_update()
 
     @on(Button.Pressed, ".overlay-remove-btn")

@@ -265,13 +265,24 @@ def build_dns_query(hostname: str, qtype: int = 1) -> bytes:
 MAX_COMPRESSION_DEPTH = 10  # Must match dns_proxy_script.py
 
 
-def parse_qname_impl(data: bytes, offset: int, depth: int = 0) -> tuple[str, int]:
+def parse_qname_impl(
+    data: bytes, offset: int, depth: int = 0, visited: set | None = None
+) -> tuple[str, int]:
     """Reference implementation of parse_qname for testing.
 
     This mirrors the logic in the embedded proxy script.
     """
+    if visited is None:
+        visited = set()
+
     if depth > MAX_COMPRESSION_DEPTH:
         return "", offset
+
+    # Cycle detection: a compression pointer that loops back to an offset we
+    # already followed would otherwise be re-followed until the depth limit.
+    if offset in visited:
+        return "", offset
+    visited.add(offset)
 
     labels = []
     while True:
@@ -285,7 +296,7 @@ def parse_qname_impl(data: bytes, offset: int, depth: int = 0) -> tuple[str, int
             if offset + 2 > len(data):
                 break
             pointer = struct.unpack("!H", data[offset:offset + 2])[0] & 0x3FFF
-            label, _ = parse_qname_impl(data, pointer, depth + 1)
+            label, _ = parse_qname_impl(data, pointer, depth + 1, visited)
             labels.append(label)
             offset += 2
             break
@@ -412,6 +423,40 @@ class TestParseQname:
         # Should not crash, depth limit should stop recursion
         qname, _ = parse_qname_impl(packet, 12)
         assert isinstance(qname, str)
+
+    def test_compression_cycle_detected_below_depth_limit(self, monkeypatch):
+        """A pointer cycle is followed at most once per offset, not up to the
+        depth limit (#93 cycle detection).
+
+        Build a 2-node cycle (offset 12 -> 14 -> 12). Without cycle detection
+        the recursion would continue until MAX_COMPRESSION_DEPTH; with it, each
+        offset is visited once. We count recursive calls to prove the bound.
+        """
+        import sys
+
+        mod = sys.modules[__name__]
+
+        txn_id = b"\x12\x34"
+        flags = b"\x01\x00"
+        counts = b"\x00\x01\x00\x00\x00\x00\x00\x00"  # 12-byte header
+        # offset 12 -> pointer to 14 ; offset 14 -> pointer to 12
+        body = bytes([0xC0, 14]) + bytes([0xC0, 12])
+        packet = txn_id + flags + counts + body
+
+        calls = {"n": 0}
+        real = mod.parse_qname_impl
+
+        def counting(data, offset, depth=0, visited=None):
+            calls["n"] += 1
+            return real(data, offset, depth, visited)
+
+        monkeypatch.setattr(mod, "parse_qname_impl", counting)
+
+        qname, _ = mod.parse_qname_impl(packet, 12)
+        assert isinstance(qname, str)
+        # Two unique offsets in the cycle -> at most 3 calls (initial + 2).
+        # Without cycle detection this would be MAX_COMPRESSION_DEPTH + 2 = 12.
+        assert calls["n"] <= 3, f"cycle not detected: {calls['n']} recursive calls"
 
 
 class TestMakeNxdomain:

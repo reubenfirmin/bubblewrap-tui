@@ -3,12 +3,42 @@
 import pytest
 
 from controller.validators import (
+    sanitize_input,
     validate_chdir,
     validate_hostname,
     validate_tmpfs_size,
     validate_uid_gid,
     validate_username,
 )
+
+
+class TestSanitizeInput:
+    """Tests for sanitize_input newline/control-char stripping (#97)."""
+
+    def test_removes_newlines(self):
+        assert sanitize_input("line1\nline2") == "line1line2"
+
+    def test_removes_carriage_returns(self):
+        assert sanitize_input("a\r\nb") == "ab"
+
+    def test_converts_tabs_to_spaces(self):
+        assert sanitize_input("a\tb") == "a b"
+
+    def test_leaves_plain_text_untouched(self):
+        assert sanitize_input("/home/user") == "/home/user"
+
+    def test_empty_string(self):
+        assert sanitize_input("") == ""
+
+
+class TestValidateChdirNewlines:
+    """validate_chdir must strip embedded newlines, not just outer whitespace (#97)."""
+
+    def test_strips_internal_newline(self):
+        assert "\n" not in validate_chdir("/path\n/to")
+
+    def test_strips_carriage_return(self):
+        assert "\r" not in validate_chdir("/a\r/b")
 
 
 class TestValidateUidGid:

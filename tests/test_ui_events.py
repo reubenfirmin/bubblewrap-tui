@@ -501,3 +501,201 @@ class TestNetworkFilterSync:
 
             ip_radio = app.query_one(css(ids.IP_MODE_RADIO), FilterModeRadio)
             assert ip_radio.mode == "blacklist"
+
+
+class TestStatusBarSequenceGuard:
+    """Status updates must be monotonic so a stale update can't clobber a newer
+    one (#94 defense-in-depth)."""
+
+    @pytest.mark.asyncio
+    async def test_set_status_displays_message(self):
+        app = BubblewrapTUI(command=["bash"], config=SandboxConfig(command=["bash"]))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._set_status("hello world")
+            await pilot.pause()
+            status = app.query_one(css(ids.STATUS_BAR), Static)
+            assert str(status.render()) == "hello world"
+
+    @pytest.mark.asyncio
+    async def test_stale_update_does_not_overwrite_newer(self):
+        app = BubblewrapTUI(command=["bash"], config=SandboxConfig(command=["bash"]))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            status = app.query_one(css(ids.STATUS_BAR), Static)
+            app._apply_status("newer", 5)
+            await pilot.pause()
+            assert str(status.render()) == "newer"
+            # An out-of-order (stale) apply with a lower sequence must be ignored.
+            app._apply_status("stale", 3)
+            await pilot.pause()
+            assert str(status.render()) == "newer"
+
+    @pytest.mark.asyncio
+    async def test_set_status_sequence_is_monotonic(self):
+        app = BubblewrapTUI(command=["bash"], config=SandboxConfig(command=["bash"]))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._set_status("a")
+            first = app._status_seq
+            app._set_status("b")
+            assert app._status_seq == first + 1
+
+
+class TestProfileLoadEnvCheckboxes:
+    """Environment checkboxes must reflect a loaded profile even before the tab
+    is visited (#95)."""
+
+    @pytest.mark.asyncio
+    async def test_unchecked_env_var_reflected_after_load(self):
+        import os
+        from ui.widgets import EnvVarItem
+
+        target = sorted(os.environ.keys())[0]
+        app = BubblewrapTUI(command=["bash"])
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            loaded = SandboxConfig(command=["bash"])
+            loaded.environment.clear_env = False
+            loaded.environment.keep_env_vars = set(os.environ.keys()) - {target}
+            loaded.environment.unset_env_vars = {target}
+
+            app._set_config(loaded)
+            app._on_profile_loaded()
+            await pilot.pause()
+
+            checkbox = None
+            for item in app.query(EnvVarItem):
+                if item.var_name == target:
+                    checkbox = item.query_one(".env-keep-toggle", Checkbox)
+                    break
+            assert checkbox is not None, "env var item not found"
+            assert checkbox.value is False, (
+                "checkbox should be unchecked to match loaded profile"
+            )
+
+    @pytest.mark.asyncio
+    async def test_kept_env_var_stays_checked_after_load(self):
+        import os
+        from ui.widgets import EnvVarItem
+
+        target = sorted(os.environ.keys())[0]
+        app = BubblewrapTUI(command=["bash"])
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            loaded = SandboxConfig(command=["bash"])
+            loaded.environment.clear_env = False
+            loaded.environment.keep_env_vars = set(os.environ.keys())
+            app._set_config(loaded)
+            app._on_profile_loaded()
+            await pilot.pause()
+
+            checkbox = None
+            for item in app.query(EnvVarItem):
+                if item.var_name == target:
+                    checkbox = item.query_one(".env-keep-toggle", Checkbox)
+                    break
+            assert checkbox is not None
+            assert checkbox.value is True
+
+
+class TestSecurityWarningBanner:
+    """The /dev security warning must track the actual config (#96)."""
+
+    @pytest.mark.asyncio
+    async def test_toggling_dev_mode_to_full_shows_warning(self):
+        from ui.widgets import DevModeCard
+
+        app = BubblewrapTUI(command=["bash"], config=SandboxConfig(command=["bash"]))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            warning = app.query_one(css(ids.SECURITY_WARNING), Static)
+            btn = app.query_one(css(ids.DEV_MODE_BTN), Button)
+            assert not warning.has_class("-visible")
+
+            for _ in range(3):
+                if app.config.vfs.dev_mode == "full":
+                    break
+                btn.press()
+                await pilot.pause()
+
+            assert app.config.vfs.dev_mode == "full"
+            assert warning.has_class("-visible"), "warning not shown after dev->full"
+            assert warning.display is True
+
+    @pytest.mark.asyncio
+    async def test_warning_clears_when_loading_safe_profile(self):
+        app = BubblewrapTUI(command=["bash"], config=SandboxConfig(command=["bash"]))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            warning = app.query_one(css(ids.SECURITY_WARNING), Static)
+            app.config.vfs.dev_mode = "full"
+            app._update_security_warning()
+            await pilot.pause()
+            assert warning.has_class("-visible")
+
+            loaded = SandboxConfig(command=["bash"])
+            loaded.vfs.dev_mode = "minimal"
+            app._set_config(loaded)
+            app._on_profile_loaded()
+            await pilot.pause()
+            assert not warning.has_class("-visible")
+            assert warning.display is False
+
+
+class TestInputNewlineSanitization:
+    """Free-form fields must not store embedded newlines, even if a value is set
+    programmatically (#97)."""
+
+    @pytest.mark.asyncio
+    async def test_overlay_dest_sanitized(self):
+        from ui.widgets import OverlayItem
+
+        app = BubblewrapTUI(command=["bash"], config=SandboxConfig(command=["bash"]))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._add_overlay()
+            await pilot.pause()
+            item = app.query_one(OverlayItem)
+            dest_input = item.query_one(".overlay-dest-input", Input)
+            dest_input.value = "/mnt\n/evil"
+            await pilot.pause()
+            assert "\n" not in item.overlay.dest
+            assert item.overlay.dest == "/mnt/evil"
+
+    @pytest.mark.asyncio
+    async def test_overlay_source_sanitized(self):
+        from ui.widgets import OverlayItem
+
+        app = BubblewrapTUI(command=["bash"], config=SandboxConfig(command=["bash"]))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._add_overlay()
+            await pilot.pause()
+            item = app.query_one(OverlayItem)
+            # mode must allow source editing
+            item.overlay.mode = "overlay"
+            src_input = item.query_one(".overlay-src-input", Input)
+            src_input.disabled = False
+            src_input.value = "/src\n/x"
+            await pilot.pause()
+            assert "\n" not in item.overlay.source
+
+    @pytest.mark.asyncio
+    async def test_add_env_dialog_strips_newlines(self):
+        from ui.widgets import AddEnvDialog
+        from ui.widgets.environment import EnvVarRow
+
+        app = BubblewrapTUI(command=["bash"], config=SandboxConfig(command=["bash"]))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            dialog = AddEnvDialog()
+            await app.push_screen(dialog)
+            await pilot.pause()
+            row = dialog.query_one(EnvVarRow)
+            row.query_one(".env-name-input", Input).value = "FOO"
+            row.query_one(".env-value-input", Input).value = "bar\nbaz"
+            await pilot.pause()
+            pairs = dialog._get_env_pairs()
+            assert pairs == [("FOO", "barbaz")]

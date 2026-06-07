@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import io
 import os
 import pty
@@ -45,6 +46,34 @@ def prepare_seccomp_fd(cmd: list[str], file_map: dict[str, str] | None) -> tuple
     new_cmd = [cmd[0], "--seccomp", str(fd)] + cmd[1:]
 
     return new_cmd, fd
+
+
+def _copy_winsize(src_fd: int, dst_fd: int) -> None:
+    """Copy terminal window size (rows/cols/pixels) from src_fd to dst_fd.
+
+    src_fd should be a controlling-terminal fd; dst_fd a PTY master. A freshly
+    forked PTY slave defaults to 0x0, which makes size-sensitive TUIs (e.g.
+    bubbletea apps like opencode) collapse their layout. Setting TIOCSWINSZ on
+    the master also delivers SIGWINCH to the child, so the sandboxed program
+    learns its real size. No-op if either fd isn't a terminal.
+    """
+    try:
+        winsize = fcntl.ioctl(src_fd, termios.TIOCGWINSZ, b"\x00" * 8)
+        fcntl.ioctl(dst_fd, termios.TIOCSWINSZ, winsize)
+    except OSError:
+        pass
+
+
+def _controlling_tty_fd() -> int | None:
+    """Return a usable terminal fd among stdin/stdout/stderr, or None."""
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            fd = stream.fileno()
+        except (io.UnsupportedOperation, OSError, ValueError):
+            continue
+        if os.isatty(fd):
+            return fd
+    return None
 
 
 def _get_descendants(pid: int) -> list[int]:
@@ -172,6 +201,20 @@ def _run_with_pty(cmd: list[str], seccomp_fd: int | None = None) -> int:
         except OSError:
             pass
 
+    # Parent - propagate the terminal window size to the PTY. A fresh PTY slave
+    # defaults to 0x0, which collapses size-sensitive TUIs (bubbletea, etc.).
+    # Set the initial size and forward later resizes via SIGWINCH.
+    tty_fd = _controlling_tty_fd()
+    old_winch = None
+    if tty_fd is not None:
+        _copy_winsize(tty_fd, fd)
+        try:
+            old_winch = signal.signal(
+                signal.SIGWINCH, lambda *_: _copy_winsize(tty_fd, fd)
+            )
+        except (ValueError, OSError):
+            old_winch = None
+
     # Parent - copy data between pty and stdin/stdout
     old_settings = None
     try:
@@ -229,6 +272,12 @@ def _run_with_pty(cmd: list[str], seccomp_fd: int | None = None) -> int:
     except KeyboardInterrupt:
         return cleanup_child()
     finally:
+        # Restore SIGWINCH handler
+        if old_winch is not None:
+            try:
+                signal.signal(signal.SIGWINCH, old_winch)
+            except (ValueError, OSError):
+                pass
         # Restore terminal settings
         if old_settings is not None and stdin_fd is not None:
             termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_settings)
@@ -247,16 +296,24 @@ def _fix_overlay_workdir_permissions(path: Path) -> None:
 
     Overlayfs sets workdir permissions to 000 to prevent direct access.
     Since the user owns the directory, we can chmod it to allow deletion.
+
+    Runs during cleanup (inside a `finally`), so it must never raise: os.walk
+    itself can fail on symlink loops, mid-traversal deletions, or filesystem
+    errors. We swallow those so the surrounding rmtree still runs.
     """
-    for root, dirs, files in os.walk(path, topdown=True):
-        for d in dirs:
-            dir_path = Path(root) / d
-            try:
-                current_mode = dir_path.stat().st_mode
-                if current_mode & 0o700 != 0o700:
-                    os.chmod(dir_path, current_mode | 0o700)
-            except OSError:
-                pass
+    try:
+        for root, dirs, files in os.walk(path, topdown=True, onerror=lambda e: None):
+            for d in dirs:
+                dir_path = Path(root) / d
+                try:
+                    current_mode = dir_path.stat().st_mode
+                    if current_mode & 0o700 != 0o700:
+                        os.chmod(dir_path, current_mode | 0o700)
+                except OSError:
+                    pass
+    except OSError:
+        # If walk itself fails, cleanup may be incomplete but don't crash.
+        pass
 
 
 def execute_sandbox(
