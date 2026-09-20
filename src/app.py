@@ -38,7 +38,7 @@ from controller import (
     NetworkEventsMixin,
     OverlayEventsMixin,
 )
-from detection import is_path_covered, resolve_command_executable
+from detection import bind_command_executable
 from net import has_host_dns
 from ui import (
     BoundDirItem,
@@ -114,13 +114,10 @@ class BubblewrapTUI(
         else:
             # Create new config
             self.config = SandboxConfig(command=command)
-            # Bind current directory read-only by default
-            cwd = Path.cwd().resolve()
-            self.config.bound_dirs.append(BoundDirectory(path=cwd, readonly=True))
             # Initialize bound_dirs with default-checked quick shortcuts
             self._init_quick_shortcuts_bound_dirs()
-            # Auto-detect command executable and bind its directory (after system paths added)
-            self._auto_bind_command_dir(command)
+            # Grant the executable file; other host paths require explicit selection.
+            bind_command_executable(self.config)
             # All env vars kept by default
             self.config.environment.keep_env_vars = set(os.environ.keys())
             self._loaded_from_profile = False
@@ -158,19 +155,6 @@ class BubblewrapTUI(
 
             # Add to bound_dirs
             self.config.bound_dirs.append(BoundDirectory(path=path, readonly=True))
-
-    def _auto_bind_command_dir(self, command: list[str]) -> None:
-        """Auto-detect and bind the directory containing the command executable."""
-        resolved_path = resolve_command_executable(command)
-        if not resolved_path:
-            return
-
-        # Check if already covered by bound_dirs (includes system paths from quick shortcuts)
-        if not is_path_covered(resolved_path, self.config.bound_dirs):
-            self.config.bound_dirs.append(BoundDirectory(path=resolved_path.parent, readonly=True))
-
-        # Update command to use resolved path
-        self.config.command[0] = str(resolved_path)
 
     def compose(self) -> ComposeResult:
         log.debug("compose() starting with %d bound_dirs", len(self.config.bound_dirs))

@@ -331,9 +331,9 @@ class BubblewrapSummarizer:
             ro_dirs = [str(d.path) for d in self.config.bound_dirs if d.readonly]
             rw_dirs = [str(d.path) for d in self.config.bound_dirs if not d.readonly]
             if ro_dirs:
-                lines.append(f"• User directories (read-only): {', '.join(ro_dirs)} — sandbox cannot modify")
+                lines.append(f"• Host paths (read-only): {', '.join(ro_dirs)} — sandbox cannot modify")
             if rw_dirs:
-                lines.append(f"• User directories (read-write): {', '.join(rw_dirs)} — sandbox can modify these files")
+                lines.append(f"• Host paths (read-write): {', '.join(rw_dirs)} — sandbox can modify these files")
 
         # Virtual files (synthetic passwd/group, etc.)
         virtual_files = self._get_virtual_files_summary()
@@ -453,9 +453,9 @@ class BubblewrapSummarizer:
             ro_dirs = [str(d.path) for d in self.config.bound_dirs if d.readonly]
             rw_dirs = [str(d.path) for d in self.config.bound_dirs if not d.readonly]
             if ro_dirs:
-                lines.append(f"[{color}]• User directories (read-only): {', '.join(ro_dirs)} — sandbox cannot modify[/]")
+                lines.append(f"[{color}]• Host paths (read-only): {', '.join(ro_dirs)} — sandbox cannot modify[/]")
             if rw_dirs:
-                lines.append(f"[{color}]• User directories (read-write): {', '.join(rw_dirs)} — sandbox can modify these files[/]")
+                lines.append(f"[{color}]• Host paths (read-write): {', '.join(rw_dirs)} — sandbox can modify these files[/]")
 
         # Network filtering
         nf = self.config.network_filter
