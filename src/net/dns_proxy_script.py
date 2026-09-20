@@ -125,7 +125,8 @@ def forward(query: bytes) -> bytes:
         DNS response from upstream, or empty bytes on error
     """
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        family = socket.AF_INET6 if ":" in UPSTREAM_DNS else socket.AF_INET
+        sock = socket.socket(family, socket.SOCK_DGRAM)
         sock.settimeout(5.0)
         sock.sendto(query, (UPSTREAM_DNS, UPSTREAM_PORT))
         response, _ = sock.recvfrom(4096)

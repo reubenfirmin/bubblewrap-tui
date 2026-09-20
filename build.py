@@ -53,6 +53,7 @@ MODULE_ORDER = [
     "model/sandbox_config.py",        # Depends on config_group, groups, network_filter
     "commandoutput.py",               # Command output formatting
     "net/utils.py",                   # Network utilities (resolve hostname, validate, etc.)
+    "net/dns_forward.py",             # Host DNS forwarding configuration
     "net/iptables.py",                # iptables rule generation
     "net/dns_proxy.py",               # DNS proxy generation for hostname filtering
     "net/pasta_install.py",           # pasta installation detection
@@ -100,7 +101,7 @@ MODULE_ORDER = [
 LOCAL_MODULES = {
     "constants", "fileutils", "detection", "environment", "installer", "sandbox", "profiles", "app", "cli", "styles", "bwrap",
     "commandoutput", "virtual_files", "command_execution", "seccomp_filter",
-    "net", "net.utils", "net.iptables", "net.dns_proxy", "net.pasta", "net.audit",
+    "net", "net.utils", "net.iptables", "net.dns_proxy", "net.dns_forward", "net.pasta", "net.audit",
     "net.pasta_install", "net.pasta_args", "net.filtering", "net.pasta_exec",
     "model",
     "model.ui_field", "model.bound_directory", "model.overlay_config", "model.network_filter",
