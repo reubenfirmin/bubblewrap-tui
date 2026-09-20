@@ -13,17 +13,20 @@ import shutil
 from pathlib import Path
 
 # Header for the generated script (shebang + uv metadata)
-HEADER = '''#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.12"
-# dependencies = ["textual==7.3.0", "dpkt==1.9.8", "pyseccomp==0.1.2"]
-# ///
-"""
+# Keep metadata lines quoted: uv scans even inside multiline strings.
+HEADER = (
+    '#!/usr/bin/env -S uv run --script\n'
+    '# /// script\n'
+    '# requires-python = ">=3.12"\n'
+    '# dependencies = ["textual==7.3.0", "dpkt==1.9.8", "pyseccomp==0.1.2"]\n'
+    '# ///\n'
+    '''"""
 Bubblewrap TUI - A visual interface for configuring bubblewrap sandboxes.
 
 Usage: bui -- <command> [args...]
 """
 '''
+)
 
 # Order matters - modules must be concatenated in dependency order
 MODULE_ORDER = [
