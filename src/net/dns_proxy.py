@@ -72,8 +72,8 @@ def get_host_nameservers() -> list[str]:
 
     Note:
         Localhost entries (e.g., 127.0.0.53 for systemd-resolved) are included.
-        The DNS proxy runs inside the sandbox's network namespace, so there's
-        no loop - the sandbox's 127.0.0.1:53 is separate from the host's resolver.
+        Pasta must forward these from a namespace DNS address to the host;
+        the sandbox's own loopback cannot reach a host loopback resolver.
     """
     resolv_conf = Path("/etc/resolv.conf")
     nameservers = []

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from model.network_filter import NetworkFilter
+    from net.dns_forward import DNSForwarding
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,9 @@ def check_iptables() -> bool:
     return iptables is not None
 
 
-def generate_iptables_rules(nf: NetworkFilter) -> tuple[list[str], list[str]]:
+def generate_iptables_rules(
+    nf: NetworkFilter, dns_forwarding: "DNSForwarding | None" = None,
+) -> tuple[list[str], list[str]]:
     """Generate iptables and ip6tables commands from filter config.
 
     Args:
@@ -175,12 +178,29 @@ def generate_iptables_rules(nf: NetworkFilter) -> tuple[list[str], list[str]]:
     v4_rules.append("iptables -A INPUT -i lo -j ACCEPT")
     v6_rules.append("ip6tables -A INPUT -i lo -j ACCEPT")
 
+    # Pasta translates just these DNS destinations to host resolvers. Permit
+    # UDP and TCP DNS before the blacklist, and reserve every other port on
+    # the alias so it cannot accidentally expose a host or LAN service.
+    if dns_forwarding:
+        for address, _ in dns_forwarding.servers:
+            rules, tool = (v6_rules, "ip6tables") if is_ipv6(address) else (v4_rules, "iptables")
+            for protocol in ("udp", "tcp"):
+                rules.append(f"{tool} -A OUTPUT -d {address} -p {protocol} --dport 53 -j ACCEPT")
+            rules.append(f"{tool} -A OUTPUT -d {address} -j DROP")
+
     # 2. If DNS proxy is active, allow DNS traffic to loopback before any blocks
     if dns_proxy_active:
         v4_rules.append("iptables -A OUTPUT -o lo -p udp --dport 53 -j ACCEPT")
         v4_rules.append("iptables -A OUTPUT -o lo -p tcp --dport 53 -j ACCEPT")
         v6_rules.append("ip6tables -A OUTPUT -o lo -p udp --dport 53 -j ACCEPT")
         v6_rules.append("ip6tables -A OUTPUT -o lo -p tcp --dport 53 -j ACCEPT")
+        # Replies from the local proxy must also survive a loopback blacklist.
+        for rules, tool in ((v4_rules, "iptables"), (v6_rules, "ip6tables")):
+            for protocol in ("udp", "tcp"):
+                rules.append(
+                    f"{tool} -A OUTPUT -o lo -p {protocol} --sport 53 "
+                    "-m conntrack --ctstate ESTABLISHED -j ACCEPT"
+                )
 
     # 3. Blacklist DROP rules - MUST come before general loopback accept
     for ip in v4_block:
@@ -225,6 +245,7 @@ def generate_init_script(
     iptables_path: str,
     ip6tables_path: str | None,
     is_multicall: bool,
+    dns_forwarding: "DNSForwarding | None" = None,
 ) -> str:
     """Generate an init script that sets up iptables rules.
 
@@ -240,7 +261,7 @@ def generate_init_script(
     Returns:
         Shell script content as a string.
     """
-    v4_rules, v6_rules = generate_iptables_rules(nf)
+    v4_rules, v6_rules = generate_iptables_rules(nf, dns_forwarding)
 
     lines = []
 

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from model.network_filter import NetworkFilter
+    from net.dns_forward import DNSForwarding
 
 from fileutils import write_file_atomic
 from net.dns_proxy import generate_dns_proxy_script, get_dns_proxy_init_commands, needs_dns_proxy
@@ -67,6 +68,7 @@ def create_wrapper_script(
     is_multicall: bool,
     tmp_path: Path | None = None,
     seccomp_filter_path: str | None = None,
+    dns_forwarding: "DNSForwarding | None" = None,
 ) -> Path:
     """Create the wrapper script that runs iptables/DNS setup then execs bwrap.
 
@@ -95,6 +97,7 @@ def create_wrapper_script(
     import tempfile
 
     from net.iptables import generate_init_script
+    from net.pasta_args import prepare_bwrap_command
 
     if tmp_path is None:
         tmp_dir = tempfile.mkdtemp(prefix="bui-net-")
@@ -102,19 +105,27 @@ def create_wrapper_script(
 
     wrapper_script_path = tmp_path / "wrapper.sh"
 
-    iptables_script = generate_init_script(nf, iptables_path, ip6tables_path, is_multicall)
+    iptables_script = generate_init_script(
+        nf, iptables_path, ip6tables_path, is_multicall, dns_forwarding,
+    )
 
     # Check if DNS proxy is needed for hostname filtering
     dns_proxy_setup = ""
     if needs_dns_proxy(nf.hostname_filter):
         dns_proxy_script_path = tmp_path / "dns_proxy.py"
-        dns_proxy_script = generate_dns_proxy_script(nf.hostname_filter)
+        upstream = dns_forwarding.servers[0][0] if dns_forwarding else None
+        dns_proxy_script = generate_dns_proxy_script(nf.hostname_filter, upstream_dns=upstream)
         write_file_atomic(dns_proxy_script_path, dns_proxy_script, 0o755)
         dns_proxy_setup = get_dns_proxy_init_commands(str(dns_proxy_script_path))
 
-        # Write resolv.conf to temp dir - will be ro-bind mounted by bwrap
-        resolv_conf_path = tmp_path / "resolv.conf"
-        write_file_atomic(resolv_conf_path, "# DNS handled by bubblewrap-tui DNS proxy\nnameserver 127.0.0.1\n", 0o444)
+    if dns_forwarding:
+        resolv_conf = dns_forwarding.resolv_conf(proxy=needs_dns_proxy(nf.hostname_filter))
+        write_file_atomic(tmp_path / "resolv.conf", resolv_conf, 0o444)
+    elif needs_dns_proxy(nf.hostname_filter):
+        write_file_atomic(tmp_path / "resolv.conf", "nameserver 127.0.0.1\n", 0o444)
+
+    # The resolver file must exist before prepare_bwrap_command checks for it.
+    bwrap_cmd = prepare_bwrap_command(bwrap_cmd, str(tmp_path))
 
     # Handle seccomp filter - open FD in shell before exec
     seccomp_setup = ""

@@ -139,6 +139,8 @@ class TestCreateVirtualFiles:
         """No virtual files created when synthetic_passwd is disabled."""
         config = SandboxConfig(command=["bash"])
         config.user.synthetic_passwd = False
+        # This test isolates user files from the independent seccomp output.
+        config._isolation_group.set("enable_seccomp", False)
 
         manager = create_virtual_files(config)
 

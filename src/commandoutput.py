@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from model.network_filter import NetworkFilter
+    from net.dns_forward import DNSForwarding
 
 
 def print_execution_header(
@@ -15,6 +16,7 @@ def print_execution_header(
     network_filter: "NetworkFilter | None" = None,
     sandbox_name: str | None = None,
     overlay_dirs: list[str] | None = None,
+    dns_forwarding: "DNSForwarding | None" = None,
 ) -> None:
     """Print the execution header with command and optional details.
 
@@ -34,7 +36,7 @@ def print_execution_header(
     # Show the full command including pasta wrapper if network filtering
     if network_filter and network_filter.requires_pasta():
         from net.pasta_args import generate_pasta_args
-        pasta_args = generate_pasta_args(network_filter)
+        pasta_args = generate_pasta_args(network_filter, dns_forwarding=dns_forwarding)
         full_cmd = pasta_args + ["--"] + cmd
         print(shlex.join(full_cmd))
     else:

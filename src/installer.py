@@ -182,6 +182,28 @@ def create_default_profiles() -> None:
                 "share_net": True,
                 "bind_resolv_conf": True,
                 "bind_ssl_certs": True,
+                # Block localhost and local network access to prevent untrusted code
+                # from accessing local services (databases, web servers, etc.)
+                "network_mode": "filter",
+                "hostname_mode": "off",
+                "hostname_hosts": [],
+                "ip_mode": "blacklist",
+                "ip_cidrs": [
+                    # Loopback
+                    "127.0.0.0/8",
+                    "::1/128",
+                    # Private networks
+                    "10.0.0.0/8",
+                    "172.16.0.0/12",
+                    "192.168.0.0/16",
+                    # Link-local
+                    "169.254.0.0/16",
+                    "fe80::/10",
+                    # IPv6 unique local
+                    "fc00::/7",
+                ],
+                "expose_ports": [],
+                "host_ports": [],
             }
         },
         "_desktop_group": {
@@ -200,39 +222,6 @@ def create_default_profiles() -> None:
                     "HOME": "/home/sandbox",
                     "PATH": "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin",
                 },
-            }
-        },
-        # Block localhost and local network access to prevent untrusted code
-        # from accessing local services (databases, web servers, etc.)
-        "network_filter": {
-            "mode": "filter",
-            "hostname_filter": {
-                "mode": "off",
-                "hosts": []
-            },
-            "ip_filter": {
-                "mode": "blacklist",
-                "cidrs": [
-                    # Loopback
-                    "127.0.0.0/8",
-                    "::1/128",
-                    # Private networks
-                    "10.0.0.0/8",
-                    "172.16.0.0/12",
-                    "192.168.0.0/16",
-                    # Link-local
-                    "169.254.0.0/16",
-                    "fe80::/10",
-                    # IPv6 unique local
-                    "fc00::/7",
-                ]
-            },
-            "port_forwarding": {
-                "expose_ports": [],
-                "host_ports": []
-            },
-            "audit": {
-                "pcap_path": None
             }
         },
     }

@@ -15,12 +15,13 @@ class TestBuild:
 
     def test_build_produces_executable(self):
         """build.py creates bui script that can execute."""
-        # Run build.py
+        # Exercise the uv hashbang and metadata parsing used by ./build.py.
         result = subprocess.run(
-            [sys.executable, "build.py"],
+            ["./build.py"],
             cwd=PROJECT_ROOT,
             capture_output=True,
             text=True,
+            timeout=30,
         )
         assert result.returncode == 0, f"build.py failed: {result.stderr}"
 
@@ -39,7 +40,7 @@ class TestBuild:
 
         # Run bui --help - this exercises all imports without starting the TUI
         result = subprocess.run(
-            ["uv", "run", "./bui", "--help"],
+            ["./bui", "--help"],
             cwd=PROJECT_ROOT,
             capture_output=True,
             text=True,

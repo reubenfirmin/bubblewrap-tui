@@ -11,6 +11,8 @@ if TYPE_CHECKING:
     from model.sandbox_config import SandboxConfig
 
 from command_execution import _run_with_pty
+from net.dns_forward import DNSConfigurationError, read_dns_forwarding
+from net.dns_proxy import needs_dns_proxy
 from net.filtering import create_wrapper_script, validate_filtering_requirements
 from net.pasta_args import generate_pasta_args, prepare_bwrap_command
 from net.utils import HostnameResolutionError
@@ -86,6 +88,16 @@ def execute_with_pasta(
     # Validate all required tools are available
     iptables_path, ip6tables_path, is_multicall = validate_filtering_requirements(nf)
 
+    dns_forwarding = None
+    if config.network.bind_resolv_conf or needs_dns_proxy(nf.hostname_filter):
+        try:
+            dns_forwarding = read_dns_forwarding()
+            if ip6tables_path is None and any(":" in addr for addr, _ in dns_forwarding.servers):
+                raise DNSConfigurationError("IPv6 DNS forwarding requires ip6tables.")
+        except DNSConfigurationError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+
     # Build bwrap command (this is what wrapper.sh will exec)
     bwrap_cmd = build_command_fn(config, file_map)
 
@@ -93,9 +105,6 @@ def execute_with_pasta(
     import tempfile
     tmp_dir = tempfile.mkdtemp(prefix="bui-net-")
     tmp_path = Path(tmp_dir)
-
-    # Prepare bwrap command (removes --unshare-net, adds bind mounts)
-    bwrap_cmd = prepare_bwrap_command(bwrap_cmd, tmp_dir)
 
     # Get seccomp filter path if present in file_map
     seccomp_filter_path = file_map.get("/seccomp.bpf") if file_map else None
@@ -105,6 +114,7 @@ def execute_with_pasta(
         wrapper_script_path = create_wrapper_script(
             nf, bwrap_cmd, iptables_path, ip6tables_path, is_multicall, tmp_path,
             seccomp_filter_path=seccomp_filter_path,
+            dns_forwarding=dns_forwarding,
         )
     except HostnameResolutionError as e:
         print("=" * 60, file=sys.stderr)
@@ -122,18 +132,20 @@ def execute_with_pasta(
     _check_port_availability(nf)
 
     # Print header
+    bwrap_cmd = prepare_bwrap_command(bwrap_cmd, tmp_dir)
     from commandoutput import print_execution_header
     print_execution_header(
         bwrap_cmd,
         network_filter=nf,
         sandbox_name=sandbox_name,
         overlay_dirs=overlay_dirs,
+        dns_forwarding=dns_forwarding,
     )
 
     # Build pasta command: pasta [args] -- /bin/sh wrapper.sh
     # We use /bin/sh to execute the script rather than directly because
     # SELinux prevents pasta from executing scripts directly in some contexts
-    pasta_args = generate_pasta_args(nf)
+    pasta_args = generate_pasta_args(nf, dns_forwarding=dns_forwarding)
     full_cmd = pasta_args + ["--", "/bin/sh", str(wrapper_script_path)]
 
     # Use pty to run pasta - this prevents terminal corruption when bwrap

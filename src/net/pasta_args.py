@@ -8,11 +8,15 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from model.network_filter import NetworkFilter
+    from net.dns_forward import DNSForwarding
 
 logger = logging.getLogger(__name__)
 
 
-def generate_pasta_args(nf: "NetworkFilter", pcap_path: Path | None = None) -> list[str]:
+def generate_pasta_args(
+    nf: "NetworkFilter", pcap_path: Path | None = None,
+    dns_forwarding: "DNSForwarding | None" = None,
+) -> list[str]:
     """Generate pasta command arguments for spawn mode.
 
     In spawn mode, pasta creates a new user+network namespace and runs
@@ -22,6 +26,7 @@ def generate_pasta_args(nf: "NetworkFilter", pcap_path: Path | None = None) -> l
     Args:
         nf: NetworkFilter configuration
         pcap_path: Path for pcap capture (audit mode only)
+        dns_forwarding: Namespace DNS addresses and their host resolvers
 
     Returns:
         Command arguments for pasta (without the command to run).
@@ -32,6 +37,10 @@ def generate_pasta_args(nf: "NetworkFilter", pcap_path: Path | None = None) -> l
         "--foreground",  # Stay in foreground (default backgrounds, breaking terminal)
         "--quiet",  # Suppress output
     ]
+
+    if dns_forwarding:
+        for address, upstream in dns_forwarding.servers:
+            args.extend(["--dns-forward", address, "--dns-host", upstream])
 
     # Audit mode: capture traffic to pcap file
     if nf.is_audit_mode() and pcap_path:

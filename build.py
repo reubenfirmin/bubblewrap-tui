@@ -13,17 +13,20 @@ import shutil
 from pathlib import Path
 
 # Header for the generated script (shebang + uv metadata)
-HEADER = '''#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.12"
-# dependencies = ["textual==7.3.0", "dpkt==1.9.8", "pyseccomp==0.1.2"]
-# ///
-"""
+# Keep metadata lines quoted: uv scans even inside multiline strings.
+HEADER = (
+    '#!/usr/bin/env -S uv run --script\n'
+    '# /// script\n'
+    '# requires-python = ">=3.12"\n'
+    '# dependencies = ["textual==7.3.0", "dpkt==1.9.8", "pyseccomp==0.1.2"]\n'
+    '# ///\n'
+    '''"""
 Bubblewrap TUI - A visual interface for configuring bubblewrap sandboxes.
 
 Usage: bui -- <command> [args...]
 """
 '''
+)
 
 # Order matters - modules must be concatenated in dependency order
 MODULE_ORDER = [
@@ -53,6 +56,7 @@ MODULE_ORDER = [
     "model/sandbox_config.py",        # Depends on config_group, groups, network_filter
     "commandoutput.py",               # Command output formatting
     "net/utils.py",                   # Network utilities (resolve hostname, validate, etc.)
+    "net/dns_forward.py",             # Host DNS forwarding configuration
     "net/iptables.py",                # iptables rule generation
     "net/dns_proxy.py",               # DNS proxy generation for hostname filtering
     "net/pasta_install.py",           # pasta installation detection
@@ -100,7 +104,7 @@ MODULE_ORDER = [
 LOCAL_MODULES = {
     "constants", "fileutils", "detection", "environment", "installer", "sandbox", "profiles", "app", "cli", "styles", "bwrap",
     "commandoutput", "virtual_files", "command_execution", "seccomp_filter",
-    "net", "net.utils", "net.iptables", "net.dns_proxy", "net.pasta", "net.audit",
+    "net", "net.utils", "net.iptables", "net.dns_proxy", "net.dns_forward", "net.pasta", "net.audit",
     "net.pasta_install", "net.pasta_args", "net.filtering", "net.pasta_exec",
     "model",
     "model.ui_field", "model.bound_directory", "model.overlay_config", "model.network_filter",

@@ -84,8 +84,15 @@ Running `bui --install` creates a built-in `untrusted` profile designed for runn
 
 - Isolated home directory (your real home is not accessible)
 - Read-only system paths (`/usr`, `/bin`, `/lib`, etc.)
-- Network access enabled (for downloads)
+- Internet access enabled (for downloads), with loopback, private, and link-local destinations blocked
+- DNS forwarded through pasta to the host's configured resolver, including local DNS stubs
 - Strong isolation (new session, PID namespace, dropped capabilities)
+
+This profile requires `pasta`, `iptables`, and `ip6tables`. Re-running
+`bui --install` regenerates it; existing sandboxes using `untrusted` pick up the
+updated rules on their next launch. DNS uses the first configured host resolver
+of each address family, without substituting a public DNS provider. Only UDP/TCP
+port 53 on the sandbox's dedicated DNS addresses is exempted from the IP rules.
 
 ### Custom Profiles
 
@@ -332,6 +339,12 @@ uv run --with pytest --with pytest-cov --with pytest-asyncio --with textual pyte
 
 # With coverage
 uv run --with pytest --with pytest-cov --with pytest-asyncio --with textual pytest tests/ --cov=src --cov-report=term-missing
+
+# Optional live DNS/firewall tests (rootless; use a controlled resolver)
+BUI_TEST_NETWORK=1 uv run --with pytest --with pytest-asyncio --with textual pytest tests/test_live_dns.py -v
+
+# Also exercise the real host resolver and a public HTTPS connection
+BUI_TEST_NETWORK=1 BUI_TEST_HOST_DNS=1 uv run --with pytest --with pytest-asyncio --with textual pytest tests/test_live_dns.py -v
 ```
 
 ### Code Layout
