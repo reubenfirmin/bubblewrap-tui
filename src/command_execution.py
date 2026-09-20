@@ -339,9 +339,10 @@ def execute_sandbox(
     """
     from net import execute_with_audit, execute_with_network_filter
 
+    network_filter = config.network_filter
     exit_code = 0
     try:
-        if config.network_filter.is_audit_mode():
+        if network_filter.is_audit_mode():
             exit_code = execute_with_audit(
                 config,
                 file_map,
@@ -349,7 +350,7 @@ def execute_sandbox(
                 sandbox_name if overlay_dirs else None,
                 overlay_dirs,
             )
-        elif config.network_filter.is_filter_mode():
+        elif network_filter.is_filter_mode() and network_filter.requires_pasta():
             exit_code = execute_with_network_filter(
                 config,
                 file_map,

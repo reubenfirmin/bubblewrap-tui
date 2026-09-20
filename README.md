@@ -340,8 +340,8 @@ uv run --with pytest --with pytest-cov --with pytest-asyncio --with textual pyte
 # With coverage
 uv run --with pytest --with pytest-cov --with pytest-asyncio --with textual pytest tests/ --cov=src --cov-report=term-missing
 
-# Optional live DNS/firewall tests (rootless; use a controlled resolver)
-BUI_TEST_NETWORK=1 uv run --with pytest --with pytest-asyncio --with textual pytest tests/test_live_dns.py -v
+# Optional live isolation/DNS/firewall tests (rootless; use controlled listeners)
+BUI_TEST_NETWORK=1 uv run --with pytest --with pytest-asyncio --with textual pytest tests/test_live_dns.py tests/test_live_network.py -v
 
 # Also exercise the real host resolver and a public HTTPS connection
 BUI_TEST_NETWORK=1 BUI_TEST_HOST_DNS=1 uv run --with pytest --with pytest-asyncio --with textual pytest tests/test_live_dns.py -v
