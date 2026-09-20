@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Callable
 
 from textual.app import ComposeResult
@@ -95,4 +94,4 @@ def compose_sandbox_tab(on_dev_mode_change: Callable[[str], None]) -> ComposeRes
                     yield OptionCard(groups.new_session)
                     yield OptionCard(groups.as_pid_1)
                     yield Label("Working dir:")
-                    yield Input(value=str(Path.cwd()), id="opt-chdir")
+                    yield Input(value=groups.chdir.default, placeholder="sandbox directory (optional)", id="opt-chdir")

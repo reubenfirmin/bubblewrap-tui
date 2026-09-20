@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from model import BoundDirectory
+    from model import BoundDirectory, SandboxConfig
 
 log = logging.getLogger(__name__)
 
@@ -264,7 +264,7 @@ def is_path_covered(path: Path, bound_dirs: list[BoundDirectory]) -> bool:
 
     Args:
         path: Path to check
-        bound_dirs: List of bound directories (includes system paths from quick shortcuts)
+        bound_dirs: Bound files and directories (including system path shortcuts)
 
     Returns:
         True if path is covered by an existing bind
@@ -276,3 +276,19 @@ def is_path_covered(path: Path, bound_dirs: list[BoundDirectory]) -> bool:
         except ValueError:
             pass
     return False
+
+
+def bind_command_executable(config: SandboxConfig) -> None:
+    """Make the executable available without granting its parent directory.
+
+    Existing directory grants keep their access mode. Commands installed only
+    inside a sandbox cannot be resolved on the host and are left unchanged.
+    """
+    from model import BoundDirectory
+
+    resolved_path = resolve_command_executable(config.command)
+    if resolved_path is None:
+        return
+    if not is_path_covered(resolved_path, config.bound_dirs):
+        config.bound_dirs.append(BoundDirectory(path=resolved_path, readonly=True))
+    config.command[0] = str(resolved_path)
