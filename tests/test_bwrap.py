@@ -180,8 +180,9 @@ class TestNetworkIsolation:
     """Test network-related arguments."""
 
     def test_network_isolated_by_default(self, minimal_config):
-        """Default config has no --share-net."""
+        """Offline requires explicit isolation; omitting --share-net is insufficient."""
         args = BubblewrapSerializer(minimal_config).serialize()
+        assert "--unshare-net" in args
         assert "--share-net" not in args
 
     def test_share_net_enabled(self):
@@ -189,6 +190,7 @@ class TestNetworkIsolation:
         config = make_config(network={"share_net": True})
         args = BubblewrapSerializer(config).serialize()
         assert "--share-net" in args
+        assert "--unshare-net" not in args
 
     @patch("detection.find_dns_paths")
     def test_bind_resolv_conf(self, mock_dns):

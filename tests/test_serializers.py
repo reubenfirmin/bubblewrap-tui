@@ -150,9 +150,10 @@ class TestNetworkToSummary:
         assert summary is not None
         assert "offline" in summary.lower()
 
-    def test_filtered_access_with_pasta(self):
+    @pytest.mark.parametrize("share_net", [False, True])
+    def test_filtered_access_with_pasta(self, share_net):
         """When network_filter requires pasta, shows filtered access."""
-        group = self._make_network_group(share_net=False)
+        group = self._make_network_group(share_net=share_net)
         nf = NetworkFilter()
         nf.mode = NetworkMode.FILTER
         nf.hostname_filter.mode = FilterMode.WHITELIST
@@ -163,6 +164,29 @@ class TestNetworkToSummary:
         assert summary is not None
         assert "Filtered access" in summary
         assert "pasta" in summary
+        assert "Full access" not in summary
+
+    @pytest.mark.parametrize("share_net", [False, True])
+    def test_audit_access_with_pasta(self, share_net):
+        """Audit provides connectivity and capture without filtering."""
+        group = self._make_network_group(share_net=share_net)
+        nf = NetworkFilter(mode=NetworkMode.AUDIT)
+
+        summary = network_to_summary(group, nf)
+
+        assert "Audited access" in summary
+        assert "pasta" in summary
+        assert "without filtering" in summary
+
+    @pytest.mark.parametrize("share_net", [False, True])
+    def test_filter_without_rules_uses_direct_network_setting(self, share_net):
+        group = self._make_network_group(share_net=share_net, bind_resolv_conf=True)
+        nf = NetworkFilter(mode=NetworkMode.FILTER)
+
+        summary = network_to_summary(group, nf)
+
+        assert ("Full access" if share_net else "Completely offline") in summary
+        assert "pasta" not in summary
 
     def test_offline_with_empty_filter(self):
         """When network_filter doesn't require pasta, shows offline."""
