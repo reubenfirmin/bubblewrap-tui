@@ -19,6 +19,19 @@ from model import (
 
 
 @pytest.fixture
+def untrusted_config(tmp_path, monkeypatch):
+    """Load the real installed default, not a hand-written profile fixture."""
+    import installer
+    from profiles import Profile
+
+    monkeypatch.setattr(installer, "get_profiles_dir", lambda: tmp_path)
+    installer.create_default_profiles()
+    config, warnings = Profile(tmp_path / "untrusted.json").load(["true"])
+    assert warnings == []
+    return config
+
+
+@pytest.fixture
 def mock_env(monkeypatch):
     """Clean environment for testing."""
     # Clear environment variables that affect detection

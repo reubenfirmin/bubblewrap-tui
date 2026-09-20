@@ -92,10 +92,14 @@ def network_to_args(group: ConfigGroup, network_filter: "NetworkFilter | None" =
         # Full network access
         args.append("--share-net")
 
-    # DNS bindings - skip if DNS proxy is active (proxy creates its own /etc/resolv.conf)
+    # Filtered DNS uses a generated resolv.conf. Retain nsswitch.conf, but do
+    # not mount the host stub file or its systemd directory over our resolver.
     dns_proxy_active = network_filter and uses_dns_proxy(network_filter)
-    if group.get("bind_resolv_conf") and not dns_proxy_active:
+    generated_resolver = dns_proxy_active or (filtering_active and network_filter.is_filter_mode())
+    if group.get("bind_resolv_conf"):
         for dns_path in find_dns_paths():
+            if generated_resolver and dns_path != "/etc/nsswitch.conf":
+                continue
             args.extend(["--ro-bind", dns_path, dns_path])
 
     # SSL bindings are always needed for both full access and filtered network
