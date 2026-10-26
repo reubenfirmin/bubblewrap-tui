@@ -43,6 +43,19 @@ chmod +x bui
 
 Update to latest: `bui --update`
 
+When upgrading from v0.6.6, use the download and `./bui --install` commands above
+once to preserve profile edits. That release's updater overwrites the profile
+using its old installer before the new code runs.
+
+Updates apply new defaults and bug fixes to unchanged settings in the built-in
+`untrusted` profile. Your edits take precedence, including edited lists of rules
+or directory grants. When customizations remain, the new defaults are also saved
+to `~/.config/bui/profiles/untrusted.json.new` for review.
+
+For older profiles without saved default history, updates preserve the entire
+profile and save the new defaults to that `.new` file. Review and merge the
+changes you want, or replace the profile with the new defaults to adopt them.
+
 ### Compatibility
 - Intended to work on all modern Linux distros. Please file tickets with any issues
 - Will not work on OSX, which doesn't have Bubblewrap or equivalents (your best options would be something like Sandbox.app or Docker Desktop)
@@ -103,10 +116,11 @@ Running `bui --install` creates a built-in `untrusted` profile designed for runn
 - DNS forwarded through pasta to the host's configured resolver, including local DNS stubs
 - Strong isolation (new session, PID namespace, dropped capabilities)
 
-This profile requires `pasta`, `iptables`, and `ip6tables`. Re-running
-`bui --install` regenerates it; existing sandboxes using `untrusted` pick up the
-updated rules on their next launch. DNS uses the first configured host resolver
-of each address family, without substituting a public DNS provider. Only UDP/TCP
+This profile requires `pasta`, `iptables`, and `ip6tables`. Running
+`bui --update` or `bui --install` updates it while preserving your edits as
+described above; existing sandboxes using `untrusted` pick up the updated rules
+on their next launch. DNS uses the first configured host resolver of each
+address family, without substituting a public DNS provider. Only UDP/TCP
 port 53 on the sandbox's dedicated DNS addresses is exempted from the IP rules.
 
 ### Custom Profiles

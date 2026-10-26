@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -109,8 +110,75 @@ def get_profiles_dir() -> Path:
     return profiles_dir
 
 
+def _merge_profile_defaults(previous, current, updated):
+    """Apply changed defaults only where the user has not changed a value."""
+    if current == previous:
+        return updated
+    if not all(isinstance(value, dict) for value in (previous, current, updated)):
+        # Lists are one setting: preserve edited rules/grants in their entirety.
+        return current
+
+    merged = {}
+    missing = object()
+    for key in dict.fromkeys([*current, *updated]):
+        value = _merge_profile_defaults(
+            previous.get(key, missing), current.get(key, missing), updated.get(key, missing)
+        )
+        if value is not missing:
+            merged[key] = value
+    return merged
+
+
+def _update_default_profile(profile_path: Path, defaults: dict) -> None:
+    """Track supplied defaults separately so installs preserve profile edits."""
+    baseline_path = profile_path.parent / ".defaults" / profile_path.name
+    new_path = profile_path.with_suffix(profile_path.suffix + ".new")
+    defaults_text = json.dumps(defaults, indent=2)
+
+    if not profile_path.exists():
+        profile_path.write_text(defaults_text)
+        merged = defaults
+        print(f"Created default profile: {profile_path}")
+    else:
+        try:
+            current = json.loads(profile_path.read_text())
+        except (OSError, ValueError):
+            current = None
+        try:
+            previous = json.loads(baseline_path.read_text())
+        except (OSError, ValueError):
+            previous = None
+
+        if current == defaults:
+            merged = current
+        elif isinstance(current, dict) and isinstance(previous, dict):
+            merged = _merge_profile_defaults(previous, current, defaults)
+        else:
+            # Without a usable baseline, edits cannot be distinguished from old
+            # defaults. Leave both the profile and any baseline untouched.
+            new_path.write_text(defaults_text)
+            print(f"Preserved existing profile: {profile_path} (no usable default history)")
+            print(f"Review updated defaults: {new_path}")
+            return
+
+        if merged != current:
+            profile_path.write_text(json.dumps(merged, indent=2))
+            print(f"Updated default profile: {profile_path} (preserved user edits)")
+        else:
+            print(f"Kept existing profile: {profile_path}")
+
+    # Store the supplied defaults, not the merged user profile, for the next update.
+    baseline_path.parent.mkdir(parents=True, exist_ok=True)
+    baseline_path.write_text(defaults_text)
+    if merged != defaults:
+        new_path.write_text(defaults_text)
+        print(f"Preserved custom settings; review updated defaults: {new_path}")
+    else:
+        new_path.unlink(missing_ok=True)
+
+
 def create_default_profiles() -> None:
-    """Create default profiles if they don't exist."""
+    """Update built-in defaults while preserving user profile edits."""
     profiles_dir = get_profiles_dir()
     untrusted_profile = profiles_dir / "untrusted.json"
 
@@ -226,8 +294,7 @@ def create_default_profiles() -> None:
         },
     }
 
-    untrusted_profile.write_text(json.dumps(profile_data, indent=2))
-    print(f"Created default profile: {untrusted_profile}")
+    _update_default_profile(untrusted_profile, profile_data)
 
 
 def do_install(version: str, source_path: Path | None = None) -> None:
@@ -252,7 +319,8 @@ def do_install(version: str, source_path: Path | None = None) -> None:
     if source_path is None:
         source_path = Path(__file__).resolve()
 
-    shutil.copy2(source_path, install_path)
+    if not install_path.exists() or not source_path.samefile(install_path):
+        shutil.copy2(source_path, install_path)
     install_path.chmod(0o755)
 
     print(f"Installed bui v{version} to {install_path}")
@@ -310,10 +378,10 @@ def verify_checksum(content: bytes) -> None:
 
 
 def do_update(current_version: str) -> None:
-    """Download latest bui from GitHub and install.
+    """Download latest bui and run its installer to refresh built-in profiles.
 
     Args:
-        current_version: Current version string for comparison
+        current_version: Currently installed version
     """
     # Get the latest version first
     latest_version = get_latest_version()
@@ -337,8 +405,12 @@ def do_update(current_version: str) -> None:
 
     try:
         temp_path.chmod(0o755)
-        # Use the latest version for the install message
-        do_install(latest_version or current_version, temp_path)
+        # The downloaded release owns the new profile defaults and dependencies.
+        # Calling this process's do_install would write the old defaults instead.
+        subprocess.run([str(temp_path), "--install"], check=True)
+    except (OSError, subprocess.CalledProcessError) as e:
+        print(f"Error installing update: {e}", file=sys.stderr)
+        sys.exit(1)
     finally:
         temp_path.unlink()
 
