@@ -65,6 +65,9 @@ The TUI lets you:
 
 Press `Enter` to execute or `Esc` to quit.
 
+The TUI does not grant access to your current directory automatically. Select
+the directories your program needs before executing it.
+
 ## Profiles
 
 Profiles are saved sandbox configurations. Once you have a profile, you can skip the TUI and run commands directly:
@@ -78,11 +81,23 @@ This is useful for:
 - Running the same sandbox configuration repeatedly
 - Sharing configurations with others
 
+Launching a host executable automatically grants read-only access to the resolved
+executable file. Its parent directory and neighboring files are not added.
+Programs that need adjacent resources require an explicit directory grant, for example:
+
+```bash
+bui --profile untrusted --bind /path/to/app -- /path/to/app/program
+```
+
+Existing profile grants still apply, including the default system directories.
+With a profile, `--bind-cwd` explicitly grants read-write access to your current
+directory. Previously saved directory grants remain in effect until you remove them.
+
 ### The `untrusted` Profile
 
 Running `bui --install` creates a built-in `untrusted` profile designed for running untrusted code safely:
 
-- Isolated home directory (your real home is not accessible)
+- Isolated home directory (your real home is not accessible unless explicitly bound)
 - Read-only system paths (`/usr`, `/bin`, `/lib`, etc.)
 - Internet access enabled (for downloads), with loopback, private, and link-local destinations blocked
 - DNS forwarded through pasta to the host's configured resolver, including local DNS stubs
@@ -186,7 +201,7 @@ The wrapper script automatically:
 - Binds your current directory read-write (`--bind-cwd`)
 - Passes through the bind paths and environment from installation
 
-Because the wrapper uses `--bind-cwd`, Claude can read and write files in your current directory. It cannot access other directories, your home directory, or sensitive dotfiles.
+Because the wrapper uses `--bind-cwd`, Claude can read and write files in your current directory, including its dotfiles and subdirectories. Running the wrapper from your home directory therefore exposes your home; otherwise, additional host directories require explicit grants.
 
 ### Managing Sandboxes
 
@@ -341,7 +356,7 @@ uv run --with pytest --with pytest-cov --with pytest-asyncio --with textual pyte
 uv run --with pytest --with pytest-cov --with pytest-asyncio --with textual pytest tests/ --cov=src --cov-report=term-missing
 
 # Optional live isolation/DNS/firewall tests (rootless; use controlled listeners)
-BUI_TEST_NETWORK=1 uv run --with pytest --with pytest-asyncio --with textual pytest tests/test_live_dns.py tests/test_live_network.py -v
+BUI_TEST_NETWORK=1 uv run --with pytest --with pytest-asyncio --with textual pytest tests/test_live_dns.py tests/test_live_network.py tests/test_executable_binding.py -v
 
 # Also exercise the real host resolver and a public HTTPS connection
 BUI_TEST_NETWORK=1 BUI_TEST_HOST_DNS=1 uv run --with pytest --with pytest-asyncio --with textual pytest tests/test_live_dns.py -v
