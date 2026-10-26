@@ -35,7 +35,7 @@ def compose_directories_tab(
     dir_items = [BoundDirItem(bd, on_update, on_remove) for bd in bound_dirs]
 
     yield Static(
-        "Directories listed here will be accessible inside the sandbox.",
+        "Files and directories listed here will be accessible inside the sandbox.",
         id="dirs-hint",
     )
     with Horizontal(id="dirs-tab-content"):
@@ -60,5 +60,5 @@ def compose_directories_tab(
                         default = field.default
                     yield OptionCard(field, default=default)
         with Vertical(id="bound-dirs-container"):
-            yield Label("Bound Directories (click ro/rw to toggle)")
+            yield Label("Bound Paths (click ro/rw to toggle)")
             yield VerticalScroll(*dir_items, id="bound-dirs-list")

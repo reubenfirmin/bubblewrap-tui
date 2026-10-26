@@ -1,4 +1,4 @@
-"""Bound directory model."""
+"""Host path bind model."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 
 @dataclass
 class BoundDirectory:
-    """A directory bound into the sandbox."""
+    """A file or directory bound into the sandbox (legacy profile type name)."""
 
     path: Path
     readonly: bool = True
