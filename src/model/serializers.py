@@ -91,6 +91,9 @@ def network_to_args(group: ConfigGroup, network_filter: "NetworkFilter | None" =
     elif group.get("share_net"):
         # Full network access
         args.append("--share-net")
+    else:
+        # Bubblewrap shares the host network unless isolation is explicit.
+        args.append("--unshare-net")
 
     # Filtered DNS uses a generated resolv.conf. Retain nsswitch.conf, but do
     # not mount the host stub file or its systemd directory over our resolver.
@@ -112,6 +115,11 @@ def network_to_args(group: ConfigGroup, network_filter: "NetworkFilter | None" =
 
 def network_to_summary(group: ConfigGroup, network_filter: "NetworkFilter | None" = None) -> str | None:
     """Custom summary for network."""
+    # Match command generation: pasta takes precedence over direct host access.
+    if network_filter and network_filter.requires_pasta():
+        if network_filter.is_audit_mode():
+            return "Network: Audited access via pasta — traffic captured without filtering"
+        return "Network: Filtered access via pasta — see filtering rules below"
     if group.get("share_net"):
         extras = []
         if group.get("bind_resolv_conf"):
@@ -121,9 +129,6 @@ def network_to_summary(group: ConfigGroup, network_filter: "NetworkFilter | None
         if extras:
             return f"Network: Full access — can reach internet and local services ({', '.join(extras)} bound)"
         return "Network: Full access — WARNING: missing DNS/SSL, connections may fail"
-    # Check if network filtering is active (provides filtered network access)
-    if network_filter and network_filter.requires_pasta():
-        return "Network: Filtered access via pasta — see filtering rules below"
     return "Network: Completely offline — no network access at all"
 
 

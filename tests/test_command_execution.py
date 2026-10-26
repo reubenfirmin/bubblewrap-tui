@@ -10,7 +10,41 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from command_execution import _get_descendants, _run_with_pty
+from command_execution import _get_descendants, _run_with_pty, execute_sandbox
+
+
+@pytest.mark.parametrize("share_net", [False, True])
+@pytest.mark.parametrize("mode, settings, route", [
+    ("off", {}, "direct"),
+    ("off", {"ip_mode": "blacklist", "ip_cidrs": ["127.0.0.0/8"]}, "direct"),
+    ("filter", {}, "direct"),
+    ("filter", {"ip_mode": "whitelist"}, "filter"),
+    ("filter", {"hostname_mode": "whitelist"}, "filter"),
+    ("filter", {"host_ports": [18080]}, "filter"),
+    ("audit", {}, "audit"),
+])
+def test_network_launch_matches_generated_isolation(minimal_config, share_net, mode, settings, route):
+    """Empty filters must not reconnect an offline sandbox through pasta."""
+    config = minimal_config
+    config.network.share_net = share_net
+    config.network.network_mode = mode
+    for key, value in settings.items():
+        setattr(config.network, key, value)
+
+    command = config.build_command()
+    shared = route == "direct" and share_net
+    assert ("--share-net" in command) == shared
+    assert ("--unshare-net" in command) == (not shared)
+
+    with patch("command_execution._execute_direct", return_value=23) as direct, \
+         patch("net.execute_with_network_filter", return_value=23) as filtered, \
+         patch("net.execute_with_audit", return_value=23) as audit:
+        with pytest.raises(SystemExit) as exc:
+            execute_sandbox(config, None, lambda cfg, files: cfg.build_command(files), None, [], None)
+
+    assert exc.value.code == 23
+    for name, runner in {"direct": direct, "filter": filtered, "audit": audit}.items():
+        assert runner.call_count == (1 if name == route else 0)
 
 
 class TestRunWithPty:
