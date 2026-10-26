@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -110,7 +111,7 @@ def get_profiles_dir() -> Path:
 
 
 def create_default_profiles() -> None:
-    """Create default profiles if they don't exist."""
+    """Regenerate built-in profiles with this version's defaults."""
     profiles_dir = get_profiles_dir()
     untrusted_profile = profiles_dir / "untrusted.json"
 
@@ -252,7 +253,8 @@ def do_install(version: str, source_path: Path | None = None) -> None:
     if source_path is None:
         source_path = Path(__file__).resolve()
 
-    shutil.copy2(source_path, install_path)
+    if not install_path.exists() or not source_path.samefile(install_path):
+        shutil.copy2(source_path, install_path)
     install_path.chmod(0o755)
 
     print(f"Installed bui v{version} to {install_path}")
@@ -310,10 +312,10 @@ def verify_checksum(content: bytes) -> None:
 
 
 def do_update(current_version: str) -> None:
-    """Download latest bui from GitHub and install.
+    """Download latest bui and run its installer to refresh built-in profiles.
 
     Args:
-        current_version: Current version string for comparison
+        current_version: Currently installed version
     """
     # Get the latest version first
     latest_version = get_latest_version()
@@ -337,8 +339,12 @@ def do_update(current_version: str) -> None:
 
     try:
         temp_path.chmod(0o755)
-        # Use the latest version for the install message
-        do_install(latest_version or current_version, temp_path)
+        # The downloaded release owns the new profile defaults and dependencies.
+        # Calling this process's do_install would write the old defaults instead.
+        subprocess.run([str(temp_path), "--install"], check=True)
+    except (OSError, subprocess.CalledProcessError) as e:
+        print(f"Error installing update: {e}", file=sys.stderr)
+        sys.exit(1)
     finally:
         temp_path.unlink()
 

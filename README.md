@@ -43,6 +43,10 @@ chmod +x bui
 
 Update to latest: `bui --update`
 
+Updates also regenerate the built-in `untrusted` profile with the new version's
+defaults and bug fixes. Save customizations in a separate profile to keep them
+across updates.
+
 ### Compatibility
 - Intended to work on all modern Linux distros. Please file tickets with any issues
 - Will not work on OSX, which doesn't have Bubblewrap or equivalents (your best options would be something like Sandbox.app or Docker Desktop)
@@ -103,9 +107,9 @@ Running `bui --install` creates a built-in `untrusted` profile designed for runn
 - DNS forwarded through pasta to the host's configured resolver, including local DNS stubs
 - Strong isolation (new session, PID namespace, dropped capabilities)
 
-This profile requires `pasta`, `iptables`, and `ip6tables`. Re-running
-`bui --install` regenerates it; existing sandboxes using `untrusted` pick up the
-updated rules on their next launch. DNS uses the first configured host resolver
+This profile requires `pasta`, `iptables`, and `ip6tables`. Running
+`bui --update` or `bui --install` regenerates it; existing sandboxes using
+`untrusted` pick up the updated rules on their next launch. DNS uses the first configured host resolver
 of each address family, without substituting a public DNS provider. Only UDP/TCP
 port 53 on the sandbox's dedicated DNS addresses is exempted from the IP rules.
 
